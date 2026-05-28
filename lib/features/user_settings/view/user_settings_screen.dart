@@ -7,6 +7,9 @@ import 'package:task_manager/features/user_settings/model/user_settings.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 import 'package:task_manager/features/user_settings/widgets/hourly_rate_display.dart';
 import 'package:task_manager/features/user_settings/widgets/profile_image_picker.dart';
+import 'package:task_manager/features/user_settings/widgets/settings_number_field.dart';
+import 'package:task_manager/utils/app_messenger.dart';
+import 'package:task_manager/widgets/message_guard.dart';
 
 class UserSettingsScreen extends ConsumerStatefulWidget {
   const UserSettingsScreen({super.key});
@@ -22,11 +25,6 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
   late final TextEditingController _budgetCtrl;
   late final TextEditingController _daysCtrl;
   late final TextEditingController _minutesCtrl;
-  late final TextEditingController _mealCtrl;
-  late final TextEditingController _exerciseCtrl;
-  late final TextEditingController _sleepHoursCtrl;
-  late final TextEditingController _sleepMinsCtrl;
-  late final TextEditingController _meditationCtrl;
 
   File? _pendingAvatarFile;
   int? _pendingPresetIndex;
@@ -49,11 +47,6 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
     _budgetCtrl = TextEditingController();
     _daysCtrl = TextEditingController();
     _minutesCtrl = TextEditingController();
-    _mealCtrl = TextEditingController();
-    _exerciseCtrl = TextEditingController();
-    _sleepHoursCtrl = TextEditingController();
-    _sleepMinsCtrl = TextEditingController();
-    _meditationCtrl = TextEditingController();
 
     for (final ctrl in [_budgetCtrl, _daysCtrl, _minutesCtrl]) {
       ctrl.addListener(() => setState(() {}));
@@ -62,7 +55,7 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
 
   @override
   void dispose() {
-    for (final ctrl in [_nameCtrl, _levelCtrl, _budgetCtrl, _daysCtrl, _minutesCtrl, _mealCtrl, _exerciseCtrl, _sleepHoursCtrl, _sleepMinsCtrl, _meditationCtrl]) {
+    for (final ctrl in [_nameCtrl, _levelCtrl, _budgetCtrl, _daysCtrl, _minutesCtrl]) {
       ctrl.dispose();
     }
     super.dispose();
@@ -76,11 +69,6 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
     _budgetCtrl.text = s.monthlyBudget == 0 ? '' : '${s.monthlyBudget}';
     _daysCtrl.text = s.monthlyQuestDays == 0 ? '' : '${s.monthlyQuestDays}';
     _minutesCtrl.text = s.dailyQuestMinutes == 0 ? '' : '${s.dailyQuestMinutes}';
-    _mealCtrl.text = s.mealGoalGrams == 0 ? '' : '${s.mealGoalGrams}';
-    _exerciseCtrl.text = s.exerciseGoalMinutes == 0 ? '' : '${s.exerciseGoalMinutes}';
-    _sleepHoursCtrl.text = s.sleepGoalHours == 0 ? '' : '${s.sleepGoalHours}';
-    _sleepMinsCtrl.text = s.sleepGoalMinutesExtra == 0 ? '' : '${s.sleepGoalMinutesExtra}';
-    _meditationCtrl.text = s.meditationGoalMinutes == 0 ? '' : '${s.meditationGoalMinutes}';
   }
 
   UserSettings _currentSettings() {
@@ -91,11 +79,6 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
       monthlyBudget: int.tryParse(_budgetCtrl.text) ?? 0,
       monthlyQuestDays: int.tryParse(_daysCtrl.text) ?? 0,
       dailyQuestMinutes: int.tryParse(_minutesCtrl.text) ?? 0,
-      mealGoalGrams: int.tryParse(_mealCtrl.text) ?? 0,
-      exerciseGoalMinutes: int.tryParse(_exerciseCtrl.text) ?? 0,
-      sleepGoalHours: int.tryParse(_sleepHoursCtrl.text) ?? 0,
-      sleepGoalMinutesExtra: int.tryParse(_sleepMinsCtrl.text) ?? 0,
-      meditationGoalMinutes: int.tryParse(_meditationCtrl.text) ?? 0,
     );
   }
 
@@ -172,7 +155,8 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
     if (!mounted) return;
 
     final errorMsg = ref.read(userSettingsProvider).errorMessage;
-    ScaffoldMessenger.of(context).showSnackBar(
+    showAppSnackBar(
+      context,
       SnackBar(
         content: Text(success ? '保存しました' : (errorMsg ?? '保存に失敗しました')),
         backgroundColor: success ? null : Colors.red,
@@ -214,13 +198,14 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
                 ),
         ],
       ),
-      body: state.isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Form(
-              key: _formKey,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
+      body: MessageGuard(
+        child: state.isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : Form(
+                key: _formKey,
+                child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
                   _SectionHeader('基本情報'),
                   const SizedBox(height: 12),
                   Center(
@@ -254,11 +239,10 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
                     validator: (v) => (v == null || v.trim().isEmpty) ? '名前を入力してください' : null,
                   ),
                   const SizedBox(height: 12),
-                  _NumberField(
+                  SettingsNumberField(
                     controller: _levelCtrl,
                     label: 'レベル',
                     suffix: '',
-                    required: false,
                     validator: (v) {
                       final n = int.tryParse(v ?? '');
                       if (v != null && v.isNotEmpty && (n == null || n < 1)) return '1以上';
@@ -273,10 +257,10 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
                   const SizedBox(height: 24),
                   _SectionHeader('報酬設定'),
                   const SizedBox(height: 12),
-                  _NumberField(controller: _budgetCtrl, label: '① 月に使えるお金', suffix: '円',
+                  SettingsNumberField(controller: _budgetCtrl, label: '① 月に使えるお金', suffix: '円',
                       validator: (v) => _validatePositive(v, '金額')),
                   const SizedBox(height: 12),
-                  _NumberField(controller: _daysCtrl, label: '② 月のクエスト日数', suffix: '日',
+                  SettingsNumberField(controller: _daysCtrl, label: '② 月のクエスト日数', suffix: '日',
                       validator: (v) {
                         final n = int.tryParse(v ?? '');
                         if (n == null || n <= 0) return '日数を入力してください';
@@ -284,56 +268,23 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
                         return null;
                       }),
                   const SizedBox(height: 12),
-                  _NumberField(controller: _minutesCtrl, label: '③ 1日の想定クエスト時間', suffix: '分',
+                  SettingsNumberField(controller: _minutesCtrl, label: '③ 1日の想定クエスト時間', suffix: '分',
                       validator: (v) => _validatePositive(v, '時間')),
                   const SizedBox(height: 12),
                   HourlyRateDisplay(hourlyRate: _localHourlyRate),
                   const SizedBox(height: 24),
-                  _SectionHeader('健康目標'),
+                  _SectionHeader('表示設定'),
                   const SizedBox(height: 12),
-                  _NumberField(controller: _mealCtrl, label: '食事目標（野菜の量）', suffix: 'g/日', required: false),
-                  const SizedBox(height: 12),
-                  _NumberField(controller: _exerciseCtrl, label: '運動目標', suffix: '分/日', required: false),
-                  const SizedBox(height: 12),
-                  // 睡眠目標：時間＋分
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: _NumberField(
-                          controller: _sleepHoursCtrl,
-                          label: '睡眠目標',
-                          suffix: '時間',
-                          required: false,
-                          validator: (v) {
-                            final n = int.tryParse(v ?? '');
-                            if (v != null && v.isNotEmpty && (n == null || n < 0)) return '0以上';
-                            return null;
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _NumberField(
-                          controller: _sleepMinsCtrl,
-                          label: '睡眠目標（分）',
-                          suffix: '分',
-                          required: false,
-                          validator: (v) {
-                            final n = int.tryParse(v ?? '');
-                            if (v != null && v.isNotEmpty && (n == null || n < 0 || n > 59)) return '0〜59';
-                            return null;
-                          },
-                        ),
-                      ),
-                    ],
+                  _DisplaySettings(
+                    settings: state.settings,
+                    onChanged: (updated) =>
+                        ref.read(userSettingsProvider.notifier).update(updated),
                   ),
-                  const SizedBox(height: 12),
-                  _NumberField(controller: _meditationCtrl, label: '瞑想目標', suffix: '分/日', required: false),
                   const SizedBox(height: 32),
                 ],
               ),
             ),
+      ),
     );
   }
 
@@ -413,32 +364,63 @@ class _BalanceRow extends StatelessWidget {
   }
 }
 
-class _NumberField extends StatelessWidget {
-  const _NumberField({
-    required this.controller,
-    required this.label,
-    required this.suffix,
-    this.validator,
-    this.required = true,
-  });
-  final TextEditingController controller;
-  final String label;
-  final String suffix;
-  final String? Function(String?)? validator;
-  final bool required;
+/// 表示設定（テーマ・週の始まり）。選択即時反映、保存ボタンで Firestore に永続化。
+class _DisplaySettings extends StatelessWidget {
+  const _DisplaySettings({required this.settings, required this.onChanged});
+
+  final UserSettings settings;
+  final ValueChanged<UserSettings> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    return TextFormField(
-      controller: controller,
-      keyboardType: TextInputType.number,
-      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-      decoration: InputDecoration(
-        labelText: label,
-        suffixText: suffix,
-        border: const OutlineInputBorder(),
-      ),
-      validator: validator,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InputDecorator(
+          decoration: const InputDecoration(
+            labelText: 'テーマ',
+            border: OutlineInputBorder(),
+            contentPadding:
+                EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          ),
+          child: SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'system', label: Text('自動')),
+              ButtonSegment(value: 'light', label: Text('ライト')),
+              ButtonSegment(value: 'dark', label: Text('ダーク')),
+            ],
+            selected: {settings.themeMode},
+            showSelectedIcon: false,
+            onSelectionChanged: (set) =>
+                onChanged(settings.copyWith(themeMode: set.first)),
+          ),
+        ),
+        const SizedBox(height: 12),
+        InputDecorator(
+          decoration: const InputDecoration(
+            labelText: '週の始まり',
+            border: OutlineInputBorder(),
+            contentPadding:
+                EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: settings.weekStartDay,
+              isExpanded: true,
+              items: const [
+                DropdownMenuItem(value: DateTime.monday, child: Text('月曜日')),
+                DropdownMenuItem(value: DateTime.sunday, child: Text('日曜日')),
+                DropdownMenuItem(
+                    value: DateTime.saturday, child: Text('土曜日')),
+              ],
+              onChanged: (v) {
+                if (v == null) return;
+                onChanged(settings.copyWith(weekStartDay: v));
+              },
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

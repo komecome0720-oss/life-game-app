@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 import 'package:task_manager/features/wish_list/model/wish_item.dart';
+import 'package:task_manager/features/wish_list/view/wish_item_completion_screen.dart';
 import 'package:task_manager/features/wish_list/viewmodel/wish_list_viewmodel.dart';
+import 'package:task_manager/utils/app_messenger.dart';
 
 class WishItemCard extends ConsumerWidget {
   const WishItemCard({super.key, required this.item, required this.onDelete});
@@ -12,9 +14,9 @@ class WishItemCard extends ConsumerWidget {
 
   String _formatMoney(int n) {
     return n.toString().replaceAllMapped(
-          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-          (m) => '${m[1]},',
-        );
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (m) => '${m[1]},',
+    );
   }
 
   @override
@@ -31,7 +33,14 @@ class WishItemCard extends ConsumerWidget {
           color: Colors.green,
           borderRadius: BorderRadius.circular(12),
         ),
-        child: const Text('獲得可能', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+        child: const Text(
+          '獲得可能',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       );
     } else {
       final remaining = item.price - balanceYen;
@@ -54,8 +63,13 @@ class WishItemCard extends ConsumerWidget {
               if (item.imageUrl.isNotEmpty)
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: Image.network(item.imageUrl, width: 56, height: 56, fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _placeholder(colorScheme)),
+                  child: Image.network(
+                    item.imageUrl,
+                    width: 56,
+                    height: 56,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => _placeholder(colorScheme),
+                  ),
                 )
               else
                 _placeholder(colorScheme),
@@ -65,9 +79,21 @@ class WishItemCard extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(item.name, style: const TextStyle(fontWeight: FontWeight.w600), maxLines: 2, overflow: TextOverflow.ellipsis),
+                    Text(
+                      item.name,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                     const SizedBox(height: 4),
-                    Text('¥${_formatMoney(item.price)}', style: TextStyle(fontSize: 13, color: colorScheme.primary, fontWeight: FontWeight.bold)),
+                    Text(
+                      '¥${_formatMoney(item.price)}',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: colorScheme.primary,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     const SizedBox(height: 4),
                     statusBadge,
                   ],
@@ -81,19 +107,26 @@ class WishItemCard extends ConsumerWidget {
                     IconButton(
                       icon: const Icon(Icons.open_in_new, size: 20),
                       tooltip: 'ショップを開く',
-                      onPressed: () {/* URL launch は後で実装 */},
+                      onPressed: () {
+                        /* URL launch は後で実装 */
+                      },
                     ),
                   if (!item.isPurchased)
                     IconButton(
-                      icon: Icon(Icons.check_circle_outline, color: colorScheme.primary),
+                      icon: Icon(
+                        Icons.check_circle_outline,
+                        color: colorScheme.primary,
+                      ),
                       tooltip: '獲得済みにする',
-                      onPressed: () => ref.read(wishListProvider.notifier).togglePurchased(item),
+                      onPressed: () => _confirmAcquire(context, ref),
                     )
                   else
                     IconButton(
                       icon: const Icon(Icons.undo, size: 20),
-                      tooltip: 'リストに戻す',
-                      onPressed: () => ref.read(wishListProvider.notifier).togglePurchased(item),
+                      tooltip: '未獲得に戻す',
+                      onPressed: () => ref
+                          .read(wishListProvider.notifier)
+                          .togglePurchased(item),
                     ),
                 ],
               ),
@@ -104,10 +137,61 @@ class WishItemCard extends ConsumerWidget {
     );
   }
 
+  void _confirmAcquire(BuildContext context, WidgetRef ref) {
+    final navigator = Navigator.of(context);
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('獲得しましたか？'),
+        content: Text('「${item.name}」（¥${_formatMoney(item.price)}）'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('戻る'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final settings = ref.read(userSettingsProvider).settings;
+              final balanceBefore = settings.totalEarned;
+              final ok = await ref
+                  .read(wishListProvider.notifier)
+                  .togglePurchased(item);
+              if (!ok) {
+                if (context.mounted) {
+                  showAppSnackBar(
+                    context,
+                    const SnackBar(content: Text('所持金が足りません')),
+                  );
+                }
+                return;
+              }
+              navigator.push(
+                MaterialPageRoute<void>(
+                  builder: (_) => WishItemCompletionScreen(
+                    userName: settings.displayName,
+                    itemPrice: item.price,
+                    balanceBeforeYen: balanceBefore,
+                    balanceAfterYen: balanceBefore - item.price,
+                  ),
+                ),
+              );
+            },
+            child: const Text('獲得'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _placeholder(ColorScheme c) {
     return Container(
-      width: 56, height: 56,
-      decoration: BoxDecoration(color: c.primaryContainer, borderRadius: BorderRadius.circular(8)),
+      width: 56,
+      height: 56,
+      decoration: BoxDecoration(
+        color: c.primaryContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
       child: Icon(Icons.favorite_border, color: c.primary),
     );
   }

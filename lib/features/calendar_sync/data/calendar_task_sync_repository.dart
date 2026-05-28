@@ -46,9 +46,14 @@ class CalendarTaskSyncRepository {
       if (extId == null) continue;
 
       if (existingRefs.containsKey(extId)) {
-        // 更新: isCompleted はユーザー操作値を保持するため除外
+        // 更新: 完了状態とログはユーザー操作値を保持するため除外
         final updateData = task.toMap()
           ..remove('isCompleted')
+          ..remove('completedAtUtc')
+          ..remove('predictedMinutes')
+          ..remove('actualMinutes')
+          ..remove('urgency')
+          ..remove('importance')
           ..['updatedAt'] = serverNow;
         batch.update(existingRefs[extId]!, updateData);
       } else {
@@ -94,10 +99,229 @@ class CalendarTaskSyncRepository {
         .collection('tasks')
         .doc(task.id)
         .update({
-      'startAtUtc': Timestamp.fromDate(newStart.toUtc()),
-      'endAtUtc': Timestamp.fromDate(newEnd.toUtc()),
+          'startAtUtc': Timestamp.fromDate(newStart.toUtc()),
+          'endAtUtc': Timestamp.fromDate(newEnd.toUtc()),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+  }
+
+  Future<void> updateQuadrant({
+    required String taskId,
+    required bool urgency,
+    required bool importance,
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) throw Exception('Not authenticated');
+    await _db
+        .collection('users')
+        .doc(uid)
+        .collection('tasks')
+        .doc(taskId)
+        .update({
+          'urgency': urgency,
+          'importance': importance,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+  }
+
+  /// 手動タスクまたは Google タスクの詳細を更新。指定されたフィールドのみ上書き。
+  Future<void> updateTask({
+    required String taskId,
+    String? title,
+    DateTime? start,
+    DateTime? end,
+    bool? isAllDay,
+    String? description,
+    String? location,
+    String? colorId,
+    List<String>? recurrence,
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) throw Exception('Not authenticated');
+    final data = <String, dynamic>{'updatedAt': FieldValue.serverTimestamp()};
+    if (title != null) data['title'] = title;
+    if (start != null) data['startAtUtc'] = Timestamp.fromDate(start.toUtc());
+    if (end != null) data['endAtUtc'] = Timestamp.fromDate(end.toUtc());
+    if (isAllDay != null) data['isAllDay'] = isAllDay;
+    if (description != null) data['description'] = description;
+    if (location != null) data['location'] = location;
+    if (colorId != null) data['colorId'] = colorId;
+    if (recurrence != null) data['recurrence'] = recurrence;
+    await _db
+        .collection('users')
+        .doc(uid)
+        .collection('tasks')
+        .doc(taskId)
+        .update(data);
+  }
+
+  /// タスクを完了状態に遷移し、予測時間・実績時間を記録する。
+  /// [actualMinutes] が null の場合は実績ログなしで完了（確認ダイアログで「はい」を選んだケース）。
+  Future<void> completeTask({
+    required String taskId,
+    required int predictedMinutes,
+    required int? actualMinutes,
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) throw Exception('Not authenticated');
+    final data = <String, dynamic>{
+      'isCompleted': true,
+      'completedAtUtc': FieldValue.serverTimestamp(),
+      'predictedMinutes': predictedMinutes,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+    if (actualMinutes != null) data['actualMinutes'] = actualMinutes;
+    await _db
+        .collection('users')
+        .doc(uid)
+        .collection('tasks')
+        .doc(taskId)
+        .update(data);
+  }
+
+  /// 未了のまま、入力中の予測時間・実績時間だけを保存する（「保存して中断」）。
+  /// isCompleted は変更しない。
+  Future<void> saveProgress({
+    required String taskId,
+    required int predictedMinutes,
+    required int? actualMinutes,
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) throw Exception('Not authenticated');
+    final data = <String, dynamic>{
+      'predictedMinutes': predictedMinutes,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+    if (actualMinutes != null) data['actualMinutes'] = actualMinutes;
+    await _db
+        .collection('users')
+        .doc(uid)
+        .collection('tasks')
+        .doc(taskId)
+        .update(data);
+  }
+
+  /// 完了タスクを未了に戻す。actualMinutes / predictedMinutes は保持し、
+  /// isCompleted と completedAtUtc のみリセットする。
+  Future<void> uncompleteTask({required String taskId}) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) throw Exception('Not authenticated');
+    await _db
+        .collection('users')
+        .doc(uid)
+        .collection('tasks')
+        .doc(taskId)
+        .update({
+          'isCompleted': false,
+          'completedAtUtc': FieldValue.delete(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+  }
+
+  /// 新規タスクを Firestore に作成（詳細フィールド込み）。
+  /// 戻り値は生成された taskId。
+  Future<String> createTaskFull({
+    required String title,
+    required DateTime start,
+    required DateTime end,
+    bool isAllDay = false,
+    String? description,
+    String? location,
+    String? colorId,
+    String? externalCalendarId,
+    List<String>? recurrence,
+    TaskSourceType sourceType = TaskSourceType.manual,
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) throw Exception('Not authenticated');
+    final doc = await _db.collection('users').doc(uid).collection('tasks').add({
+      'title': title,
+      'startAtUtc': Timestamp.fromDate(start.toUtc()),
+      'endAtUtc': Timestamp.fromDate(end.toUtc()),
+      'reward': 0,
+      'sourceType': sourceType.name,
+      'isAllDay': isAllDay,
+      'isCompleted': false,
+      'isTodo': false,
+      'externalCalendarId': ?externalCalendarId,
+      'description': ?description,
+      'location': ?location,
+      'colorId': ?colorId,
+      'recurrence': ?recurrence,
       'updatedAt': FieldValue.serverTimestamp(),
     });
+    return doc.id;
+  }
+
+  /// externalCalendarId に一致する既存タスクの Firestore ID を返す。
+  /// 見つからなければ null（未保存）。
+  Future<String?> findTaskIdByExternalId(String externalCalendarId) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return null;
+    final snap = await _db
+        .collection('users')
+        .doc(uid)
+        .collection('tasks')
+        .where('externalCalendarId', isEqualTo: externalCalendarId)
+        .limit(1)
+        .get();
+    if (snap.docs.isEmpty) return null;
+    return snap.docs.first.id;
+  }
+
+  /// タスクを Firestore から削除。
+  Future<void> deleteTask(String taskId) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) throw Exception('Not authenticated');
+    await _db
+        .collection('users')
+        .doc(uid)
+        .collection('tasks')
+        .doc(taskId)
+        .delete();
+  }
+
+  /// 指定カレンダーの指定週ぶんの取り込み済みタスクをすべて削除する。
+  /// externalCalendarId のフォーマットは "calendarId:eventId" または
+  /// "accountId:calendarId:eventId" の双方を想定し、parts[0] か parts[1] が
+  /// [calendarId] と一致するものを対象にする。
+  Future<void> deleteTasksByCalendarInWeek({
+    required String calendarId,
+    required DateTime weekStartLocal,
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) throw Exception('Not authenticated');
+    final weekEndLocal = weekStartLocal.add(const Duration(days: 7));
+    final snapshot = await _db
+        .collection('users')
+        .doc(uid)
+        .collection('tasks')
+        .where('startAtUtc',
+            isGreaterThanOrEqualTo: Timestamp.fromDate(weekStartLocal.toUtc()))
+        .where('startAtUtc',
+            isLessThan: Timestamp.fromDate(weekEndLocal.toUtc()))
+        .get();
+
+    final targets = <DocumentReference>[];
+    for (final doc in snapshot.docs) {
+      final ext = doc.data()['externalCalendarId'] as String?;
+      if (ext == null) continue;
+      final parts = ext.split(':');
+      // 旧形式: calendarId:eventId / 新形式: accountId:calendarId:eventId
+      final extCalId = parts.length == 2
+          ? parts[0]
+          : (parts.length >= 3 ? parts[1] : null);
+      if (extCalId == calendarId) targets.add(doc.reference);
+    }
+    if (targets.isEmpty) return;
+    for (var i = 0; i < targets.length; i += 450) {
+      final batch = _db.batch();
+      final end = (i + 450) > targets.length ? targets.length : i + 450;
+      for (final ref in targets.sublist(i, end)) {
+        batch.delete(ref);
+      }
+      await batch.commit();
+    }
   }
 
   /// ToDo タスクをカレンダー予定に変換する（isTodo=false にして start/end を書き込む）。
@@ -114,10 +338,10 @@ class CalendarTaskSyncRepository {
         .collection('tasks')
         .doc(taskId)
         .update({
-      'isTodo': false,
-      'startAtUtc': Timestamp.fromDate(start.toUtc()),
-      'endAtUtc': Timestamp.fromDate(end.toUtc()),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
+          'isTodo': false,
+          'startAtUtc': Timestamp.fromDate(start.toUtc()),
+          'endAtUtc': Timestamp.fromDate(end.toUtc()),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
   }
 }

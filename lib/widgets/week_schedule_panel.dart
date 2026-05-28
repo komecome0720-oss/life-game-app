@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
+import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
+import 'package:task_manager/utils/app_messenger.dart';
 
 /// カレンダーの表示モード。
 enum CalendarViewMode { week, day }
@@ -106,6 +108,8 @@ class WeekSchedulePanel extends ConsumerStatefulWidget {
     required this.tasks,
     required this.onTaskTap,
     this.onEmptyTap,
+    this.onReadOnlyMoveAttempt,
+    this.taskIds = const <String>{},
   }) : assert(visibleDays.length >= 1 && visibleDays.length <= 7);
 
   final List<DateTime> visibleDays;
@@ -113,12 +117,21 @@ class WeekSchedulePanel extends ConsumerStatefulWidget {
   final ValueChanged<CalendarTask> onTaskTap;
   final ValueChanged<DateTime>? onEmptyTap;
 
+  /// 表示専用（未ダウンロード）の Google イベントを長押しで動かそうとしたときの通知。
+  final ValueChanged<CalendarTask>? onReadOnlyMoveAttempt;
+
+  /// 「タスク」として扱うブロックのID集合。空ならすべて非タスク扱い。
+  /// このIDに含まれるブロックは周囲に太枠を描画する。
+  final Set<String> taskIds;
+
   @override
   ConsumerState<WeekSchedulePanel> createState() => _WeekSchedulePanelState();
 }
 
 class _WeekSchedulePanelState extends ConsumerState<WeekSchedulePanel> {
-  static const double _hourHeight = 48.0;
+  static const double _defaultHourHeight = 48.0;
+  static const double _minHourHeight = 24.0;
+  static const double _maxHourHeight = 120.0;
   static const double _gutterWidth = 40.0;
   static const double _allDayRowHeight = 28.0;
   static const double _dayHeaderHeight = 32.0;
@@ -129,6 +142,9 @@ class _WeekSchedulePanelState extends ConsumerState<WeekSchedulePanel> {
   Timer? _clockTimer;
   DateTime _now = DateTime.now();
   bool _didInitialScroll = false;
+
+  double _hourHeight = _defaultHourHeight;
+  double _pinchStartHourHeight = _defaultHourHeight;
 
   @override
   void initState() {
@@ -160,7 +176,8 @@ class _WeekSchedulePanelState extends ConsumerState<WeekSchedulePanel> {
     if (!mounted) return;
     if (!success) {
       final msg = ref.read(calendarSyncViewModelProvider).errorMessage;
-      ScaffoldMessenger.of(context).showSnackBar(
+      showAppSnackBar(
+        context,
         SnackBar(content: Text(msg ?? '移動に失敗しました')),
       );
       vm.clearError();
@@ -182,7 +199,9 @@ class _WeekSchedulePanelState extends ConsumerState<WeekSchedulePanel> {
     final result = List<List<CalendarTask>>.generate(days.length, (_) => []);
     for (final t in widget.tasks) {
       final ts = t.start;
-      if (ts == null) continue; // ToDo項目はカレンダー表示対象外
+      if (ts == null || t.end == null) {
+        continue; // ToDo項目や start/end 欠損はカレンダー表示対象外
+      }
       final taskDay = DateTime(ts.year, ts.month, ts.day);
       for (var i = 0; i < days.length; i++) {
         final d = days[i];
@@ -289,8 +308,11 @@ class _WeekSchedulePanelState extends ConsumerState<WeekSchedulePanel> {
                         ),
                         child: Row(
                           children: allDayTasks.map((t) {
-                            final color =
-                                resolveTaskColor(t, calendarColors, scheme);
+                            final isTask = widget.taskIds.contains(t.id);
+                            final color = resolveTaskColor(
+                                t, calendarColors, scheme,
+                                isManaged: isTask);
+                            final completed = t.isCompleted;
                             return Expanded(
                               child: GestureDetector(
                                 onTap: () => widget.onTaskTap(t),
@@ -299,21 +321,69 @@ class _WeekSchedulePanelState extends ConsumerState<WeekSchedulePanel> {
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 4),
                                   decoration: BoxDecoration(
-                                    color: color.withValues(alpha: 0.22),
+                                    color: color.withValues(
+                                        alpha: completed ? 0.12 : 0.22),
                                     borderRadius: BorderRadius.circular(4),
-                                    border: Border(
-                                        left:
-                                            BorderSide(color: color, width: 3)),
+                                    border: isTask
+                                        ? Border.all(color: color, width: 2)
+                                        : Border(
+                                            left: BorderSide(
+                                                color: color, width: 3)),
                                   ),
                                   alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    t.title,
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                    maxLines: 1,
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          t.title,
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w600,
+                                            decoration: completed
+                                                ? TextDecoration.lineThrough
+                                                : null,
+                                            decorationThickness: 2.0,
+                                            color: completed
+                                                ? Theme.of(context)
+                                                    .textTheme
+                                                    .bodySmall
+                                                    ?.color
+                                                    ?.withValues(alpha: 0.6)
+                                                : null,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                          maxLines: 1,
+                                        ),
+                                      ),
+                                      if (isTask)
+                                        GestureDetector(
+                                          behavior: HitTestBehavior.opaque,
+                                          onTapUp: (details) =>
+                                              _showQuadrantPopup(
+                                            context,
+                                            t,
+                                            ref,
+                                            details.globalPosition,
+                                          ),
+                                          child: Padding(
+                                            padding: const EdgeInsets.only(
+                                                left: 2),
+                                            child: Container(
+                                              width: 8,
+                                              height: 8,
+                                              decoration: BoxDecoration(
+                                                color: color,
+                                                shape: BoxShape.circle,
+                                                border: Border.all(
+                                                  color: Colors.white
+                                                      .withValues(alpha: 0.8),
+                                                  width: 1,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                 ),
                               ),
@@ -329,12 +399,26 @@ class _WeekSchedulePanelState extends ConsumerState<WeekSchedulePanel> {
             const Divider(height: 1),
           ],
 
-          // ── 時間グリッド（スクロール） ────────────
+          // ── 時間グリッド（スクロール + ピンチで時間高さ拡縮） ──
           Expanded(
-            child: SingleChildScrollView(
-              controller: _scrollController,
-              child: SizedBox(
-                height: gridHeight,
+            child: GestureDetector(
+              behavior: HitTestBehavior.deferToChild,
+              onScaleStart: (details) {
+                if (details.pointerCount < 2) return;
+                _pinchStartHourHeight = _hourHeight;
+              },
+              onScaleUpdate: (details) {
+                if (details.pointerCount < 2) return;
+                final next = (_pinchStartHourHeight * details.scale)
+                    .clamp(_minHourHeight, _maxHourHeight);
+                if (next != _hourHeight) {
+                  setState(() => _hourHeight = next);
+                }
+              },
+              child: SingleChildScrollView(
+                controller: _scrollController,
+                child: SizedBox(
+                  height: gridHeight,
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -374,14 +458,17 @@ class _WeekSchedulePanelState extends ConsumerState<WeekSchedulePanel> {
                           onTaskTap: widget.onTaskTap,
                           onMoveTask: _onMoveTask,
                           onEmptyTap: widget.onEmptyTap,
+                          onReadOnlyMoveAttempt: widget.onReadOnlyMoveAttempt,
                           calendarColors: calendarColors,
                           isToday: todayIdx == i,
                           now: _now,
+                          taskIds: widget.taskIds,
                         ),
                       );
                     }),
                   ],
                 ),
+              ),
               ),
             ),
           ),
@@ -400,9 +487,11 @@ class _DayColumn extends ConsumerWidget {
     required this.onTaskTap,
     required this.onMoveTask,
     required this.onEmptyTap,
+    required this.onReadOnlyMoveAttempt,
     required this.calendarColors,
     required this.isToday,
     required this.now,
+    required this.taskIds,
   });
 
   final DateTime dayDate;
@@ -413,9 +502,11 @@ class _DayColumn extends ConsumerWidget {
   final ValueChanged<CalendarTask> onTaskTap;
   final void Function(CalendarTask task, DateTime newStart) onMoveTask;
   final ValueChanged<DateTime>? onEmptyTap;
+  final ValueChanged<CalendarTask>? onReadOnlyMoveAttempt;
   final Map<String, Color> calendarColors;
   final bool isToday;
   final DateTime now;
+  final Set<String> taskIds;
 
   DateTime _computeTimeFromLocalY(double localY) {
     final rangeStartMin = startHour * 60;
@@ -493,7 +584,7 @@ class _DayColumn extends ConsumerWidget {
                     );
                   }),
                   // タスク
-                  ...layouts.map((entry) {
+                  ...layouts.expand((entry) {
                     final task = entry.$1;
                     final lane = entry.$2;
                     final laneCount = entry.$3;
@@ -503,25 +594,37 @@ class _DayColumn extends ConsumerWidget {
                     final clipStart =
                         startMin.clamp(rangeStartMin, rangeEndMin);
                     final clipEnd = endMin.clamp(rangeStartMin, rangeEndMin);
-                    if (clipEnd <= clipStart) return const SizedBox.shrink();
+                    if (clipEnd <= clipStart) return [const SizedBox.shrink()];
                     final top = (clipStart - rangeStartMin) / 60 * hourHeight;
                     final rawHeight =
                         (clipEnd - clipStart) / 60 * hourHeight;
                     final height = rawHeight < 18 ? 18.0 : rawHeight;
-                    final color = resolveTaskColor(task, calendarColors, scheme);
+                    final isTask = taskIds.contains(task.id);
+                    final color = resolveTaskColor(
+                        task, calendarColors, scheme,
+                        isManaged: isTask);
                     final laneW = totalW / laneCount;
                     final cardWidth = laneW - 2;
 
+                    final completed = task.isCompleted;
+                    final circleSize = height < 24 ? 8.0 : 10.0;
                     final taskCard = Material(
-                      color: color.withValues(alpha: 0.22),
+                      color: color.withValues(
+                          alpha: completed ? 0.12 : 0.22),
                       borderRadius: BorderRadius.circular(4),
                       child: InkWell(
                         borderRadius: BorderRadius.circular(4),
                         onTap: () => onTaskTap(task),
                         child: Container(
                           decoration: BoxDecoration(
-                            border: Border(
-                                left: BorderSide(color: color, width: 3)),
+                            border: isTask
+                                ? Border.all(
+                                    color: color.withValues(
+                                        alpha: completed ? 0.6 : 1.0),
+                                    width: 2)
+                                : Border(
+                                    left:
+                                        BorderSide(color: color, width: 3)),
                             borderRadius: BorderRadius.circular(4),
                           ),
                           padding: const EdgeInsets.symmetric(
@@ -531,6 +634,14 @@ class _DayColumn extends ConsumerWidget {
                             style: text.bodySmall?.copyWith(
                               fontSize: 10,
                               fontWeight: FontWeight.w600,
+                              decoration: completed
+                                  ? TextDecoration.lineThrough
+                                  : null,
+                              decorationThickness: 2.0,
+                              color: completed
+                                  ? text.bodySmall?.color
+                                      ?.withValues(alpha: 0.6)
+                                  : null,
                             ),
                             overflow: TextOverflow.ellipsis,
                             maxLines:
@@ -540,59 +651,106 @@ class _DayColumn extends ConsumerWidget {
                       ),
                     );
 
-                    return Positioned(
-                      top: top,
-                      left: lane * laneW + 1,
-                      width: cardWidth,
-                      height: height,
-                      child: LongPressDraggable<CalendarTask>(
-                        data: task,
-                        delay: const Duration(milliseconds: 300),
-                        dragAnchorStrategy: childDragAnchorStrategy,
-                        onDragStarted: () => dragNotifier.setDragging(true),
-                        onDragEnd: (_) => dragNotifier.setDragging(false),
-                        onDraggableCanceled: (_, _) =>
-                            dragNotifier.setDragging(false),
-                        onDragCompleted: () =>
-                            dragNotifier.setDragging(false),
-                        feedback: Material(
-                          color: Colors.transparent,
-                          child: Container(
-                            width: cardWidth,
-                            height: height,
-                            decoration: BoxDecoration(
-                              color: color.withValues(alpha: 0.85),
-                              borderRadius: BorderRadius.circular(4),
-                              boxShadow: const [
-                                BoxShadow(
-                                  color: Colors.black38,
-                                  blurRadius: 8,
-                                  offset: Offset(2, 4),
+                    final cardLeft = lane * laneW + 1;
+                    return [
+                      Positioned(
+                        top: top,
+                        left: cardLeft,
+                        width: cardWidth,
+                        height: height,
+                        child: isTask
+                            ? LongPressDraggable<CalendarTask>(
+                                data: task,
+                                delay: const Duration(milliseconds: 300),
+                                dragAnchorStrategy: childDragAnchorStrategy,
+                                onDragStarted: () =>
+                                    dragNotifier.setDragging(true),
+                                onDragEnd: (_) =>
+                                    dragNotifier.setDragging(false),
+                                onDraggableCanceled: (_, _) =>
+                                    dragNotifier.setDragging(false),
+                                onDragCompleted: () =>
+                                    dragNotifier.setDragging(false),
+                                feedback: Material(
+                                  color: Colors.transparent,
+                                  child: Container(
+                                    width: cardWidth,
+                                    height: height,
+                                    decoration: BoxDecoration(
+                                      color: color.withValues(alpha: 0.85),
+                                      borderRadius: BorderRadius.circular(4),
+                                      boxShadow: const [
+                                        BoxShadow(
+                                          color: Colors.black38,
+                                          blurRadius: 8,
+                                          offset: Offset(2, 4),
+                                        ),
+                                      ],
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 4, vertical: 2),
+                                    child: Text(
+                                      task.title,
+                                      style: text.bodySmall?.copyWith(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.white,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: ((height - 4) / 13)
+                                          .floor()
+                                          .clamp(1, 4),
+                                    ),
+                                  ),
                                 ),
-                              ],
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 4, vertical: 2),
-                            child: Text(
-                              task.title,
-                              style: text.bodySmall?.copyWith(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
+                                childWhenDragging: Opacity(
+                                  opacity: 0.3,
+                                  child: taskCard,
+                                ),
+                                child: taskCard,
+                              )
+                            // 表示専用（未ダウンロード）の Google イベントは
+                            // ドラッグ不可。長押し（＝移動操作）のときだけ案内を出す。
+                            : GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onLongPress: onReadOnlyMoveAttempt == null
+                                    ? null
+                                    : () => onReadOnlyMoveAttempt!(task),
+                                child: taskCard,
                               ),
-                              overflow: TextOverflow.ellipsis,
-                              maxLines:
-                                  ((height - 4) / 13).floor().clamp(1, 4),
+                      ),
+                      if (isTask)
+                        Positioned(
+                          top: top + (height - circleSize) / 2,
+                          left: cardLeft + cardWidth - circleSize - 4,
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTapUp: (details) => _showQuadrantPopup(
+                              context,
+                              task,
+                              ref,
+                              details.globalPosition,
+                            ),
+                            child: Container(
+                              width: circleSize + 4,
+                              height: circleSize + 4,
+                              alignment: Alignment.center,
+                              child: Container(
+                                width: circleSize,
+                                height: circleSize,
+                                decoration: BoxDecoration(
+                                  color: color,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.8),
+                                    width: 1,
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                        childWhenDragging: Opacity(
-                          opacity: 0.3,
-                          child: taskCard,
-                        ),
-                        child: taskCard,
-                      ),
-                    );
+                    ];
                   }),
                   // 現在時刻ライン（今日の列のみ）
                   if (isToday)
@@ -690,13 +848,18 @@ List<(CalendarTask, int, int)> _layoutTasks(List<CalendarTask> tasks) {
 }
 
 /// タスクの色を解決する。
-/// - Google イベントならカレンダー色（externalCalendarId の "calendarId:..." から抽出）
-/// - 不明なら TaskSourceType に応じたフォールバック
+/// managed（Firestore 管理下）なら象限色、未管理 Google イベントならカレンダー色。
 Color resolveTaskColor(
   CalendarTask task,
   Map<String, Color> calendarColors,
-  ColorScheme scheme,
-) {
+  ColorScheme scheme, {
+  bool isManaged = false,
+}) {
+  if (isManaged) {
+    final q = QuadrantX.from(
+        urgency: task.urgency, importance: task.importance);
+    return q.accentColor(scheme);
+  }
   if (task.sourceType == TaskSourceType.googleCalendar &&
       task.externalCalendarId != null) {
     final raw = task.externalCalendarId!;
@@ -708,4 +871,65 @@ Color resolveTaskColor(
     return Colors.blueGrey;
   }
   return scheme.primary;
+}
+
+Future<void> _showQuadrantPopup(
+  BuildContext context,
+  CalendarTask task,
+  WidgetRef ref,
+  Offset globalPosition,
+) async {
+  final scheme = Theme.of(context).colorScheme;
+  final currentQ = QuadrantX.from(
+    urgency: task.urgency,
+    importance: task.importance,
+  );
+
+  final selected = await showMenu<Quadrant>(
+    context: context,
+    position: RelativeRect.fromLTRB(
+      globalPosition.dx,
+      globalPosition.dy,
+      globalPosition.dx,
+      globalPosition.dy,
+    ),
+    items: Quadrant.values.map((q) {
+      final isCurrent = q == currentQ;
+      return PopupMenuItem<Quadrant>(
+        value: q,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: q.accentColor(scheme),
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              q.label,
+              style: TextStyle(
+                fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+            if (isCurrent) ...[
+              const SizedBox(width: 4),
+              Icon(Icons.check, size: 16, color: scheme.primary),
+            ],
+          ],
+        ),
+      );
+    }).toList(),
+  );
+
+  if (selected == null || selected == currentQ) return;
+
+  await ref.read(calendarTaskSyncRepositoryProvider).updateQuadrant(
+    taskId: task.id,
+    urgency: selected.urgency,
+    importance: selected.importance,
+  );
 }

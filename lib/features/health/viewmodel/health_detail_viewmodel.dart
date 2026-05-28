@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:task_manager/features/auth/providers/auth_providers.dart';
 import 'package:task_manager/features/health/model/health_category.dart';
 import 'package:task_manager/features/health/model/health_log.dart';
 import 'package:task_manager/features/health/model/health_scoring.dart';
@@ -59,13 +60,67 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     ref.onDispose(() {
       _midnightTimer?.cancel();
     });
-    _scheduleMidnightLock();
-    // 初期ロードは非同期。現時点は今日の空ログで isLoading=true。
-    unawaited(_load());
-    return HealthDetailState(
-      log: HealthLog(dateKey: _todayKey(DateTime.now())),
-      isLoading: true,
+    // ログイン状態（uid）の変化を購読し、サインイン直後に再ビルド→再ロードする。
+    final uid = ref.watch(
+      authStateProvider.select((async) => async.asData?.value?.uid),
     );
+    _scheduleMidnightLock();
+    // 目標値や時間単価が変わったら、再計算して保存する。
+    ref.listen<UserSettingsState>(userSettingsProvider, (prev, next) {
+      if (prev == null) return;
+      if (_goalsAffectScore(prev.settings, next.settings)) {
+        _onGoalsChanged();
+      }
+    });
+    final emptyLog = HealthLog(dateKey: _todayKey(DateTime.now()));
+    if (uid == null) {
+      return HealthDetailState(log: emptyLog, isLoading: false);
+    }
+    // 初期ロードは非同期。現時点は今日の空ログで isLoading=true。
+    Future.microtask(() => _load(uid));
+    return HealthDetailState(log: emptyLog, isLoading: true);
+  }
+
+  bool _goalsAffectScore(UserSettings a, UserSettings b) {
+    return a.mealGoalGrams != b.mealGoalGrams ||
+        a.exerciseGoalMinutes != b.exerciseGoalMinutes ||
+        a.sleepGoalHours != b.sleepGoalHours ||
+        a.sleepGoalMinutesExtra != b.sleepGoalMinutesExtra ||
+        a.meditationGoalMinutes != b.meditationGoalMinutes ||
+        a.hourlyRate != b.hourlyRate;
+  }
+
+  Future<void> _onGoalsChanged() async {
+    if (state.isLoading || !state.isEditableNow || state.log.isFinalized) {
+      return;
+    }
+    final uid = _uid;
+    if (uid == null) return;
+    final settings = ref.read(userSettingsProvider).settings;
+    final recomputed = _recompute(state.log, settings);
+    if (recomputed.totalScore == state.log.totalScore &&
+        recomputed.provisionalEarnedYen == state.log.provisionalEarnedYen) {
+      return;
+    }
+    final lastSaved = state.lastSavedProvisionalYen;
+    final delta = recomputed.provisionalEarnedYen - lastSaved;
+    state = state.copyWith(log: recomputed);
+    try {
+      await _db
+          .collection('users')
+          .doc(uid)
+          .collection('healthLogs')
+          .doc(recomputed.dateKey)
+          .set(recomputed.toFirestore(), SetOptions(merge: true));
+      state = state.copyWith(
+        lastSavedProvisionalYen: recomputed.provisionalEarnedYen,
+      );
+      if (delta != 0) {
+        await ref.read(userSettingsProvider.notifier).adjustBalance(delta);
+      }
+    } catch (e) {
+      state = state.copyWith(errorMessage: '保存に失敗しました: $e');
+    }
   }
 
   static String _todayKey(DateTime now) {
@@ -85,12 +140,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     });
   }
 
-  Future<void> _load() async {
-    final uid = _uid;
-    if (uid == null) {
-      state = state.copyWith(isLoading: false);
-      return;
-    }
+  Future<void> _load(String uid) async {
     final todayKey = _todayKey(DateTime.now());
     try {
       final col = _db.collection('users').doc(uid).collection('healthLogs');
@@ -98,6 +148,8 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       await _finalizePastLogs(col, todayKey);
 
       final doc = await col.doc(todayKey).get();
+      // ロード中にユーザーが切り替わった場合は破棄
+      if (_uid != uid) return;
       final HealthLog log = doc.exists
           ? HealthLog.fromFirestore(doc)
           : HealthLog(dateKey: todayKey);
@@ -109,6 +161,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
         lastSavedProvisionalYen: log.provisionalEarnedYen,
       );
     } catch (e) {
+      if (_uid != uid) return;
       state = state.copyWith(isLoading: false, errorMessage: '読み込みに失敗しました: $e');
     }
   }
@@ -216,18 +269,15 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
   }
 
   HealthLog _recompute(HealthLog log, UserSettings s) {
-    final mealLevel = HealthScoring.level(log.mealGrams, s.mealGoalGrams);
-    final exerciseLevel =
-        HealthScoring.level(log.exerciseMinutes, s.exerciseGoalMinutes);
     final sleepGoalMin = s.sleepGoalHours * 60 + s.sleepGoalMinutesExtra;
-    final sleepLevel = HealthScoring.level(log.sleepMinutes, sleepGoalMin);
-    final meditationLevel =
-        HealthScoring.level(log.meditationMinutes, s.meditationGoalMinutes);
-
-    final mealScore = mealLevel * 3;
-    final sleepScore = sleepLevel * 3;
-    final exerciseScore = exerciseLevel * 2;
-    final meditationScore = meditationLevel * 2;
+    // 比率から直接スコアを算出する。`level × weight` だと小数点切り捨ての
+    // ズレで点数が目標達成度を正確に反映しないため。
+    final mealScore = HealthScoring.score(log.mealGrams, s.mealGoalGrams, 3);
+    final sleepScore = HealthScoring.score(log.sleepMinutes, sleepGoalMin, 3);
+    final exerciseScore =
+        HealthScoring.score(log.exerciseMinutes, s.exerciseGoalMinutes, 2);
+    final meditationScore = HealthScoring.score(
+        log.meditationMinutes, s.meditationGoalMinutes, 2);
     final totalScore =
         mealScore + sleepScore + exerciseScore + meditationScore;
     final provisional =

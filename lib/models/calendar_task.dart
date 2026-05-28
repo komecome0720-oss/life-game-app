@@ -27,6 +27,14 @@ class CalendarTask {
     this.orderIndex = 0,
     this.note,
     this.estimatedMinutes,
+    this.description,
+    this.location,
+    this.colorId,
+    this.recurrence,
+    this.recurringEventId,
+    this.completedAt,
+    this.predictedMinutes,
+    this.actualMinutes,
   });
 
   final String id;
@@ -64,6 +72,30 @@ class CalendarTask {
   /// 予想所要時間（分）
   final int? estimatedMinutes;
 
+  /// 予定の説明（Google: event.description）
+  final String? description;
+
+  /// 場所（Google: event.location）
+  final String? location;
+
+  /// Google colorId（1〜11、null はカレンダーデフォルト色）
+  final String? colorId;
+
+  /// RRULE 文字列の配列。Google 繰り返しイベントに使用。手動タスクも対応予定。
+  final List<String>? recurrence;
+
+  /// Google 繰り返しマスターの eventId。単発インスタンスからマスター編集に使う。
+  final String? recurringEventId;
+
+  /// 完了時刻（端末ローカル時刻）。未完了なら null。
+  final DateTime? completedAt;
+
+  /// 予測時間（分）。完了時にカレンダー枠または手入力から記録される。
+  final int? predictedMinutes;
+
+  /// 実績時間（分）。タイマーまたは手入力から記録される。null なら未記録（ログなし完了）。
+  final int? actualMinutes;
+
   CalendarTask copyWith({
     String? title,
     DateTime? start,
@@ -80,6 +112,14 @@ class CalendarTask {
     int? orderIndex,
     String? note,
     int? estimatedMinutes,
+    String? description,
+    String? location,
+    String? colorId,
+    List<String>? recurrence,
+    String? recurringEventId,
+    DateTime? completedAt,
+    int? predictedMinutes,
+    int? actualMinutes,
   }) {
     return CalendarTask(
       id: id,
@@ -98,6 +138,14 @@ class CalendarTask {
       orderIndex: orderIndex ?? this.orderIndex,
       note: note ?? this.note,
       estimatedMinutes: estimatedMinutes ?? this.estimatedMinutes,
+      description: description ?? this.description,
+      location: location ?? this.location,
+      colorId: colorId ?? this.colorId,
+      recurrence: recurrence ?? this.recurrence,
+      recurringEventId: recurringEventId ?? this.recurringEventId,
+      completedAt: completedAt ?? this.completedAt,
+      predictedMinutes: predictedMinutes ?? this.predictedMinutes,
+      actualMinutes: actualMinutes ?? this.actualMinutes,
     );
   }
 
@@ -117,6 +165,15 @@ class CalendarTask {
       'orderIndex': orderIndex,
       if (note != null) 'note': note,
       if (estimatedMinutes != null) 'estimatedMinutes': estimatedMinutes,
+      if (description != null) 'description': description,
+      if (location != null) 'location': location,
+      if (colorId != null) 'colorId': colorId,
+      if (recurrence != null) 'recurrence': recurrence,
+      if (recurringEventId != null) 'recurringEventId': recurringEventId,
+      if (completedAt != null)
+        'completedAtUtc': Timestamp.fromDate(completedAt!.toUtc()),
+      if (predictedMinutes != null) 'predictedMinutes': predictedMinutes,
+      if (actualMinutes != null) 'actualMinutes': actualMinutes,
     };
   }
 
@@ -143,6 +200,14 @@ class CalendarTask {
       orderIndex: (data['orderIndex'] as num?)?.toInt() ?? 0,
       note: data['note'] as String?,
       estimatedMinutes: (data['estimatedMinutes'] as num?)?.toInt(),
+      description: data['description'] as String?,
+      location: data['location'] as String?,
+      colorId: data['colorId'] as String?,
+      recurrence: (data['recurrence'] as List?)?.whereType<String>().toList(),
+      recurringEventId: data['recurringEventId'] as String?,
+      completedAt: (data['completedAtUtc'] as Timestamp?)?.toDate().toLocal(),
+      predictedMinutes: (data['predictedMinutes'] as num?)?.toInt(),
+      actualMinutes: (data['actualMinutes'] as num?)?.toInt(),
     );
   }
 }

@@ -1,142 +1,67 @@
 # CLAUDE.md — タスク管理アプリ（時間単価ご褒美システム）
 
-## プロジェクト概要
-
-ゲーミフィケーションの考え方を取り入れたタスク管理アプリ。
-ユーザーが「月のお小遣い ÷ 月の目標時間 = 時間単価」を設定し、
-タスクをこなすごとにその単価分の仮想報酬が得られる仕組み。
-
-**例：** 月3万円 ÷ 月10時間 = 1時間あたり3,000円
-
----
-
-## ターゲット・公開方針
-
-- プラットフォーム：iOS（将来的にAndroidも検討）
-- 公開対象：将来的に多くのユーザーに公開予定
-- ログイン：必須（複数端末で同期）
+> このプロジェクトに関する仕様・設計・実装状況・開発経過などのドキュメントは
+> **すべて `obsidian/` 配下の Obsidian vault** に集約されている。
+> 詳細を確認したり追記するときは、まず `obsidian/` を見ること。
+>
+> 実体は Google Drive 上：
+> `~/Library/CloudStorage/GoogleDrive-n.kometani@re-startlaw.com/マイドライブ/Obsidian Vault - life_game_app`
+> プロジェクト直下の `obsidian/` はそのシンボリックリンク（gitignore 済み）。
 
 ---
 
-## 技術スタック
+## 最低限おさえる情報
 
-- フレームワーク：Flutter
-- データベース：Firebase Firestore
-- 認証：Firebase Authentication
-  - Appleでログイン（App Store要件のため必須）
-  - Googleでログイン
-  - メールアドレス＋パスワード
-- アーキテクチャ：Riverpod + MVVM パターン
-- 開発ツール：Cursor / Claude Code
+- 何を作るか：時間単価（月のお小遣い ÷ 月の目標時間）でタスクをこなすたびに仮想報酬が貯まるタスク管理アプリ
+- スタック：Flutter / Firebase（Firestore + Auth）/ Riverpod + MVVM / iOS優先
+- ファイル構成：feature-first（`lib/features/<feature>/{model,data,viewmodel,view,widgets}`）
+- 状態管理：**Riverpod のみ**（Provider / GetX は禁止）
+
+詳しくは → `obsidian/10_Project/プロジェクト概要.md` 起点で各ノートを辿る。
 
 ---
 
-## コーディングルール
+## 絶対に守ること（毎回参照）
 
-- 言語：Dart（Flutter標準）
-- 状態管理：Riverpod を使うこと（Provider・GetXは使わない）
-- ファイル構成：機能ごとにフォルダを分ける（feature-first構成）
-- コメント：日本語で書いてよい
-- 命名規則：Dartの標準に従う（クラス名はUpperCamelCase、変数はlowerCamelCase）
+### セキュリティ
+- Firebase の API キーや秘密鍵をコードに直書きしない
+  - `lib/firebase_options.dart`、`**/google-services.json`、`**/GoogleService-Info.plist` はコミット禁止＆Obsidianにも置かない
+- Firestore のセキュリティルールは必ず設定（認証済みユーザーが自分のデータのみアクセス可）
 
----
+### UIメッセージ（必読）
+SnackBar / バナー等の非モーダル通知の表示中は、メッセージ以外のタップは「メッセージを閉じる」のみ。
+- 新規 SnackBar は `lib/utils/app_messenger.dart` の `showAppSnackBar()` 経由でのみ表示
+- 新規画面の `Scaffold.body` は `MessageGuard`（`lib/widgets/message_guard.dart`）でラップ
+- 独自オーバーレイ通知も `messageVisibleNotifier` を ON/OFF して `MessageGuard` の対象にする
 
-## 画面構成
-
-### 1. ホーム画面（実装済み）
-
-画面を上下 3:7 に分割。
-
-**上部エリア（3割）**
-- 左上：ユーザーステータス（取得済み報酬残高、レベルなど）
-- 右上：健康管理（実装済み）
-
-**下部エリア（7割）**
-- カレンダー：タスクをカレンダー形式で表示
-  - Googleカレンダー / Appleカレンダーと連携（ベース）
-  - 手動でのタスク追加も可能
+詳細 → `obsidian/10_Project/UI共通ルール.md`
 
 ---
 
-### 2. 欲しいものリスト画面
+## 開発の記録（必須運用）
 
-| 機能 | 詳細 |
-|---|---|
-| アイテム追加 | 名前を手入力で追加 |
-| 価格入力 | 金額を入力すると「あと何時間分のタスクで買えるか」を自動計算・表示 |
-| 購入済みチェック | チェックを入れると購入済みとしてマーク |
-| 画像・URL登録 | 商品画像またはURLを紐づけて登録できる |
+**このプロジェクトで作業したら、必ず `obsidian/20_Daily/YYYY-MM-DD.md` に作業内容を追記すること。**
 
----
+- ファイルがなければ新規作成（テンプレ：下記）
+- セッション終了時にまとめて追記でよい
+- 「何をやったか」「次にやること」「気づき・メモ」の3点を簡潔に
+- 大きなマイルストーン（機能追加・大幅リファクタ等）は `obsidian/10_Project/開発経過.md` にも追記
+- コミット作成時もこのログを更新する
 
-### 3. 設定画面（未実装）
+### Daily テンプレート
 
-- 月のお小遣い（円）を入力
-- 月の目標時間（時間）を入力
-- → 時間単価を自動計算して保存
+```markdown
+# YYYY-MM-DD
 
----
+## 今日やったこと
 
-## データモデル（Firestore）
+-
 
+## 次にやること
+
+-
+
+## メモ
+
+-
 ```
-users/{userId}
-  - monthlyBudget: number        // 月のお小遣い（円）
-  - monthlyTargetHours: number   // 月の目標時間
-  - hourlyRate: number           // 時間単価（自動計算）
-  - totalEarned: number          // 累計獲得報酬
-  - createdAt: timestamp
-
-users/{userId}/tasks/{taskId}
-  - title: string                // タスク名
-  - durationMinutes: number      // 所要時間（分）
-  - reward: number               // 報酬額（時間単価×時間）
-  - isCompleted: boolean         // 完了フラグ
-  - completedAt: timestamp
-  - scheduledDate: timestamp     // カレンダー表示用
-  - externalCalendarId: string   // 外部カレンダー連携ID（任意）
-
-users/{userId}/wishlist/{itemId}
-  - name: string                 // 欲しいもの名
-  - price: number                // 価格（円）
-  - imageUrl: string             // 商品画像URL（任意）
-  - shopUrl: string              // 購入先URL（任意）
-  - isPurchased: boolean         // 購入済みフラグ
-  - createdAt: timestamp
-```
-
----
-
-## 主要ビジネスロジック
-
-```
-// 時間単価の計算
-hourlyRate = monthlyBudget / monthlyTargetHours
-
-// タスク完了時の報酬
-reward = hourlyRate × (durationMinutes / 60)
-
-// 欲しいものを買うために必要な時間
-requiredHours = itemPrice / hourlyRate
-```
-
----
-
-## 現在の実装状況
-
-- [x] ホーム画面（UI）
-- [x] 健康管理パート
-- [ ] カレンダー機能（タスク表示・手動追加）
-- [ ] 外部カレンダー連携
-- [ ] 欲しいものリスト画面
-- [ ] 設定画面
-- [ ] Firebase セットアップ
-- [ ] ログイン機能
-
----
-
-## 注意事項
-
-- Firebase の API キーや秘密鍵は絶対にコードに直書きしない（`.env` または `firebase_options.dart` を使う）
-- App Store 申請のため、Apple ログインは必ず実装すること
-- Firestore のセキュリティルールを必ず設定すること（認証済みユーザーのみ自分のデータにアクセス可）

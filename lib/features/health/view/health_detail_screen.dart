@@ -5,6 +5,8 @@ import 'package:task_manager/features/health/viewmodel/health_detail_viewmodel.d
 import 'package:task_manager/features/health/widgets/health_item_row.dart';
 import 'package:task_manager/features/health/widgets/total_cards.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
+import 'package:task_manager/utils/app_messenger.dart';
+import 'package:task_manager/widgets/message_guard.dart';
 
 class HealthDetailScreen extends ConsumerWidget {
   const HealthDetailScreen({super.key});
@@ -17,7 +19,8 @@ class HealthDetailScreen extends ConsumerWidget {
     ref.listen<HealthDetailState>(healthDetailViewModelProvider, (prev, next) {
       final msg = next.errorMessage;
       if (msg != null && msg.isNotEmpty && prev?.errorMessage != msg) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        showAppSnackBar(
+          context,
           SnackBar(
             content: Text(msg),
             backgroundColor: Theme.of(context).colorScheme.error,
@@ -32,40 +35,47 @@ class HealthDetailScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('健康管理'),
       ),
-      body: state.isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(12),
-              children: [
-                if (!editable)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: _LockBanner(isFinalized: state.log.isFinalized),
-                  ),
-                for (final c in HealthCategory.values)
-                  HealthItemRow(
-                    category: c,
-                    log: state.log,
-                    settings: settings,
-                    enabled: editable,
-                  ),
-                const SizedBox(height: 4),
-                Row(
+      body: MessageGuard(
+        child: state.isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : SingleChildScrollView(
+                padding: const EdgeInsets.all(12),
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Expanded(child: TotalScoreCard(log: state.log)),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TotalEarningsCard(
+                    if (!editable)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: _LockBanner(isFinalized: state.log.isFinalized),
+                      ),
+                    for (final c in HealthCategory.values)
+                      HealthItemRow(
+                        category: c,
                         log: state.log,
-                        onHelpTap: () => _showHelpDialog(context),
+                        settings: settings,
+                        enabled: editable,
+                      ),
+                    const SizedBox(height: 4),
+                    IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(child: TotalScoreCard(log: state.log)),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: TotalEarningsCard(
+                              log: state.log,
+                              onHelpTap: () => _showHelpDialog(context),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
+                    const SizedBox(height: 16),
                   ],
                 ),
-                const SizedBox(height: 16),
-              ],
-            ),
+              ),
+      ),
     );
   }
 

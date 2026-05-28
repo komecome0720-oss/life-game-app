@@ -103,6 +103,7 @@ class UserSettings {
       'monthlyBudget': monthlyBudget,
       'monthlyQuestDays': monthlyQuestDays,
       'dailyQuestMinutes': dailyQuestMinutes,
+      'totalEarned': totalEarned,
       'hourlyRate': hourlyRate,
       'mealGoalGrams': mealGoalGrams,
       'exerciseGoalMinutes': exerciseGoalMinutes,

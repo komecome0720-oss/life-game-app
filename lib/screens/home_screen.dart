@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/data/mock_home_data.dart';
 import 'package:task_manager/features/auth/providers/auth_providers.dart';
+import 'package:task_manager/features/calendar_sync/model/google_account_info.dart';
 import 'package:task_manager/features/calendar_sync/model/google_calendar_source.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
 import 'package:task_manager/features/health/model/health_category.dart';
@@ -13,7 +14,10 @@ import 'package:task_manager/features/user_settings/viewmodel/user_settings_view
 import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/models/health_scores.dart';
 import 'package:task_manager/screens/task_completion_screen.dart';
+import 'package:task_manager/screens/task_editor_screen.dart';
+import 'package:task_manager/utils/app_messenger.dart';
 import 'package:task_manager/widgets/health_panel.dart';
+import 'package:task_manager/widgets/message_guard.dart';
 import 'package:task_manager/widgets/quick_create_sheet.dart';
 import 'package:task_manager/widgets/task_event_detail_sheet.dart';
 import 'package:task_manager/widgets/user_status_panel.dart';
@@ -26,7 +30,8 @@ class HomeScreen extends ConsumerStatefulWidget {
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends ConsumerState<HomeScreen> {
+class _HomeScreenState extends ConsumerState<HomeScreen>
+    with WidgetsBindingObserver {
   static const int _initialPage = 5000;
 
   late DateTime _baseWeekStart;
@@ -49,6 +54,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final now = DateTime.now();
     _weekStartDay =
         ref.read(userSettingsProvider).settings.weekStartDay;
@@ -56,16 +62,68 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     _baseDay = DateTime(now.year, now.month, now.day);
     _weekPageController = PageController(initialPage: _initialPage);
     _dayPageController = PageController(initialPage: _initialPage);
+    // 起動時に「ダウンロード対象」のカレンダーの当該週を取り込む（idempotent）
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _autoRollImportForCurrentWeek();
+    });
   }
 
   Timer? _edgePagerTimer;
+  Timer? _autoImportDebounceTimer;
+  // 同じ週への重複importを抑止する直近キー。resumed時はforce=trueで無視。
+  DateTime? _lastImportedWeekStart;
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _edgePagerTimer?.cancel();
+    _autoImportDebounceTimer?.cancel();
     _weekPageController.dispose();
     _dayPageController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // 復帰時は最新化したいのでガードを無視
+      _autoRollImportForCurrentWeek(force: true);
+    }
+  }
+
+  /// ダウンロード設定中のカレンダーについて、指定週ぶんを Firestore に取り込む。
+  /// 既存タスクは upsert で更新されるため、起動／復帰のたびに呼んでも安全。
+  /// [weekStart] 省略時は「今日基準の今週」。過去週は自動取り込み対象外。
+  Future<void> _autoRollImportForCurrentWeek({
+    DateTime? weekStart,
+    bool force = false,
+  }) async {
+    final account = ref.read(currentGoogleAccountProvider);
+    if (account == null) return;
+    final dlMap = ref.read(calendarDownloadMapProvider);
+    final calIds = dlMap[account.id];
+    if (calIds == null || calIds.isEmpty) return;
+    final target = weekStart ?? startOfWeek(DateTime.now(), _weekStartDay);
+
+    // 過去週は自動対象外。明示的なDL導線（SnackBar）で対応する。
+    final thisWeek = startOfWeek(DateTime.now(), _weekStartDay);
+    if (target.isBefore(thisWeek)) return;
+
+    if (!force && _lastImportedWeekStart == target) return;
+    _lastImportedWeekStart = target;
+
+    final vm = ref.read(calendarSyncViewModelProvider.notifier);
+    for (final calId in calIds) {
+      try {
+        await vm.importWeek(
+          calendarId: calId,
+          weekStart: target,
+          accountId: account.id,
+        );
+      } catch (_) {
+        // 個別失敗は他をブロックしない
+      }
+    }
   }
 
   // ── 日ビュードラッグ中の画面端ページング ─────────────────────
@@ -109,26 +167,307 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     });
   }
 
+  // 連続スワイプ時の余計な fetch を避けるため、最後に止まった週だけを取り込む。
+  void _scheduleAutoImport(DateTime weekStart) {
+    _autoImportDebounceTimer?.cancel();
+    _autoImportDebounceTimer = Timer(const Duration(milliseconds: 400), () {
+      _autoImportDebounceTimer = null;
+      if (!mounted) return;
+      _autoRollImportForCurrentWeek(weekStart: weekStart);
+    });
+  }
+
   DateTime _weekStartForPage(int index) =>
       _baseWeekStart.add(Duration(days: (index - _initialPage) * 7));
 
   DateTime _dayForPage(int index) =>
       _baseDay.add(Duration(days: index - _initialPage));
 
+  /// カレンダー枠（または ToDo の estimatedMinutes）から見込時間を算出。
+  int _predictedMinutesFor(CalendarTask task) {
+    if (task.isTodo) return task.estimatedMinutes ?? 0;
+    final s = task.start;
+    final e = task.end;
+    if (s != null && e != null) {
+      final m = e.difference(s).inMinutes;
+      if (m < 0) return 0;
+      if (m > 24 * 60) return 24 * 60;
+      return m;
+    }
+    return task.estimatedMinutes ?? 0;
+  }
+
+  /// 時間単価ベースで報酬を算出。単価未設定時は既存 reward にフォールバック。
+  int _calcReward({
+    required double hourlyRate,
+    required int minutes,
+    required int fallbackYen,
+  }) {
+    if (hourlyRate > 0 && minutes > 0) {
+      return (hourlyRate * minutes / 60).round();
+    }
+    return fallbackYen;
+  }
+
   Future<void> _openTask(CalendarTask task) async {
+    final settings = ref.read(userSettingsProvider).settings;
+    final predictedMinutes = _predictedMinutesFor(task);
+    final expectedReward = _calcReward(
+      hourlyRate: settings.hourlyRate,
+      minutes: predictedMinutes,
+      fallbackYen: task.rewardYen,
+    );
+
     await showTaskEventDetailSheet(
       context: context,
       task: task,
-      onComplete: () {
+      predictedMinutes: predictedMinutes,
+      expectedRewardYen: expectedReward,
+      onTimerStart: () async {
+        // リモート表示中なら DB に promote（保存済みなら no-op）
+        await ref
+            .read(calendarSyncViewModelProvider.notifier)
+            .promoteRemoteTaskIfNeeded(task);
+      },
+      onPauseAndSave: ({required predictedMinutes, required actualMinutes}) async {
+        // 完了済みタスクには保存して中断を行わない（未了に戻す経路を使うべき）。
+        if (task.isCompleted) return;
+
+        // リモート表示中なら DB に promote。戻り値は taskId（保存済みなら既存ID）。
+        final taskId = await ref
+            .read(calendarSyncViewModelProvider.notifier)
+            .promoteRemoteTaskIfNeeded(task);
+        if (taskId == null) {
+          if (mounted) {
+            _showErrorSnackBar('タスクの保存に失敗したため、中断できませんでした');
+          }
+          return;
+        }
+
+        try {
+          await ref.read(calendarTaskSyncRepositoryProvider).saveProgress(
+                taskId: taskId,
+                predictedMinutes: predictedMinutes,
+                actualMinutes: actualMinutes,
+              );
+        } catch (e) {
+          if (mounted) _showErrorSnackBar('保存に失敗しました: $e');
+          return;
+        }
+
         if (!mounted) return;
+        showAppSnackBar(
+          context,
+          const SnackBar(content: Text('一時中断しました（未了のまま保存）')),
+        );
+      },
+      onSaveProgress: ({required predictedMinutes, required actualMinutes}) async {
+        // 完了済みタスクは保存対象としない（未了に戻してから操作する）。
+        if (task.isCompleted) return;
+
+        // リモート表示中なら DB に promote。戻り値は taskId（保存済みなら既存ID）。
+        final taskId = await ref
+            .read(calendarSyncViewModelProvider.notifier)
+            .promoteRemoteTaskIfNeeded(task);
+        if (taskId == null) {
+          if (mounted) {
+            _showErrorSnackBar('タスクの保存に失敗しました');
+          }
+          return;
+        }
+
+        try {
+          await ref.read(calendarTaskSyncRepositoryProvider).saveProgress(
+                taskId: taskId,
+                predictedMinutes: predictedMinutes,
+                actualMinutes: actualMinutes,
+              );
+        } catch (e) {
+          if (mounted) _showErrorSnackBar('保存に失敗しました: $e');
+          return;
+        }
+
+        if (!mounted) return;
+        showAppSnackBar(
+          context,
+          const SnackBar(content: Text('保存しました')),
+        );
+      },
+      onRevert: () async {
+        if (!task.isCompleted) return false;
+        // 付与済み報酬を打ち消すため、完了時と同じ算出ロジックで現在のレートで再計算する。
+        // （完了時の報酬を保存していないため厳密一致ではないが、レート未変更なら一致する）
+        final latestSettings = ref.read(userSettingsProvider).settings;
+        final minutesForReward =
+            task.actualMinutes ?? task.predictedMinutes ?? predictedMinutes;
+        final reward = _calcReward(
+          hourlyRate: latestSettings.hourlyRate,
+          minutes: minutesForReward,
+          fallbackYen: task.rewardYen,
+        );
+
+        try {
+          await ref
+              .read(calendarTaskSyncRepositoryProvider)
+              .uncompleteTask(taskId: task.id);
+        } catch (e) {
+          if (mounted) _showErrorSnackBar('未了への変更に失敗しました: $e');
+          return false;
+        }
+
+        if (reward > 0) {
+          await ref
+              .read(userSettingsProvider.notifier)
+              .adjustBalance(-reward);
+        }
+
+        if (!mounted) return true;
+        showAppSnackBar(
+          context,
+          const SnackBar(content: Text('未了に戻しました')),
+        );
+        return true;
+      },
+      onTimesChanged: ({required newStart, required newEnd}) async {
+        try {
+          await ref.read(calendarTaskSyncRepositoryProvider).updateTask(
+                taskId: task.id,
+                start: newStart,
+                end: newEnd,
+              );
+          if (task.sourceType == TaskSourceType.googleCalendar &&
+              task.externalCalendarId != null) {
+            final key = ExternalCalendarKey.tryParse(task.externalCalendarId);
+            if (key != null) {
+              await ref.read(googleCalendarRepositoryProvider).patchEvent(
+                    calendarId: key.calendarId,
+                    eventId: key.eventId,
+                    newStartLocal: newStart,
+                    newEndLocal: newEnd,
+                  );
+            }
+          }
+          return true;
+        } catch (e) {
+          if (mounted) _showErrorSnackBar('時刻の更新に失敗しました: $e');
+          return false;
+        }
+      },
+      onComplete: ({required predictedMinutes, required actualMinutes}) async {
+        // 注: シートを開いた時点の task.isCompleted で二重完了ガードは行わない。
+        // 「未了に戻す」→「チェック」の同一シート内フローでは、ローカルの task は
+        // 元の isCompleted=true のままになるため、ここで弾くと再完了できなくなる。
+        // 完了状態の最終判定はシート側 _isCompleted に任せ、Firestore 側も
+        // completeTask は idempotent なので二重実行されても問題ない。
+
+        // リモート表示中なら DB に promote。戻り値は taskId（保存済みなら既存ID）。
+        final taskId = await ref
+            .read(calendarSyncViewModelProvider.notifier)
+            .promoteRemoteTaskIfNeeded(task);
+        if (taskId == null) {
+          if (mounted) {
+            _showErrorSnackBar('タスクの保存に失敗したため、完了できませんでした');
+          }
+          return;
+        }
+
+        final latestSettings = ref.read(userSettingsProvider).settings;
+        final minutesForReward = actualMinutes ?? predictedMinutes;
+        final reward = _calcReward(
+          hourlyRate: latestSettings.hourlyRate,
+          minutes: minutesForReward,
+          fallbackYen: task.rewardYen,
+        );
+        final balanceBeforeYen = latestSettings.totalEarned;
+
+        try {
+          await ref.read(calendarTaskSyncRepositoryProvider).completeTask(
+                taskId: taskId,
+                predictedMinutes: predictedMinutes,
+                actualMinutes: actualMinutes,
+              );
+        } catch (e) {
+          if (mounted) _showErrorSnackBar('完了状態の保存に失敗しました: $e');
+          return;
+        }
+
+        if (reward > 0) {
+          await ref
+              .read(userSettingsProvider.notifier)
+              .adjustBalance(reward);
+        }
+
+        if (!mounted) return;
+        final balanceAfterYen = balanceBeforeYen + reward;
         Navigator.of(context).push<void>(
           MaterialPageRoute<void>(
-            builder: (context) => TaskCompletionScreen(
+            builder: (_) => TaskCompletionScreen(
               taskTitle: task.title,
-              rewardYen: task.rewardYen,
+              rewardYen: reward,
+              balanceBeforeYen: balanceBeforeYen,
+              balanceAfterYen: balanceAfterYen,
             ),
           ),
         );
+      },
+      onEdit: () {
+        if (!mounted) return;
+        Navigator.of(context).push<bool>(
+          MaterialPageRoute<bool>(
+            builder: (_) => TaskEditorScreen(
+              mode: TaskEditorMode.edit,
+              initial: task,
+            ),
+          ),
+        );
+      },
+      onDuplicate: () {
+        if (!mounted) return;
+        // 複製：元タスクをベースに新規作成モードへ。初期開始は元の end 直後。
+        final baseStart = task.end ?? DateTime.now();
+        Navigator.of(context).push<bool>(
+          MaterialPageRoute<bool>(
+            builder: (_) => TaskEditorScreen(
+              mode: TaskEditorMode.create,
+              initial: task,
+              initialStart: baseStart,
+            ),
+          ),
+        );
+      },
+      onDelete: () async {
+        if (!mounted) return;
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('削除確認'),
+            content: Text('「${task.title}」を削除しますか？'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('キャンセル')),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('削除'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true || !mounted) return;
+        final vm = ref.read(calendarSyncViewModelProvider.notifier);
+        final ok = await vm.deleteTask(task);
+        if (!mounted) return;
+        if (ok) {
+          showAppSnackBar(
+            context,
+            const SnackBar(content: Text('削除しました')),
+          );
+        } else {
+          final msg = ref.read(calendarSyncViewModelProvider).errorMessage;
+          _showErrorSnackBar(msg ?? '削除に失敗しました');
+          vm.clearError();
+        }
       },
     );
   }
@@ -153,7 +492,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         await vm.createTask(title: title, start: initialStart, end: end);
     if (!mounted) return;
     if (success) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      showAppSnackBar(
+        context,
         const SnackBar(content: Text('予定を追加しました')),
       );
     } else {
@@ -163,52 +503,287 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
   }
 
-  // ── カレンダー取り込みフロー ────────────────────────────────────
+  // ── カレンダー連携フロー（表示ON/OFF管理） ──────────────────────
 
+  /// 「取得」ボタン押下時：
+  /// 1. Google アカウントにサインイン（初回 or アクティブ未設定時のみピッカー）
+  /// 2. そのアカウントのカレンダー一覧を取得
+  /// 3. 可視性チェックボックスのダイアログを表示
+  ///
+  /// 注意：Firestore へのイベント保存はここでは行わない（仕様6）。
+  /// 表示は [remoteWeekEventsProvider] が自動で取得する。
   Future<void> _handleImport(DateTime weekStart) async {
+    await _openCalendarChooser(weekStart);
+  }
+
+  Future<void> _openCalendarChooser(DateTime weekStart,
+      {bool forceAccountPicker = false}) async {
+    final repo = ref.read(googleCalendarRepositoryProvider);
     final vm = ref.read(calendarSyncViewModelProvider.notifier);
 
+    // アクティブアカウントの確保（無ければピッカー、強制フラグならピッカー再呼び出し）
+    GoogleAccountInfo? account = ref.read(currentGoogleAccountProvider);
+    try {
+      if (account == null || forceAccountPicker) {
+        account = await repo.signInWithPicker();
+      } else {
+        // 現アカウントが生きていればそのまま
+        final resolved = await repo.getCurrentAccount();
+        account = resolved ?? await repo.signInWithPicker();
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _showErrorSnackBar('アカウント認証に失敗しました: $e',
+          retry: () => _openCalendarChooser(weekStart,
+              forceAccountPicker: forceAccountPicker));
+      return;
+    }
+    if (account == null) return; // ユーザーキャンセル
+    ref.read(currentGoogleAccountProvider.notifier).set(account);
+
+    // 可視性をロード（初期化時に未ロードの場合に備えて）
+    await ref.read(calendarVisibilityProvider.future);
+
+    // カレンダー一覧取得
     final calendars = await vm.loadCalendars();
     if (!mounted) return;
-
     final state = ref.read(calendarSyncViewModelProvider);
     if (state.errorMessage != null) {
-      _showErrorSnackBar(state.errorMessage!);
+      _showErrorSnackBar(state.errorMessage!,
+          retry: () => _openCalendarChooser(weekStart));
       vm.clearError();
       return;
     }
-
     if (calendars.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      showAppSnackBar(
+        context,
         const SnackBar(content: Text('カレンダーが見つかりませんでした')),
       );
       return;
     }
 
-    final selected = await _showCalendarSelectDialog(calendars);
-    if (selected == null || !mounted) return;
-
-    final success = await vm.importWeek(
-      calendarId: selected.id,
+    await _showCalendarVisibilityDialog(
+      account: account,
+      calendars: calendars,
       weekStart: weekStart,
+      onSwitchAccount: () async {
+        Navigator.of(context).pop();
+        await _openCalendarChooser(weekStart, forceAccountPicker: true);
+      },
     );
+  }
 
-    if (!mounted) return;
+  Future<void> _showCalendarVisibilityDialog({
+    required GoogleAccountInfo account,
+    required List<GoogleCalendarSource> calendars,
+    required DateTime weekStart,
+    required VoidCallback onSwitchAccount,
+  }) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('表示するカレンダー'),
+              const SizedBox(height: 2),
+              Text(
+                account.email,
+                style: Theme.of(ctx).textTheme.bodySmall,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+          contentPadding: const EdgeInsets.symmetric(vertical: 8),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // カラムヘッダー（目アイコン＝表示／DLアイコン＝タスク化）
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: _kCalToggleColWidth,
+                        child: Center(
+                          child: Icon(
+                            Icons.visibility_outlined,
+                            size: 18,
+                            color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: _kCalToggleColWidth,
+                        child: Center(
+                          child: Icon(
+                            Icons.cloud_download_outlined,
+                            size: 18,
+                            color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      const Expanded(child: SizedBox.shrink()),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                Flexible(
+                  child: Consumer(
+                    builder: (ctx, ref, _) {
+                      final visMap = ref.watch(calendarVisibilityMapProvider);
+                      final dlMap = ref.watch(calendarDownloadMapProvider);
+                      final visible = visMap[account.id] ?? const <String>{};
+                      final downloaded =
+                          dlMap[account.id] ?? const <String>{};
+                      return ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: calendars.length,
+                        itemBuilder: (ctx, i) {
+                          final cal = calendars[i];
+                          final hex = cal.colorHex;
+                          final parsed = hex == null ? null : _parseHex(hex);
+                          final isVisible = visible.contains(cal.id);
+                          final isDownloaded = downloaded.contains(cal.id);
+                          return _CalendarRow(
+                            calendar: cal,
+                            colorDot: parsed,
+                            isVisible: isVisible,
+                            isDownloaded: isDownloaded,
+                            onVisibilityChanged: (on) async {
+                              await ref
+                                  .read(calendarVisibilityProvider.notifier)
+                                  .setVisible(
+                                    accountId: account.id,
+                                    calendarId: cal.id,
+                                    visible: on,
+                                  );
+                            },
+                            onDownloadChanged: (on) async {
+                              await _handleDownloadToggle(
+                                accountId: account.id,
+                                calendar: cal,
+                                weekStart: weekStart,
+                                turnOn: on,
+                                wasVisible: isVisible,
+                              );
+                            },
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton.icon(
+              onPressed: onSwitchAccount,
+              icon: const Icon(Icons.switch_account, size: 18),
+              label: const Text('別のアカウント'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('閉じる'),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
-    if (success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('カレンダーから取り込みました')),
-      );
-    } else {
-      final errorMsg = ref.read(calendarSyncViewModelProvider).errorMessage;
-      _showErrorSnackBar(errorMsg ?? '取り込みに失敗しました',
-          retry: () => _handleImport(weekStart));
-      vm.clearError();
+  /// ダウンロードチェックON/OFF時のハンドラ。
+  /// ON：当該週を `importWeek` で取り込み → DLフラグON。表示が未ONなら自動でON。
+  /// OFF：確認ダイアログ → OKで `deleteTasksByCalendarInWeek` → DLフラグOFF。
+  Future<void> _handleDownloadToggle({
+    required String accountId,
+    required GoogleCalendarSource calendar,
+    required DateTime weekStart,
+    required bool turnOn,
+    required bool wasVisible,
+  }) async {
+    if (turnOn) {
+      final ok = await ref.read(calendarSyncViewModelProvider.notifier).importWeek(
+            calendarId: calendar.id,
+            weekStart: weekStart,
+            accountId: accountId,
+          );
+      if (!ok) {
+        final msg =
+            ref.read(calendarSyncViewModelProvider).errorMessage ?? '取り込みに失敗しました';
+        ref.read(calendarSyncViewModelProvider.notifier).clearError();
+        if (mounted) _showErrorSnackBar(msg);
+        return;
+      }
+      await ref.read(calendarDownloadProvider.notifier).setDownloaded(
+            accountId: accountId,
+            calendarId: calendar.id,
+            downloaded: true,
+          );
+      // タスクが見えないと不便なため、表示も自動でON
+      if (!wasVisible) {
+        await ref.read(calendarVisibilityProvider.notifier).setVisible(
+              accountId: accountId,
+              calendarId: calendar.id,
+              visible: true,
+            );
+      }
+      return;
+    }
+    // OFF：確認
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('取り込みを解除しますか？'),
+        content: Text(
+            '「${calendar.name}」の今週ぶんの取り込み済みタスクを削除します。完了状態などのタスク管理データも失われます。続行しますか？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('キャンセル'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('削除する'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ref
+          .read(calendarTaskSyncRepositoryProvider)
+          .deleteTasksByCalendarInWeek(
+            calendarId: calendar.id,
+            weekStartLocal: weekStart,
+          );
+      await ref.read(calendarDownloadProvider.notifier).setDownloaded(
+            accountId: accountId,
+            calendarId: calendar.id,
+            downloaded: false,
+          );
+    } catch (e) {
+      if (mounted) _showErrorSnackBar('削除に失敗しました: $e');
     }
   }
 
+  static Color? _parseHex(String hex) {
+    var c = hex.replaceAll('#', '').trim();
+    if (c.length == 6) c = 'FF$c';
+    if (c.length != 8) return null;
+    final v = int.tryParse(c, radix: 16);
+    return v == null ? null : Color(v);
+  }
+
   void _showErrorSnackBar(String message, {VoidCallback? retry}) {
-    ScaffoldMessenger.of(context).showSnackBar(
+    showAppSnackBar(
+      context,
       SnackBar(
         content: Text(message),
         backgroundColor: Theme.of(context).colorScheme.error,
@@ -224,32 +799,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  Future<GoogleCalendarSource?> _showCalendarSelectDialog(
-    List<GoogleCalendarSource> calendars,
-  ) {
-    return showDialog<GoogleCalendarSource>(
-      context: context,
-      builder: (ctx) => SimpleDialog(
-        title: const Text('カレンダーを選択'),
-        children: calendars
-            .map((cal) => SimpleDialogOption(
-                  onPressed: () => Navigator.pop(ctx, cal),
-                  child: Row(
-                    children: [
-                      Icon(
-                        cal.isPrimary ? Icons.star : Icons.calendar_today,
-                        size: 16,
-                        color: cal.isPrimary ? Colors.amber : null,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(child: Text(cal.name)),
-                    ],
-                  ),
-                ))
-            .toList(),
-      ),
-    );
-  }
 
   void _jumpToToday() {
     if (_viewMode == CalendarViewMode.week) {
@@ -271,7 +820,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final syncState = ref.watch(calendarSyncViewModelProvider);
     final syncCalendars = syncState.calendars;
     final calendarColors = ref.watch(calendarColorsProvider);
-    final hidden = ref.watch(hiddenCalendarIdsProvider);
+    final currentAccountId = ref.watch(currentGoogleAccountProvider)?.id;
+    final visibilityMap = ref.watch(calendarVisibilityMapProvider);
+    final visibleCalendarIds = currentAccountId == null
+        ? const <String>{}
+        : (visibilityMap[currentAccountId] ?? const <String>{});
 
     // 週の始まり設定の変更を追従
     ref.listen<int>(
@@ -282,6 +835,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           _weekStartDay = next;
           _baseWeekStart = startOfWeek(DateTime.now(), next);
         });
+        // 週境界が変わるので重複ガードをリセット
+        _lastImportedWeekStart = null;
+      },
+    );
+
+    // DLチェック設定が変わったら次回スワイプで再取り込みを許可
+    ref.listen<Map<String, Set<String>>>(
+      calendarDownloadMapProvider,
+      (prev, next) {
+        if (prev == next) return;
+        _lastImportedWeekStart = null;
+      },
+    );
+
+    // アカウント切替時もリセット
+    ref.listen<GoogleAccountInfo?>(
+      currentGoogleAccountProvider,
+      (prev, next) {
+        if (prev?.id == next?.id) return;
+        _lastImportedWeekStart = null;
       },
     );
 
@@ -295,6 +868,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
         ),
         title: const Text('ライフゲーム'),
+      ),
+      floatingActionButton: FloatingActionButton(
+        heroTag: 'home_fab',
+        tooltip: '予定を追加',
+        onPressed: () {
+          Navigator.of(context).push<bool>(
+            MaterialPageRoute<bool>(
+              builder: (_) =>
+                  const TaskEditorScreen(mode: TaskEditorMode.create),
+            ),
+          );
+        },
+        child: const Icon(Icons.add),
       ),
       drawer: Drawer(
         child: ListView(
@@ -331,17 +917,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
               ),
               ...syncCalendars.map((cal) {
-                final isHidden = hidden.contains(cal.id);
+                final isVisible = visibleCalendarIds.contains(cal.id);
                 final color = calendarColors[cal.id];
                 return CheckboxListTile(
                   dense: true,
                   controlAffinity: ListTileControlAffinity.leading,
-                  value: !isHidden,
-                  onChanged: (on) {
-                    ref
-                        .read(hiddenCalendarIdsProvider.notifier)
-                        .setHidden(cal.id, on != true);
-                  },
+                  value: isVisible,
+                  onChanged: currentAccountId == null
+                      ? null
+                      : (on) {
+                          ref.read(calendarVisibilityProvider.notifier).setVisible(
+                                accountId: currentAccountId,
+                                calendarId: cal.id,
+                                visible: on == true,
+                              );
+                        },
                   title: Text(
                     cal.name,
                     overflow: TextOverflow.ellipsis,
@@ -372,7 +962,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ],
         ),
       ),
-      body: SafeArea(
+      body: MessageGuard(
+        child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(10),
           child: Column(
@@ -412,8 +1003,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           children: [
                             PageView.builder(
                               controller: _weekPageController,
-                              onPageChanged: (p) =>
-                                  setState(() => _currentWeekPage = p),
+                              onPageChanged: (p) {
+                                final prevWs =
+                                    _weekStartForPage(_currentWeekPage);
+                                final newWs = _weekStartForPage(p);
+                                setState(() => _currentWeekPage = p);
+                                if (prevWs != newWs) {
+                                  _scheduleAutoImport(newWs);
+                                }
+                              },
                               itemBuilder: (context, index) {
                                 final ws = _weekStartForPage(index);
                                 final visibleDays = List.generate(
@@ -429,8 +1027,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               onPointerMove: _handleDayDragPointerMove,
                               child: PageView.builder(
                                 controller: _dayPageController,
-                                onPageChanged: (p) =>
-                                    setState(() => _currentDayPage = p),
+                                onPageChanged: (p) {
+                                  final prevWs = startOfWeek(
+                                      _dayForPage(_currentDayPage),
+                                      _weekStartDay);
+                                  final newWs = startOfWeek(
+                                      _dayForPage(p), _weekStartDay);
+                                  setState(() => _currentDayPage = p);
+                                  if (prevWs != newWs) {
+                                    _scheduleAutoImport(newWs);
+                                  }
+                                },
                                 itemBuilder: (context, index) {
                                   final day = _dayForPage(index);
                                   return _SchedulePage(
@@ -452,6 +1059,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
         ),
       ),
+      ),
     );
   }
 }
@@ -471,32 +1079,217 @@ class _SchedulePage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final weekStart = startOfWeekMonday(visibleDays.first);
-    final tasksAsync = ref.watch(weekTasksProvider(weekStart));
-    final allTasks = tasksAsync.asData?.value ?? const <CalendarTask>[];
-    final hidden = ref.watch(hiddenCalendarIdsProvider);
+    final weekStartDay =
+        ref.watch(userSettingsProvider.select((s) => s.settings.weekStartDay));
+    final weekStart = startOfWeek(visibleDays.first, weekStartDay);
+
+    // Firestore 保存済みタスク
+    final savedAsync = ref.watch(weekTasksProvider(weekStart));
+    final savedTasks = savedAsync.asData?.value ?? const <CalendarTask>[];
+
+    // リモート（Google Calendar）イベント：表示のみ、DB未保存
+    final remoteAsync = ref.watch(remoteWeekEventsProvider(weekStart));
+    final remoteTasks = remoteAsync.asData?.value ?? const <CalendarTask>[];
+
+    // リモート取得エラー時に SnackBar + 再試行導線
+    ref.listen<AsyncValue<List<CalendarTask>>>(
+      remoteWeekEventsProvider(weekStart),
+      (prev, next) {
+        if (next.hasError && (prev == null || !prev.hasError)) {
+          showAppSnackBar(
+            context,
+            SnackBar(
+              content: Text('Google カレンダーの取得に失敗: ${next.error}'),
+              duration: const Duration(seconds: 6),
+              action: SnackBarAction(
+                label: '再試行',
+                onPressed: () =>
+                    ref.invalidate(remoteWeekEventsProvider(weekStart)),
+              ),
+            ),
+          );
+        }
+      },
+    );
+
+    final account = ref.watch(currentGoogleAccountProvider);
+    final visibilityMap = ref.watch(calendarVisibilityMapProvider);
 
     final dayKeys =
         visibleDays.map((d) => DateTime(d.year, d.month, d.day)).toSet();
 
-    final visibleTasks = allTasks.where((t) {
-      final ext = t.externalCalendarId;
-      if (ext != null) {
-        final idx = ext.indexOf(':');
-        final calId = idx > 0 ? ext.substring(0, idx) : null;
-        if (calId != null && hidden.contains(calId)) return false;
-      }
+    bool inRange(CalendarTask t) {
       final start = t.start;
       if (start == null) return false;
-      final taskDay = DateTime(start.year, start.month, start.day);
-      return dayKeys.contains(taskDay);
+      return dayKeys.contains(DateTime(start.year, start.month, start.day));
+    }
+
+    bool isCalendarVisible(CalendarTask t) {
+      final key = ExternalCalendarKey.tryParse(t.externalCalendarId);
+      if (key == null) return true; // 手動タスク
+      // 3要素形式（accountId入り）はそのアカウントの可視集合を参照。
+      // 旧2要素形式は暫定で currentAccount の可視集合を参照。
+      final accountId = key.accountId ?? account?.id;
+      if (accountId == null) return true;
+      return visibilityMap[accountId]?.contains(key.calendarId) ?? false;
+    }
+
+    // 保存済み：ToDo除外 + 可視カレンダー + 週内
+    final filteredSaved = savedTasks.where((t) {
+      if (t.isTodo) return false;
+      if (!isCalendarVisible(t)) return false;
+      return inRange(t);
     }).toList();
+
+    // リモート：既に保存されている externalCalendarId は除外（保存側を優先）
+    final savedExtIds = filteredSaved
+        .map((t) => t.externalCalendarId)
+        .whereType<String>()
+        .toSet();
+    final filteredRemote = remoteTasks.where((t) {
+      final ext = t.externalCalendarId;
+      if (ext != null && savedExtIds.contains(ext)) return false;
+      return inRange(t);
+    }).toList();
+
+    final visibleTasks = [...filteredSaved, ...filteredRemote];
+    final taskIds = filteredSaved.map((t) => t.id).toSet();
+
+    void handleTap(CalendarTask t) {
+      if (taskIds.contains(t.id)) {
+        onTaskTap(t);
+      }
+      // 表示専用イベントは何もしない（移動を試みた時だけ案内を出す）
+    }
 
     return WeekSchedulePanel(
       visibleDays: visibleDays,
       tasks: visibleTasks,
-      onTaskTap: onTaskTap,
+      onTaskTap: handleTap,
       onEmptyTap: onEmptyTap,
+      onReadOnlyMoveAttempt: (t) =>
+          _showDownloadPrompt(context, ref, t, weekStart),
+      taskIds: taskIds,
+    );
+  }
+
+  /// 表示専用（未ダウンロード）の Google イベントを動かそうとしたときの導線。
+  /// SnackBar で「ダウンロード」ボタンを出し、押すとそのカレンダーの当該週を
+  /// importWeek + DLフラグON してタスク化する。
+  void _showDownloadPrompt(
+    BuildContext context,
+    WidgetRef ref,
+    CalendarTask task,
+    DateTime weekStart,
+  ) {
+    final key = ExternalCalendarKey.tryParse(task.externalCalendarId);
+    final canDownload = key != null;
+    showAppSnackBar(
+      context,
+      SnackBar(
+        showCloseIcon: true,
+        duration: const Duration(seconds: 8),
+        content: const Text(
+            '表示専用なので動かせません。ダウンロードするとタスクとして管理・移動できます。'),
+        action: !canDownload
+            ? null
+            : SnackBarAction(
+                label: 'ダウンロード',
+                onPressed: () async {
+                  final account = ref.read(currentGoogleAccountProvider);
+                  final accountId = key.accountId ?? account?.id;
+                  if (accountId == null) return;
+                  final ok = await ref
+                      .read(calendarSyncViewModelProvider.notifier)
+                      .importWeek(
+                        calendarId: key.calendarId,
+                        weekStart: weekStart,
+                        accountId: accountId,
+                      );
+                  if (!ok) return;
+                  await ref
+                      .read(calendarDownloadProvider.notifier)
+                      .setDownloaded(
+                        accountId: accountId,
+                        calendarId: key.calendarId,
+                        downloaded: true,
+                      );
+                },
+              ),
+      ),
+    );
+  }
+}
+
+/// カレンダー可視性ダイアログのチェックボックス1列の幅。
+const double _kCalToggleColWidth = 36;
+
+class _CalendarRow extends StatelessWidget {
+  const _CalendarRow({
+    required this.calendar,
+    required this.colorDot,
+    required this.isVisible,
+    required this.isDownloaded,
+    required this.onVisibilityChanged,
+    required this.onDownloadChanged,
+  });
+
+  final GoogleCalendarSource calendar;
+  final Color? colorDot;
+  final bool isVisible;
+  final bool isDownloaded;
+  final ValueChanged<bool> onVisibilityChanged;
+  final ValueChanged<bool> onDownloadChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: _kCalToggleColWidth,
+            child: Center(
+              child: Checkbox(
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+                value: isVisible,
+                onChanged: (v) => onVisibilityChanged(v == true),
+              ),
+            ),
+          ),
+          SizedBox(
+            width: _kCalToggleColWidth,
+            child: Center(
+              child: Checkbox(
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+                value: isDownloaded,
+                onChanged: (v) => onDownloadChanged(v == true),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          if (calendar.isPrimary) ...[
+            const Icon(Icons.star, size: 14, color: Colors.amber),
+            const SizedBox(width: 4),
+          ],
+          Expanded(
+            child: Text(
+              calendar.name,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (colorDot != null)
+            Container(
+              width: 12,
+              height: 12,
+              margin: const EdgeInsets.only(left: 8),
+              decoration:
+                  BoxDecoration(color: colorDot, shape: BoxShape.circle),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -509,11 +1302,12 @@ class _HealthPanelConnector extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final log = ref.watch(healthDetailViewModelProvider).log;
+    final settings = ref.watch(userSettingsProvider).settings;
     final scores = HealthScores(
-      meal: HealthCategory.meal.level(log),
-      sleep: HealthCategory.sleep.level(log),
-      exercise: HealthCategory.exercise.level(log),
-      meditation: HealthCategory.meditation.level(log),
+      meal: HealthCategory.meal.level(log, settings),
+      sleep: HealthCategory.sleep.level(log, settings),
+      exercise: HealthCategory.exercise.level(log, settings),
+      meditation: HealthCategory.meditation.level(log, settings),
     );
     return HealthPanel(
       scores: scores,

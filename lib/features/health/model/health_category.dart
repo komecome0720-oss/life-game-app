@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:task_manager/features/health/model/health_log.dart';
+import 'package:task_manager/features/health/model/health_scoring.dart';
 import 'package:task_manager/features/user_settings/model/user_settings.dart';
 
 /// 健康カテゴリ。スライダー仕様・目標取得・表示・採点重みを集約する。
@@ -79,8 +80,9 @@ extension HealthCategoryX on HealthCategory {
         HealthCategory.meditation => log.meditationScore,
       };
 
-  /// 0〜10 段階の数値
-  int level(HealthLog log) => weight == 0 ? 0 : (score(log) ~/ weight);
+  /// 0〜10 段階の数値（現在値と目標から直接算出。表示は小数点切り捨て）
+  int level(HealthLog log, UserSettings s) =>
+      HealthScoring.level(currentValue(log), goalValue(s));
 
   // ── 表示整形 ─────────────────────────────────────────────────
   String formatValue(int v) {

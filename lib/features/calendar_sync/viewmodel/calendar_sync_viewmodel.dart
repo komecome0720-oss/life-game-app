@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:task_manager/features/calendar_sync/model/google_account_info.dart';
 import 'package:task_manager/features/calendar_sync/model/google_calendar_source.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
 import 'package:task_manager/models/calendar_task.dart';
@@ -47,15 +48,20 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
   }
 
   /// 指定カレンダーの weekStart 週分を取り込む。
+  /// [accountId] 指定時は externalCalendarId を `accountId:calendarId:eventId` 形式で保存し、
+  /// remoteWeekEventsProvider が返すIDと一致するため重複表示を防げる。
   Future<bool> importWeek({
     required String calendarId,
     required DateTime weekStart,
+    String? accountId,
   }) async {
     state = state.copyWith(isLoading: true, errorMessage: null);
     try {
-      final tasks = await ref
-          .read(googleCalendarRepositoryProvider)
-          .fetchWeekEvents(calendarId: calendarId, weekStartLocal: weekStart);
+      final tasks = await ref.read(googleCalendarRepositoryProvider).fetchWeekEvents(
+            calendarId: calendarId,
+            weekStartLocal: weekStart,
+            accountId: accountId,
+          );
 
       await ref.read(calendarTaskSyncRepositoryProvider).upsert(tasks);
 
@@ -64,6 +70,42 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
     } catch (e) {
       state = state.copyWith(isLoading: false, errorMessage: _toMessage(e));
       return false;
+    }
+  }
+
+  /// リモート表示中の Google Calendar イベントをアプリ DB（Firestore）に
+  /// 初めて保存する。既に externalCalendarId で保存されていれば何もしない（重複抑止）。
+  /// 戻り値：保存された（または既存の）タスクの Firestore ID。キャンセル/失敗時は null。
+  Future<String?> promoteRemoteTaskIfNeeded(CalendarTask task) async {
+    final extId = task.externalCalendarId;
+    if (extId == null) return task.id; // 手動タスクは既にDB保存済み想定
+    final repo = ref.read(calendarTaskSyncRepositoryProvider);
+
+    // 既存チェック
+    final existingId = await repo.findTaskIdByExternalId(extId);
+    if (existingId != null) return existingId;
+
+    final start = task.start;
+    final end = task.end;
+    if (start == null || end == null) return null;
+
+    try {
+      final newId = await repo.createTaskFull(
+        title: task.title,
+        start: start,
+        end: end,
+        isAllDay: task.isAllDay,
+        description: task.description,
+        location: task.location,
+        colorId: task.colorId,
+        externalCalendarId: extId,
+        recurrence: task.recurrence,
+        sourceType: TaskSourceType.googleCalendar,
+      );
+      return newId;
+    } catch (e) {
+      state = state.copyWith(errorMessage: _toMessage(e));
+      return null;
     }
   }
 
@@ -126,14 +168,11 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
       if (task.sourceType == TaskSourceType.googleCalendar &&
           task.externalCalendarId != null) {
         try {
-          final raw = task.externalCalendarId!;
-          final idx = raw.indexOf(':');
-          if (idx > 0 && idx < raw.length - 1) {
-            final calId = raw.substring(0, idx);
-            final eventId = raw.substring(idx + 1);
+          final key = ExternalCalendarKey.tryParse(task.externalCalendarId);
+          if (key != null) {
             await ref.read(googleCalendarRepositoryProvider).patchEvent(
-                  calendarId: calId,
-                  eventId: eventId,
+                  calendarId: key.calendarId,
+                  eventId: key.eventId,
                   newStartLocal: newStart,
                   newEndLocal: newEnd,
                 );
@@ -146,6 +185,131 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
           rethrow;
         }
       }
+      return true;
+    } catch (e) {
+      state = state.copyWith(errorMessage: _toMessage(e));
+      return false;
+    }
+  }
+
+  /// 詳細付きで新規タスクを作成。[calendarId] が指定されていれば Google Calendar にも insert。
+  /// 戻り値は成功可否。
+  Future<bool> saveNewTask({
+    required String title,
+    required DateTime start,
+    required DateTime end,
+    bool isAllDay = false,
+    String? description,
+    String? location,
+    String? colorId,
+    String? calendarId,
+    List<String>? recurrence,
+  }) async {
+    final syncRepo = ref.read(calendarTaskSyncRepositoryProvider);
+    final gcalRepo = ref.read(googleCalendarRepositoryProvider);
+    try {
+      String? externalId;
+      var sourceType = TaskSourceType.manual;
+      if (calendarId != null) {
+        externalId = await gcalRepo.insertEvent(
+          calendarId: calendarId,
+          title: title,
+          startLocal: start,
+          endLocal: end,
+          isAllDay: isAllDay,
+          description: description,
+          location: location,
+          colorId: colorId,
+          recurrence: recurrence,
+        );
+        sourceType = TaskSourceType.googleCalendar;
+      }
+      await syncRepo.createTaskFull(
+        title: title,
+        start: start,
+        end: end,
+        isAllDay: isAllDay,
+        description: description,
+        location: location,
+        colorId: colorId,
+        externalCalendarId: externalId,
+        recurrence: recurrence,
+        sourceType: sourceType,
+      );
+      return true;
+    } catch (e) {
+      state = state.copyWith(errorMessage: _toMessage(e));
+      return false;
+    }
+  }
+
+  /// 既存タスクを更新。Google 由来なら events.patch も呼ぶ。
+  Future<bool> updateExistingTask({
+    required CalendarTask original,
+    required String title,
+    required DateTime start,
+    required DateTime end,
+    bool isAllDay = false,
+    String? description,
+    String? location,
+    String? colorId,
+    List<String>? recurrence,
+  }) async {
+    final syncRepo = ref.read(calendarTaskSyncRepositoryProvider);
+    final gcalRepo = ref.read(googleCalendarRepositoryProvider);
+    try {
+      await syncRepo.updateTask(
+        taskId: original.id,
+        title: title,
+        start: start,
+        end: end,
+        isAllDay: isAllDay,
+        description: description ?? '',
+        location: location ?? '',
+        colorId: colorId ?? '',
+        recurrence: recurrence ?? const [],
+      );
+      if (original.sourceType == TaskSourceType.googleCalendar &&
+          original.externalCalendarId != null) {
+        final key = ExternalCalendarKey.tryParse(original.externalCalendarId);
+        if (key != null) {
+          await gcalRepo.updateEvent(
+            calendarId: key.calendarId,
+            eventId: key.eventId,
+            title: title,
+            startLocal: start,
+            endLocal: end,
+            isAllDay: isAllDay,
+            description: description,
+            location: location,
+            colorId: colorId,
+            recurrence: recurrence,
+          );
+        }
+      }
+      return true;
+    } catch (e) {
+      state = state.copyWith(errorMessage: _toMessage(e));
+      return false;
+    }
+  }
+
+  /// タスクを削除。Google 由来なら events.delete も呼ぶ（このインスタンスのみ）。
+  Future<bool> deleteTask(CalendarTask task) async {
+    final syncRepo = ref.read(calendarTaskSyncRepositoryProvider);
+    final gcalRepo = ref.read(googleCalendarRepositoryProvider);
+    try {
+      if (task.sourceType == TaskSourceType.googleCalendar &&
+          task.externalCalendarId != null) {
+        final key = ExternalCalendarKey.tryParse(task.externalCalendarId);
+        if (key != null) {
+          await gcalRepo.deleteEvent(
+            calendarId: key.calendarId,
+            eventId: key.eventId,
+          );
+        }
+      }
+      await syncRepo.deleteTask(task.id);
       return true;
     } catch (e) {
       state = state.copyWith(errorMessage: _toMessage(e));

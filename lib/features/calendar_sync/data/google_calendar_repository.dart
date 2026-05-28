@@ -2,6 +2,7 @@ import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sig
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/calendar/v3.dart' as gcal;
+import 'package:task_manager/features/calendar_sync/model/google_account_info.dart';
 import 'package:task_manager/features/calendar_sync/model/google_calendar_source.dart';
 import 'package:task_manager/models/calendar_task.dart';
 
@@ -47,6 +48,33 @@ class GoogleCalendarRepository {
     return gcal.CalendarApi(client);
   }
 
+  /// 現在サインイン済みの Google アカウント情報（無ければ silent 試行）。
+  Future<GoogleAccountInfo?> getCurrentAccount() async {
+    var account = _signIn.currentUser ?? await _signIn.signInSilently();
+    if (account == null) return null;
+    return _toInfo(account);
+  }
+
+  /// ピッカー強制サインイン。現在サインイン中でもサインアウトして再ピッカーを出す。
+  /// 別アカウントへの切替に使用。
+  Future<GoogleAccountInfo?> signInWithPicker() async {
+    try {
+      await _signIn.signOut();
+    } catch (_) {/* 未サインイン時は無視 */}
+    final account = await _signIn.signIn();
+    if (account == null) return null;
+    final granted = await _signIn.requestScopes(_scopes);
+    if (!granted) return null;
+    return _toInfo(account);
+  }
+
+  GoogleAccountInfo _toInfo(GoogleSignInAccount a) => GoogleAccountInfo(
+        id: a.id,
+        email: a.email,
+        displayName: a.displayName,
+        photoUrl: a.photoUrl,
+      );
+
   /// ユーザーのカレンダー一覧を取得する。
   Future<List<GoogleCalendarSource>> fetchCalendars() async {
     final api = await _getApi();
@@ -66,9 +94,11 @@ class GoogleCalendarRepository {
 
   /// 指定カレンダーの指定週（月曜始まり・ローカル時刻基準）イベントを取得し
   /// [CalendarTask] リストに変換して返す。
+  /// [accountId] が与えられれば externalCalendarId は `accountId:calendarId:eventId` 形式に。
   Future<List<CalendarTask>> fetchWeekEvents({
     required String calendarId,
     required DateTime weekStartLocal,
+    String? accountId,
   }) async {
     final api = await _getApi();
     if (api == null) throw Exception('カレンダーの認証がキャンセルされました');
@@ -88,7 +118,9 @@ class GoogleCalendarRepository {
       if (event.status == 'cancelled') continue;
       if (event.id == null) continue;
 
-      final externalId = '$calendarId:${event.id}';
+      final externalId = accountId == null
+          ? '$calendarId:${event.id}'
+          : '$accountId:$calendarId:${event.id}';
       bool isAllDay = false;
       DateTime startLocal;
       DateTime endLocal;
@@ -117,6 +149,11 @@ class GoogleCalendarRepository {
         externalCalendarId: externalId,
         sourceType: TaskSourceType.googleCalendar,
         isAllDay: isAllDay,
+        description: event.description,
+        location: event.location,
+        colorId: event.colorId,
+        recurrence: event.recurrence,
+        recurringEventId: event.recurringEventId,
       ));
     }
 
@@ -139,5 +176,99 @@ class GoogleCalendarRepository {
       ..end = gcal.EventDateTime(dateTime: newEndLocal.toUtc());
 
     await api.events.patch(event, calendarId, eventId);
+  }
+
+  /// 新規イベントを作成し、`calendarId:eventId` を返す。
+  Future<String?> insertEvent({
+    required String calendarId,
+    required String title,
+    required DateTime startLocal,
+    required DateTime endLocal,
+    bool isAllDay = false,
+    String? description,
+    String? location,
+    String? colorId,
+    List<String>? recurrence,
+  }) async {
+    final api = await _getApi();
+    if (api == null) throw Exception('カレンダーの認証がキャンセルされました');
+
+    final event = gcal.Event()
+      ..summary = title
+      ..description = description
+      ..location = location
+      ..colorId = colorId
+      ..recurrence = recurrence;
+
+    if (isAllDay) {
+      event
+        ..start = gcal.EventDateTime(
+          date: DateTime(startLocal.year, startLocal.month, startLocal.day),
+        )
+        ..end = gcal.EventDateTime(
+          date: DateTime(endLocal.year, endLocal.month, endLocal.day),
+        );
+    } else {
+      event
+        ..start = gcal.EventDateTime(dateTime: startLocal.toUtc())
+        ..end = gcal.EventDateTime(dateTime: endLocal.toUtc());
+    }
+
+    final inserted = await api.events.insert(event, calendarId);
+    final eventId = inserted.id;
+    if (eventId == null) return null;
+    return '$calendarId:$eventId';
+  }
+
+  /// 既存イベントをフル更新。null 指定のフィールドは上書きされない。
+  Future<void> updateEvent({
+    required String calendarId,
+    required String eventId,
+    String? title,
+    DateTime? startLocal,
+    DateTime? endLocal,
+    bool? isAllDay,
+    String? description,
+    String? location,
+    String? colorId,
+    List<String>? recurrence,
+  }) async {
+    final api = await _getApi();
+    if (api == null) throw Exception('カレンダーの認証がキャンセルされました');
+
+    final event = gcal.Event();
+    if (title != null) event.summary = title;
+    if (description != null) event.description = description;
+    if (location != null) event.location = location;
+    if (colorId != null) event.colorId = colorId;
+    if (recurrence != null) event.recurrence = recurrence;
+    if (startLocal != null && endLocal != null) {
+      if (isAllDay == true) {
+        event
+          ..start = gcal.EventDateTime(
+            date: DateTime(startLocal.year, startLocal.month, startLocal.day),
+          )
+          ..end = gcal.EventDateTime(
+            date: DateTime(endLocal.year, endLocal.month, endLocal.day),
+          );
+      } else {
+        event
+          ..start = gcal.EventDateTime(dateTime: startLocal.toUtc())
+          ..end = gcal.EventDateTime(dateTime: endLocal.toUtc());
+      }
+    }
+
+    await api.events.patch(event, calendarId, eventId);
+  }
+
+  /// イベント削除。Google の繰り返しインスタンス eventId を渡すと該当インスタンスのみ削除。
+  /// masterEventId を渡すと繰り返し全体を削除。
+  Future<void> deleteEvent({
+    required String calendarId,
+    required String eventId,
+  }) async {
+    final api = await _getApi();
+    if (api == null) throw Exception('カレンダーの認証がキャンセルされました');
+    await api.events.delete(calendarId, eventId);
   }
 }

@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:task_manager/features/auth/presentation/login_screen.dart';
 import 'package:task_manager/features/auth/providers/auth_providers.dart';
+import 'package:task_manager/features/todo/providers/todo_providers.dart';
+import 'package:task_manager/features/todo/view/todo_matrix_screen.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 import 'package:task_manager/features/wish_list/view/wish_list_screen.dart';
 import 'package:task_manager/firebase_options.dart';
@@ -23,8 +25,9 @@ class TaskManagerApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final themeModeStr =
-        ref.watch(userSettingsProvider.select((s) => s.settings.themeMode));
+    final themeModeStr = ref.watch(
+      userSettingsProvider.select((s) => s.settings.themeMode),
+    );
     return MaterialApp(
       title: 'ライフゲーム',
       theme: ThemeData(
@@ -63,37 +66,43 @@ class _AuthGate extends ConsumerWidget {
     final authState = ref.watch(authStateProvider);
     return authState.when(
       data: (user) => user != null ? const _MainShell() : const LoginScreen(),
-      loading: () => const Scaffold(body: Center(child: CircularProgressIndicator())),
-      error: (_, __) => const LoginScreen(),
+      loading: () =>
+          const Scaffold(body: Center(child: CircularProgressIndicator())),
+      error: (_, _) => const LoginScreen(),
     );
   }
 }
 
-class _MainShell extends StatefulWidget {
+class _MainShell extends ConsumerWidget {
   const _MainShell();
 
-  @override
-  State<_MainShell> createState() => _MainShellState();
-}
-
-class _MainShellState extends State<_MainShell> {
-  int _index = 0;
-
-  static const _pages = [
-    HomeScreen(),
-    WishListScreen(),
-  ];
+  static const _pages = [HomeScreen(), TodoMatrixScreen(), WishListScreen()];
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final index = ref.watch(mainTabIndexProvider);
     return Scaffold(
-      body: IndexedStack(index: _index, children: _pages),
+      body: IndexedStack(index: index, children: _pages),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
+        selectedIndex: index,
+        onDestinationSelected: (i) =>
+            ref.read(mainTabIndexProvider.notifier).set(i),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'ホーム'),
-          NavigationDestination(icon: Icon(Icons.favorite_border), selectedIcon: Icon(Icons.favorite), label: '欲しいもの'),
+          NavigationDestination(
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home),
+            label: 'ホーム',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.check_box_outlined),
+            selectedIcon: Icon(Icons.check_box),
+            label: 'ToDo',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.favorite_border),
+            selectedIcon: Icon(Icons.favorite),
+            label: '欲しいもの',
+          ),
         ],
       ),
     );

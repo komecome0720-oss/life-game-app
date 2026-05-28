@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:task_manager/features/auth/providers/auth_providers.dart';
 import 'package:task_manager/features/user_settings/model/user_settings.dart';
 
 class UserSettingsState {
@@ -39,32 +41,63 @@ class UserSettingsViewModel extends Notifier<UserSettingsState> {
   final _storage = FirebaseStorage.instance;
   final _auth = FirebaseAuth.instance;
 
+  String? _lastLoadedUid;
+  UserSettings? _cachedSettings;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _sub;
+
   String? get _uid => _auth.currentUser?.uid;
 
   @override
   UserSettingsState build() {
-    _load();
+    ref.onDispose(() {
+      _sub?.cancel();
+      _sub = null;
+    });
+
+    final uid = ref.watch(
+      authStateProvider.select((async) => async.asData?.value?.uid),
+    );
+    if (uid == null) {
+      _lastLoadedUid = null;
+      _cachedSettings = null;
+      return const UserSettingsState();
+    }
+
+    final hasCache = _lastLoadedUid == uid && _cachedSettings != null;
+    Future.microtask(() => _subscribe(uid));
+
+    if (hasCache) {
+      return UserSettingsState(settings: _cachedSettings!);
+    }
     return const UserSettingsState(isLoading: true);
   }
 
-  Future<void> _load() async {
-    final uid = _uid;
-    if (uid == null) {
-      state = state.copyWith(isLoading: false);
-      return;
-    }
-    try {
-      final doc = await _db.collection('users').doc(uid).get();
-      state = state.copyWith(
-        settings: UserSettings.fromFirestore(doc),
-        isLoading: false,
-      );
-    } catch (_) {
-      state = state.copyWith(isLoading: false);
-    }
+  void _subscribe(String uid) {
+    _sub?.cancel();
+    _sub = _db.collection('users').doc(uid).snapshots().listen(
+      (doc) {
+        if (_uid != uid) return;
+        final settings = UserSettings.fromFirestore(doc);
+        _lastLoadedUid = uid;
+        _cachedSettings = settings;
+        state = state.copyWith(settings: settings, isLoading: false);
+      },
+      onError: (Object error) {
+        if (_uid != uid) return;
+        if (_cachedSettings != null) {
+          state = state.copyWith(isLoading: false);
+        } else {
+          state = state.copyWith(
+            isLoading: false,
+            errorMessage: 'データの読み込みに失敗しました: $error',
+          );
+        }
+      },
+    );
   }
 
   void update(UserSettings settings) {
+    _cachedSettings = settings;
     state = state.copyWith(settings: settings);
   }
 
@@ -77,7 +110,11 @@ class UserSettingsViewModel extends Notifier<UserSettingsState> {
   }
 
   Future<bool> adjustBalance(int delta) async {
-    update(state.settings.copyWith(totalEarned: state.settings.totalEarned + delta));
+    final updated = state.settings.copyWith(
+      totalEarned: state.settings.totalEarned + delta,
+    );
+    _cachedSettings = updated;
+    state = state.copyWith(settings: updated);
     return save();
   }
 

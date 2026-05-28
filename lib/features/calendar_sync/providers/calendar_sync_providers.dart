@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/calendar_sync/data/calendar_task_sync_repository.dart';
 import 'package:task_manager/features/calendar_sync/data/google_calendar_repository.dart';
+import 'package:task_manager/features/calendar_sync/model/google_account_info.dart';
 import 'package:task_manager/features/calendar_sync/viewmodel/calendar_sync_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
 
@@ -35,24 +38,195 @@ final calendarColorsProvider = Provider<Map<String, Color>>((ref) {
   return map;
 });
 
-/// 非表示にするカレンダーIDの集合。Drawer のチェックで切替。
-/// MVPではin-memoryのみ（アプリ再起動でリセット）。
-class HiddenCalendarIdsNotifier extends Notifier<Set<String>> {
-  @override
-  Set<String> build() => const <String>{};
+/// 可視（チェックON）な Google カレンダーID集合を、Google アカウントIDごとに管理。
+/// Firestore パス: `users/{uid}/settings/calendarVisibility`
+/// フィールド:
+///   visible: { `accountId`: { `calendarId`: bool } }
+class CalendarVisibilityNotifier
+    extends AsyncNotifier<Map<String, Set<String>>> {
+  DocumentReference<Map<String, dynamic>>? _docRef() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return null;
+    return FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .collection('settings')
+        .doc('calendarVisibility');
+  }
 
-  void setHidden(String calendarId, bool hidden) {
-    if (hidden) {
-      state = {...state, calendarId};
-    } else {
-      state = state.where((e) => e != calendarId).toSet();
+  @override
+  FutureOr<Map<String, Set<String>>> build() async {
+    final ref = _docRef();
+    if (ref == null) return {};
+    try {
+      final doc = await ref.get();
+      if (!doc.exists) return {};
+      final data = doc.data() ?? {};
+      final visible = data['visible'] as Map<String, dynamic>? ?? {};
+      final result = <String, Set<String>>{};
+      visible.forEach((accountId, v) {
+        final inner = (v as Map<String, dynamic>?) ?? const {};
+        final ids = <String>{};
+        inner.forEach((calId, flag) {
+          if (flag == true) ids.add(calId);
+        });
+        result[accountId] = ids;
+      });
+      return result;
+    } catch (e) {
+      debugPrint('CalendarVisibilityNotifier.build error: $e');
+      return {};
     }
+  }
+
+  /// 指定アカウント×カレンダーの可視を設定。Firestore も更新。
+  Future<void> setVisible({
+    required String accountId,
+    required String calendarId,
+    required bool visible,
+  }) async {
+    final current = state.asData?.value ?? const <String, Set<String>>{};
+    final currentForAccount = current[accountId] ?? const <String>{};
+    final nextForAccount = <String>{...currentForAccount};
+    if (visible) {
+      nextForAccount.add(calendarId);
+    } else {
+      nextForAccount.remove(calendarId);
+    }
+    state = AsyncValue.data({
+      ...current,
+      accountId: nextForAccount,
+    });
+    final ref = _docRef();
+    if (ref == null) return;
+    try {
+      await ref.set({
+        'visible': {
+          accountId: {calendarId: visible},
+        },
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('CalendarVisibilityNotifier.setVisible error: $e');
+    }
+  }
+
+  bool isVisible(String accountId, String calendarId) {
+    return state.asData?.value[accountId]?.contains(calendarId) ?? false;
   }
 }
 
-final hiddenCalendarIdsProvider =
-    NotifierProvider<HiddenCalendarIdsNotifier, Set<String>>(
-  HiddenCalendarIdsNotifier.new,
+final calendarVisibilityProvider = AsyncNotifierProvider<
+    CalendarVisibilityNotifier,
+    Map<String, Set<String>>>(CalendarVisibilityNotifier.new);
+
+/// 軽量な同期ビュー（UI での頻繁なチェック向け）。ロード前は空 Map を返す。
+final calendarVisibilityMapProvider = Provider<Map<String, Set<String>>>((ref) {
+  final async = ref.watch(calendarVisibilityProvider);
+  return async.asData?.value ?? const <String, Set<String>>{};
+});
+
+/// ダウンロード（タスク化）対象の Google カレンダーID集合を、Google アカウントIDごとに管理。
+/// Firestore パス: `users/{uid}/settings/calendarDownload`
+/// フィールド:
+///   downloaded: { `accountId`: { `calendarId`: bool } }
+class CalendarDownloadNotifier
+    extends AsyncNotifier<Map<String, Set<String>>> {
+  DocumentReference<Map<String, dynamic>>? _docRef() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return null;
+    return FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .collection('settings')
+        .doc('calendarDownload');
+  }
+
+  @override
+  FutureOr<Map<String, Set<String>>> build() async {
+    final ref = _docRef();
+    if (ref == null) return {};
+    try {
+      final doc = await ref.get();
+      if (!doc.exists) return {};
+      final data = doc.data() ?? {};
+      final downloaded = data['downloaded'] as Map<String, dynamic>? ?? {};
+      final result = <String, Set<String>>{};
+      downloaded.forEach((accountId, v) {
+        final inner = (v as Map<String, dynamic>?) ?? const {};
+        final ids = <String>{};
+        inner.forEach((calId, flag) {
+          if (flag == true) ids.add(calId);
+        });
+        result[accountId] = ids;
+      });
+      return result;
+    } catch (e) {
+      debugPrint('CalendarDownloadNotifier.build error: $e');
+      return {};
+    }
+  }
+
+  /// 指定アカウント×カレンダーのDLフラグを設定。Firestore も更新。
+  Future<void> setDownloaded({
+    required String accountId,
+    required String calendarId,
+    required bool downloaded,
+  }) async {
+    final current = state.asData?.value ?? const <String, Set<String>>{};
+    final currentForAccount = current[accountId] ?? const <String>{};
+    final nextForAccount = <String>{...currentForAccount};
+    if (downloaded) {
+      nextForAccount.add(calendarId);
+    } else {
+      nextForAccount.remove(calendarId);
+    }
+    state = AsyncValue.data({
+      ...current,
+      accountId: nextForAccount,
+    });
+    final ref = _docRef();
+    if (ref == null) return;
+    try {
+      await ref.set({
+        'downloaded': {
+          accountId: {calendarId: downloaded},
+        },
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('CalendarDownloadNotifier.setDownloaded error: $e');
+    }
+  }
+
+  bool isDownloaded(String accountId, String calendarId) {
+    return state.asData?.value[accountId]?.contains(calendarId) ?? false;
+  }
+}
+
+final calendarDownloadProvider = AsyncNotifierProvider<
+    CalendarDownloadNotifier,
+    Map<String, Set<String>>>(CalendarDownloadNotifier.new);
+
+/// 軽量な同期ビュー。ロード前は空 Map を返す。
+final calendarDownloadMapProvider = Provider<Map<String, Set<String>>>((ref) {
+  final async = ref.watch(calendarDownloadProvider);
+  return async.asData?.value ?? const <String, Set<String>>{};
+});
+
+/// 現在 Google Calendar 連携でアクティブなアカウント。
+/// ピッカー選択後に設定、セッション中はその値を使って取得する。
+/// MVP では 1アカウント同時動作、切替時はこの値が更新される。
+class CurrentGoogleAccountNotifier extends Notifier<GoogleAccountInfo?> {
+  @override
+  GoogleAccountInfo? build() => null;
+  void set(GoogleAccountInfo? account) => state = account;
+  void clear() => state = null;
+}
+
+final currentGoogleAccountProvider =
+    NotifierProvider<CurrentGoogleAccountNotifier, GoogleAccountInfo?>(
+  CurrentGoogleAccountNotifier.new,
 );
 
 /// タスクのLongPressDraggableがドラッグ中かどうか。
@@ -75,6 +249,34 @@ Color? _parseHexColor(String hex) {
   final value = int.tryParse(clean, radix: 16);
   return value == null ? null : Color(value);
 }
+
+/// 指定週のリモート（Google Calendar）イベントを取得するプロバイダ。
+/// 仕様に従い Firestore には保存しない。currentGoogleAccount と可視カレンダー設定に連動。
+final remoteWeekEventsProvider = FutureProvider.autoDispose
+    .family<List<CalendarTask>, DateTime>((ref, weekStart) async {
+  final account = ref.watch(currentGoogleAccountProvider);
+  if (account == null) return const [];
+  final visibilityMap = ref.watch(calendarVisibilityMapProvider);
+  final visibleCalIds = visibilityMap[account.id] ?? const <String>{};
+  if (visibleCalIds.isEmpty) return const [];
+
+  final repo = ref.read(googleCalendarRepositoryProvider);
+  final collected = <CalendarTask>[];
+  for (final calId in visibleCalIds) {
+    try {
+      final events = await repo.fetchWeekEvents(
+        calendarId: calId,
+        weekStartLocal: weekStart,
+        accountId: account.id,
+      );
+      collected.addAll(events);
+    } catch (e) {
+      debugPrint('remoteWeekEventsProvider: fetch failed for $calId: $e');
+      // 一部カレンダーの失敗は他をブロックしない
+    }
+  }
+  return collected;
+});
 
 /// 指定週（月曜 0:00 ローカル）の Firestore タスクをリアルタイム監視する。
 /// 取り込み後に自動更新される。

@@ -53,8 +53,10 @@ class ProfileImagePicker extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text('プリセットアバター',
-                    style: Theme.of(context).textTheme.labelMedium),
+                child: Text(
+                  'プリセットアバター',
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
               ),
             ),
             SizedBox(
@@ -63,7 +65,7 @@ class ProfileImagePicker extends StatelessWidget {
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 itemCount: _presetAvatars.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                separatorBuilder: (_, _) => const SizedBox(width: 12),
                 itemBuilder: (_, i) {
                   final p = _presetAvatars[i];
                   return GestureDetector(
@@ -101,10 +103,16 @@ class ProfileImagePicker extends StatelessWidget {
         children: [
           CircleAvatar(
             radius: 40,
-            backgroundImage: avatarUrl.isNotEmpty ? NetworkImage(avatarUrl) : null,
+            backgroundImage: avatarUrl.isNotEmpty
+                ? NetworkImage(avatarUrl)
+                : null,
             backgroundColor: Theme.of(context).colorScheme.primaryContainer,
             child: avatarUrl.isEmpty
-                ? Icon(Icons.person, size: 40, color: Theme.of(context).colorScheme.primary)
+                ? Icon(
+                    Icons.person,
+                    size: 40,
+                    color: Theme.of(context).colorScheme.primary,
+                  )
                 : null,
           ),
           Positioned(

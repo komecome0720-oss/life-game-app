@@ -4,6 +4,7 @@ import 'package:task_manager/features/wish_list/model/wish_item.dart';
 import 'package:task_manager/features/wish_list/viewmodel/wish_list_viewmodel.dart';
 import 'package:task_manager/features/wish_list/widgets/add_wish_item_sheet.dart';
 import 'package:task_manager/features/wish_list/widgets/wish_item_card.dart';
+import 'package:task_manager/widgets/message_guard.dart';
 
 class WishListScreen extends ConsumerWidget {
   const WishListScreen({super.key});
@@ -47,28 +48,31 @@ class WishListScreen extends ConsumerWidget {
           title: const Text('欲しいものリスト'),
           bottom: const TabBar(
             tabs: [
-              Tab(text: 'リスト'),
+              Tab(text: '未獲得'),
               Tab(text: '獲得済み'),
             ],
           ),
         ),
         floatingActionButton: FloatingActionButton(
+          heroTag: 'wish_list_fab',
           onPressed: () => _showAddSheet(context),
           child: const Icon(Icons.add),
         ),
-        body: asyncItems.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) => Center(child: Text('エラー: $e')),
-          data: (items) {
-            final active = items.where((i) => !i.isPurchased).toList();
-            final purchased = items.where((i) => i.isPurchased).toList();
-            return TabBarView(
-              children: [
-                _ItemList(items: active, onDelete: (item) => _confirmDelete(context, ref, item)),
-                _ItemList(items: purchased, onDelete: (item) => _confirmDelete(context, ref, item)),
-              ],
-            );
-          },
+        body: MessageGuard(
+          child: asyncItems.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (e, _) => Center(child: Text('エラー: $e')),
+            data: (items) {
+              final active = items.where((i) => !i.isPurchased).toList();
+              final purchased = items.where((i) => i.isPurchased).toList();
+              return TabBarView(
+                children: [
+                  _ItemList(items: active, onDelete: (item) => _confirmDelete(context, ref, item)),
+                  _ItemList(items: purchased, onDelete: (item) => _confirmDelete(context, ref, item)),
+                ],
+              );
+            },
+          ),
         ),
       ),
     );

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:task_manager/features/user_settings/model/user_settings.dart';
 import 'package:task_manager/features/user_settings/view/user_settings_screen.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 
@@ -8,33 +9,86 @@ class UserStatusPanel extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final settings = ref.watch(userSettingsProvider).settings;
+    final uState = ref.watch(userSettingsProvider);
+    final settings = uState.settings;
+    final isFirstLoad = uState.isLoading && _isDefault(settings);
     final text = Theme.of(context).textTheme;
 
     return Card(
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(builder: (_) => const UserSettingsScreen()),
-        ),
+        onTap: isFirstLoad
+            ? null
+            : () => Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                      builder: (_) => const UserSettingsScreen()),
+                ),
         child: Padding(
           padding: const EdgeInsets.all(10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('ステータス', style: text.labelMedium?.copyWith(color: Theme.of(context).colorScheme.primary)),
+              Text('ステータス',
+                  style: text.labelMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.primary)),
               const SizedBox(height: 6),
-              _line(Icons.badge_outlined, '名前', settings.displayName.isEmpty ? '—' : settings.displayName, text),
-              _line(Icons.trending_up, 'レベル', '${settings.level}', text),
-              _line(Icons.savings_outlined, '所持金', '¥${_fmt(settings.totalEarned)}', text),
-              _line(Icons.schedule, '時間単価', settings.hourlyRate > 0 ? '¥${_fmt(settings.hourlyRate.round())}/h' : '—', text),
+              if (isFirstLoad)
+                ...List.generate(
+                  4,
+                  (_) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 16,
+                          height: 16,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade300,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Container(
+                            height: 12,
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else ...[
+                _line(Icons.badge_outlined, '名前',
+                    settings.displayName.isEmpty ? '—' : settings.displayName, text),
+                _line(Icons.trending_up, 'レベル', '${settings.level}', text),
+                _line(Icons.savings_outlined, '所持金',
+                    '¥${_fmt(settings.totalEarned)}', text),
+                _line(
+                    Icons.schedule,
+                    '時間単価',
+                    settings.hourlyRate > 0
+                        ? '¥${_fmt(settings.hourlyRate.round())}/h'
+                        : '—',
+                    text),
+              ],
             ],
           ),
         ),
       ),
     );
+  }
+
+  bool _isDefault(UserSettings s) {
+    return s.displayName.isEmpty &&
+        s.level == 1 &&
+        s.totalEarned == 0 &&
+        s.monthlyBudget == 0;
   }
 
   Widget _line(IconData icon, String label, String value, TextTheme text) {
