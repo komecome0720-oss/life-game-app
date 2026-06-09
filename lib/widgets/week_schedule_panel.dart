@@ -331,59 +331,25 @@ class _WeekSchedulePanelState extends ConsumerState<WeekSchedulePanel> {
                                                 color: color, width: 3)),
                                   ),
                                   alignment: Alignment.centerLeft,
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          t.title,
-                                          style: TextStyle(
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.w600,
-                                            decoration: completed
-                                                ? TextDecoration.lineThrough
-                                                : null,
-                                            decorationThickness: 2.0,
-                                            color: completed
-                                                ? Theme.of(context)
-                                                    .textTheme
-                                                    .bodySmall
-                                                    ?.color
-                                                    ?.withValues(alpha: 0.6)
-                                                : null,
-                                          ),
-                                          overflow: TextOverflow.ellipsis,
-                                          maxLines: 1,
-                                        ),
-                                      ),
-                                      if (isTask)
-                                        GestureDetector(
-                                          behavior: HitTestBehavior.opaque,
-                                          onTapUp: (details) =>
-                                              _showQuadrantPopup(
-                                            context,
-                                            t,
-                                            ref,
-                                            details.globalPosition,
-                                          ),
-                                          child: Padding(
-                                            padding: const EdgeInsets.only(
-                                                left: 2),
-                                            child: Container(
-                                              width: 8,
-                                              height: 8,
-                                              decoration: BoxDecoration(
-                                                color: color,
-                                                shape: BoxShape.circle,
-                                                border: Border.all(
-                                                  color: Colors.white
-                                                      .withValues(alpha: 0.8),
-                                                  width: 1,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                    ],
+                                  child: Text(
+                                    t.title,
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      decoration: completed
+                                          ? TextDecoration.lineThrough
+                                          : null,
+                                      decorationThickness: 2.0,
+                                      color: completed
+                                          ? Theme.of(context)
+                                              .textTheme
+                                              .bodySmall
+                                              ?.color
+                                              ?.withValues(alpha: 0.6)
+                                          : null,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
                                   ),
                                 ),
                               ),
@@ -584,7 +550,7 @@ class _DayColumn extends ConsumerWidget {
                     );
                   }),
                   // タスク
-                  ...layouts.expand((entry) {
+                  ...layouts.map((entry) {
                     final task = entry.$1;
                     final lane = entry.$2;
                     final laneCount = entry.$3;
@@ -594,7 +560,7 @@ class _DayColumn extends ConsumerWidget {
                     final clipStart =
                         startMin.clamp(rangeStartMin, rangeEndMin);
                     final clipEnd = endMin.clamp(rangeStartMin, rangeEndMin);
-                    if (clipEnd <= clipStart) return [const SizedBox.shrink()];
+                    if (clipEnd <= clipStart) return const SizedBox.shrink();
                     final top = (clipStart - rangeStartMin) / 60 * hourHeight;
                     final rawHeight =
                         (clipEnd - clipStart) / 60 * hourHeight;
@@ -607,7 +573,6 @@ class _DayColumn extends ConsumerWidget {
                     final cardWidth = laneW - 2;
 
                     final completed = task.isCompleted;
-                    final circleSize = height < 24 ? 8.0 : 10.0;
                     final taskCard = Material(
                       color: color.withValues(
                           alpha: completed ? 0.12 : 0.22),
@@ -651,106 +616,72 @@ class _DayColumn extends ConsumerWidget {
                       ),
                     );
 
-                    final cardLeft = lane * laneW + 1;
-                    return [
-                      Positioned(
-                        top: top,
-                        left: cardLeft,
-                        width: cardWidth,
-                        height: height,
-                        child: isTask
-                            ? LongPressDraggable<CalendarTask>(
-                                data: task,
-                                delay: const Duration(milliseconds: 300),
-                                dragAnchorStrategy: childDragAnchorStrategy,
-                                onDragStarted: () =>
-                                    dragNotifier.setDragging(true),
-                                onDragEnd: (_) =>
-                                    dragNotifier.setDragging(false),
-                                onDraggableCanceled: (_, _) =>
-                                    dragNotifier.setDragging(false),
-                                onDragCompleted: () =>
-                                    dragNotifier.setDragging(false),
-                                feedback: Material(
-                                  color: Colors.transparent,
-                                  child: Container(
-                                    width: cardWidth,
-                                    height: height,
-                                    decoration: BoxDecoration(
-                                      color: color.withValues(alpha: 0.85),
-                                      borderRadius: BorderRadius.circular(4),
-                                      boxShadow: const [
-                                        BoxShadow(
-                                          color: Colors.black38,
-                                          blurRadius: 8,
-                                          offset: Offset(2, 4),
-                                        ),
-                                      ],
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 4, vertical: 2),
-                                    child: Text(
-                                      task.title,
-                                      style: text.bodySmall?.copyWith(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w700,
-                                        color: Colors.white,
+                    return Positioned(
+                      top: top,
+                      left: lane * laneW + 1,
+                      width: cardWidth,
+                      height: height,
+                      child: isTask
+                          ? LongPressDraggable<CalendarTask>(
+                              data: task,
+                              delay: const Duration(milliseconds: 300),
+                              dragAnchorStrategy: childDragAnchorStrategy,
+                              onDragStarted: () =>
+                                  dragNotifier.setDragging(true),
+                              onDragEnd: (_) =>
+                                  dragNotifier.setDragging(false),
+                              onDraggableCanceled: (_, _) =>
+                                  dragNotifier.setDragging(false),
+                              onDragCompleted: () =>
+                                  dragNotifier.setDragging(false),
+                              feedback: Material(
+                                color: Colors.transparent,
+                                child: Container(
+                                  width: cardWidth,
+                                  height: height,
+                                  decoration: BoxDecoration(
+                                    color: color.withValues(alpha: 0.85),
+                                    borderRadius: BorderRadius.circular(4),
+                                    boxShadow: const [
+                                      BoxShadow(
+                                        color: Colors.black38,
+                                        blurRadius: 8,
+                                        offset: Offset(2, 4),
                                       ),
-                                      overflow: TextOverflow.ellipsis,
-                                      maxLines: ((height - 4) / 13)
-                                          .floor()
-                                          .clamp(1, 4),
+                                    ],
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 4, vertical: 2),
+                                  child: Text(
+                                    task.title,
+                                    style: text.bodySmall?.copyWith(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
                                     ),
-                                  ),
-                                ),
-                                childWhenDragging: Opacity(
-                                  opacity: 0.3,
-                                  child: taskCard,
-                                ),
-                                child: taskCard,
-                              )
-                            // 表示専用（未ダウンロード）の Google イベントは
-                            // ドラッグ不可。長押し（＝移動操作）のときだけ案内を出す。
-                            : GestureDetector(
-                                behavior: HitTestBehavior.opaque,
-                                onLongPress: onReadOnlyMoveAttempt == null
-                                    ? null
-                                    : () => onReadOnlyMoveAttempt!(task),
-                                child: taskCard,
-                              ),
-                      ),
-                      if (isTask)
-                        Positioned(
-                          top: top + (height - circleSize) / 2,
-                          left: cardLeft + cardWidth - circleSize - 4,
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTapUp: (details) => _showQuadrantPopup(
-                              context,
-                              task,
-                              ref,
-                              details.globalPosition,
-                            ),
-                            child: Container(
-                              width: circleSize + 4,
-                              height: circleSize + 4,
-                              alignment: Alignment.center,
-                              child: Container(
-                                width: circleSize,
-                                height: circleSize,
-                                decoration: BoxDecoration(
-                                  color: color,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: Colors.white.withValues(alpha: 0.8),
-                                    width: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: ((height - 4) / 13)
+                                        .floor()
+                                        .clamp(1, 4),
                                   ),
                                 ),
                               ),
+                              childWhenDragging: Opacity(
+                                opacity: 0.3,
+                                child: taskCard,
+                              ),
+                              child: taskCard,
+                            )
+                          // 表示専用（未ダウンロード）の Google イベントは
+                          // ドラッグ不可。長押し（＝移動操作）のときだけ案内を出す。
+                          : GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onLongPress: onReadOnlyMoveAttempt == null
+                                  ? null
+                                  : () => onReadOnlyMoveAttempt!(task),
+                              child: taskCard,
                             ),
-                          ),
-                        ),
-                    ];
+                    );
                   }),
                   // 現在時刻ライン（今日の列のみ）
                   if (isToday)
@@ -871,65 +802,4 @@ Color resolveTaskColor(
     return Colors.blueGrey;
   }
   return scheme.primary;
-}
-
-Future<void> _showQuadrantPopup(
-  BuildContext context,
-  CalendarTask task,
-  WidgetRef ref,
-  Offset globalPosition,
-) async {
-  final scheme = Theme.of(context).colorScheme;
-  final currentQ = QuadrantX.from(
-    urgency: task.urgency,
-    importance: task.importance,
-  );
-
-  final selected = await showMenu<Quadrant>(
-    context: context,
-    position: RelativeRect.fromLTRB(
-      globalPosition.dx,
-      globalPosition.dy,
-      globalPosition.dx,
-      globalPosition.dy,
-    ),
-    items: Quadrant.values.map((q) {
-      final isCurrent = q == currentQ;
-      return PopupMenuItem<Quadrant>(
-        value: q,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 12,
-              height: 12,
-              decoration: BoxDecoration(
-                color: q.accentColor(scheme),
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              q.label,
-              style: TextStyle(
-                fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
-            if (isCurrent) ...[
-              const SizedBox(width: 4),
-              Icon(Icons.check, size: 16, color: scheme.primary),
-            ],
-          ],
-        ),
-      );
-    }).toList(),
-  );
-
-  if (selected == null || selected == currentQ) return;
-
-  await ref.read(calendarTaskSyncRepositoryProvider).updateQuadrant(
-    taskId: task.id,
-    urgency: selected.urgency,
-    importance: selected.importance,
-  );
 }

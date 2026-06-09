@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
 
 /// タイマー列と実績分列のラベル行を同じ高さにそろえる（ヘルプアイコン行とテキストのみ行のズレ防止）。
@@ -64,6 +65,7 @@ Future<void> showTaskEventDetailSheet({
   VoidCallback? onEdit,
   VoidCallback? onDuplicate,
   VoidCallback? onDelete,
+  Future<void> Function(Quadrant quadrant)? onQuadrantChanged,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -84,6 +86,7 @@ Future<void> showTaskEventDetailSheet({
         onEdit: onEdit,
         onDuplicate: onDuplicate,
         onDelete: onDelete,
+        onQuadrantChanged: onQuadrantChanged,
       ),
     ),
   );
@@ -118,6 +121,7 @@ class _TaskEventDetailBody extends StatefulWidget {
     this.onEdit,
     this.onDuplicate,
     this.onDelete,
+    this.onQuadrantChanged,
   });
 
   final CalendarTask task;
@@ -132,6 +136,7 @@ class _TaskEventDetailBody extends StatefulWidget {
   final VoidCallback? onEdit;
   final VoidCallback? onDuplicate;
   final VoidCallback? onDelete;
+  final Future<void> Function(Quadrant quadrant)? onQuadrantChanged;
 
   @override
   State<_TaskEventDetailBody> createState() => _TaskEventDetailBodyState();
@@ -156,6 +161,8 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
   DateTime? _currentStart;
   DateTime? _currentEnd;
 
+  late Quadrant _currentQuadrant;
+
   @override
   void initState() {
     super.initState();
@@ -167,6 +174,10 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
     _isCompleted = widget.task.isCompleted;
     _currentStart = widget.task.start;
     _currentEnd = widget.task.end;
+    _currentQuadrant = QuadrantX.from(
+      urgency: widget.task.urgency,
+      importance: widget.task.importance,
+    );
   }
 
   @override
@@ -251,7 +262,7 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
             '・リセット後に再スタートして一時停止すると、その時点の「実際にかかった時間」に '
             '新しい計測分が加算されます。\n'
             '　例）「実際にかかった時間」が 25 分の状態で、リセット → スタート → 3:22 で一時停止 → 28 分。\n'
-            '・タイマーを動かしたまま「チェック（完了へ）」を押した場合は、自動で一時停止と転記をしてから完了します。',
+            '・タイマーを動かしたまま「完了」を押した場合は、自動で一時停止と転記をしてから完了します。',
           ),
         ),
         actions: [
@@ -543,6 +554,93 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
                 ],
               ),
             ],
+            if (widget.onQuadrantChanged != null) ...[
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTapUp: (details) async {
+                  final selected = await showMenu<Quadrant>(
+                    context: context,
+                    position: RelativeRect.fromLTRB(
+                      details.globalPosition.dx,
+                      details.globalPosition.dy,
+                      details.globalPosition.dx,
+                      details.globalPosition.dy,
+                    ),
+                    items: Quadrant.values.map((q) {
+                      final isCurrent = q == _currentQuadrant;
+                      return PopupMenuItem<Quadrant>(
+                        value: q,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 12,
+                              height: 12,
+                              decoration: BoxDecoration(
+                                color: q.accentColor(scheme),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              q.label,
+                              style: TextStyle(
+                                fontWeight: isCurrent
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                            if (isCurrent) ...[
+                              const SizedBox(width: 4),
+                              Icon(Icons.check,
+                                  size: 16, color: scheme.primary),
+                            ],
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  );
+                  if (selected == null || selected == _currentQuadrant) return;
+                  setState(() => _currentQuadrant = selected);
+                  await widget.onQuadrantChanged!(selected);
+                },
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: _currentQuadrant
+                        .backgroundColor(scheme),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: _currentQuadrant.accentColor(scheme)
+                          .withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: _currentQuadrant.accentColor(scheme),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '領域 ${_currentQuadrant.label}',
+                        style: text.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const Spacer(),
+                      Icon(Icons.unfold_more,
+                          size: 18, color: scheme.onSurfaceVariant),
+                    ],
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.all(12),
@@ -755,23 +853,23 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
               Row(
                 children: [
                   Expanded(
-                    child: FilledButton.icon(
-                      onPressed: _onTapComplete,
-                      icon: const Icon(Icons.check_circle_outline),
-                      label: const Text(
-                        'チェック',
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
                     child: FilledButton.tonalIcon(
                       onPressed:
                           widget.onSaveProgress == null ? null : _onTapSave,
                       icon: const Icon(Icons.save_outlined),
                       label: const Text(
                         '保存',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: _onTapComplete,
+                      icon: const Icon(Icons.check_circle_outline),
+                      label: const Text(
+                        '完了',
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),

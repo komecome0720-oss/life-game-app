@@ -8,6 +8,7 @@ import 'package:task_manager/features/calendar_sync/model/google_account_info.da
 import 'package:task_manager/features/calendar_sync/model/google_calendar_source.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
 import 'package:task_manager/features/health/model/health_category.dart';
+import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
 import 'package:task_manager/features/health/view/health_detail_screen.dart';
 import 'package:task_manager/features/health/viewmodel/health_detail_viewmodel.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
@@ -113,12 +114,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     _lastImportedWeekStart = target;
 
     final vm = ref.read(calendarSyncViewModelProvider.notifier);
+    final qMap = ref.read(calendarQuadrantMapProvider);
     for (final calId in calIds) {
       try {
+        final defaultQ = qMap[account.id]?[calId] ?? 1;
         await vm.importWeek(
           calendarId: calId,
           weekStart: target,
           accountId: account.id,
+          defaultQuadrant: defaultQ,
         );
       } catch (_) {
         // 個別失敗は他をブロックしない
@@ -355,7 +359,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       },
       onComplete: ({required predictedMinutes, required actualMinutes}) async {
         // 注: シートを開いた時点の task.isCompleted で二重完了ガードは行わない。
-        // 「未了に戻す」→「チェック」の同一シート内フローでは、ローカルの task は
+        // 「未了に戻す」→「完了」の同一シート内フローでは、ローカルの task は
         // 元の isCompleted=true のままになるため、ここで弾くと再完了できなくなる。
         // 完了状態の最終判定はシート側 _isCompleted に任せ、Firestore 側も
         // completeTask は idempotent なので二重実行されても問題ない。
@@ -469,6 +473,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           vm.clearError();
         }
       },
+      onQuadrantChanged: (quadrant) async {
+        final taskId = await ref
+            .read(calendarSyncViewModelProvider.notifier)
+            .promoteRemoteTaskIfNeeded(task);
+        if (taskId == null) return;
+        await ref.read(calendarTaskSyncRepositoryProvider).updateQuadrant(
+              taskId: taskId,
+              urgency: quadrant.urgency,
+              importance: quadrant.importance,
+            );
+      },
     );
   }
 
@@ -541,8 +556,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     if (account == null) return; // ユーザーキャンセル
     ref.read(currentGoogleAccountProvider.notifier).set(account);
 
-    // 可視性をロード（初期化時に未ロードの場合に備えて）
-    await ref.read(calendarVisibilityProvider.future);
+    // 可視性・象限をロード（初期化時に未ロードの場合に備えて）
+    await Future.wait([
+      ref.read(calendarVisibilityProvider.future),
+      ref.read(calendarQuadrantProvider.future),
+    ]);
 
     // カレンダー一覧取得
     final calendars = await vm.loadCalendars();
@@ -638,9 +656,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                     builder: (ctx, ref, _) {
                       final visMap = ref.watch(calendarVisibilityMapProvider);
                       final dlMap = ref.watch(calendarDownloadMapProvider);
+                      final qMap = ref.watch(calendarQuadrantMapProvider);
                       final visible = visMap[account.id] ?? const <String>{};
                       final downloaded =
                           dlMap[account.id] ?? const <String>{};
+                      final quadrants =
+                          qMap[account.id] ?? const <String, int>{};
                       return ListView.builder(
                         shrinkWrap: true,
                         itemCount: calendars.length,
@@ -650,11 +671,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                           final parsed = hex == null ? null : _parseHex(hex);
                           final isVisible = visible.contains(cal.id);
                           final isDownloaded = downloaded.contains(cal.id);
+                          final qNum = quadrants[cal.id] ?? 1;
                           return _CalendarRow(
                             calendar: cal,
                             colorDot: parsed,
                             isVisible: isVisible,
                             isDownloaded: isDownloaded,
+                            quadrantNumber: qNum,
                             onVisibilityChanged: (on) async {
                               await ref
                                   .read(calendarVisibilityProvider.notifier)
@@ -672,6 +695,62 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                                 turnOn: on,
                                 wasVisible: isVisible,
                               );
+                            },
+                            onQuadrantTap: () async {
+                              final scheme = Theme.of(ctx).colorScheme;
+                              final selected = await showMenu<int>(
+                                context: ctx,
+                                position: RelativeRect.fromLTRB(
+                                  MediaQuery.sizeOf(ctx).width - 60,
+                                  0,
+                                  0,
+                                  0,
+                                ),
+                                items: List.generate(4, (j) {
+                                  final n = j + 1;
+                                  final q = QuadrantX.fromNumber(n);
+                                  final isCurrent = n == qNum;
+                                  return PopupMenuItem<int>(
+                                    value: n,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Container(
+                                          width: 12,
+                                          height: 12,
+                                          decoration: BoxDecoration(
+                                            color: q.accentColor(scheme),
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          q.label,
+                                          style: TextStyle(
+                                            fontWeight: isCurrent
+                                                ? FontWeight.bold
+                                                : FontWeight.normal,
+                                          ),
+                                        ),
+                                        if (isCurrent) ...[
+                                          const SizedBox(width: 4),
+                                          Icon(Icons.check,
+                                              size: 16,
+                                              color: scheme.primary),
+                                        ],
+                                      ],
+                                    ),
+                                  );
+                                }),
+                              );
+                              if (selected == null || selected == qNum) return;
+                              await ref
+                                  .read(calendarQuadrantProvider.notifier)
+                                  .setQuadrant(
+                                    accountId: account.id,
+                                    calendarId: cal.id,
+                                    quadrantNumber: selected,
+                                  );
                             },
                           );
                         },
@@ -709,10 +788,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     required bool wasVisible,
   }) async {
     if (turnOn) {
+      final qMap = ref.read(calendarQuadrantMapProvider);
+      final defaultQ = qMap[accountId]?[calendar.id] ?? 1;
       final ok = await ref.read(calendarSyncViewModelProvider.notifier).importWeek(
             calendarId: calendar.id,
             weekStart: weekStart,
             accountId: accountId,
+            defaultQuadrant: defaultQ,
           );
       if (!ok) {
         final msg =
@@ -1199,12 +1281,16 @@ class _SchedulePage extends ConsumerWidget {
                   final account = ref.read(currentGoogleAccountProvider);
                   final accountId = key.accountId ?? account?.id;
                   if (accountId == null) return;
+                  final qMap = ref.read(calendarQuadrantMapProvider);
+                  final defaultQ =
+                      qMap[accountId]?[key.calendarId] ?? 1;
                   final ok = await ref
                       .read(calendarSyncViewModelProvider.notifier)
                       .importWeek(
                         calendarId: key.calendarId,
                         weekStart: weekStart,
                         accountId: accountId,
+                        defaultQuadrant: defaultQ,
                       );
                   if (!ok) return;
                   await ref
@@ -1230,19 +1316,26 @@ class _CalendarRow extends StatelessWidget {
     required this.colorDot,
     required this.isVisible,
     required this.isDownloaded,
+    required this.quadrantNumber,
     required this.onVisibilityChanged,
     required this.onDownloadChanged,
+    required this.onQuadrantTap,
   });
 
   final GoogleCalendarSource calendar;
   final Color? colorDot;
   final bool isVisible;
   final bool isDownloaded;
+  final int quadrantNumber;
   final ValueChanged<bool> onVisibilityChanged;
   final ValueChanged<bool> onDownloadChanged;
+  final VoidCallback onQuadrantTap;
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final q = QuadrantX.fromNumber(quadrantNumber);
+    final qColor = q.accentColor(scheme);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
@@ -1280,14 +1373,22 @@ class _CalendarRow extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          if (colorDot != null)
-            Container(
-              width: 12,
-              height: 12,
+          GestureDetector(
+            onTap: onQuadrantTap,
+            child: Container(
+              width: 14,
+              height: 14,
               margin: const EdgeInsets.only(left: 8),
-              decoration:
-                  BoxDecoration(color: colorDot, shape: BoxShape.circle),
+              decoration: BoxDecoration(
+                color: qColor,
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: scheme.outlineVariant,
+                  width: 1,
+                ),
+              ),
             ),
+          ),
         ],
       ),
     );

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/calendar_sync/model/google_account_info.dart';
 import 'package:task_manager/features/calendar_sync/model/google_calendar_source.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
+import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
 
 class CalendarSyncState {
@@ -54,6 +55,7 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
     required String calendarId,
     required DateTime weekStart,
     String? accountId,
+    int defaultQuadrant = 1,
   }) async {
     state = state.copyWith(isLoading: true, errorMessage: null);
     try {
@@ -63,7 +65,12 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
             accountId: accountId,
           );
 
-      await ref.read(calendarTaskSyncRepositoryProvider).upsert(tasks);
+      final q = QuadrantX.fromNumber(defaultQuadrant);
+      final withQuadrant = tasks
+          .map((t) => t.copyWith(urgency: q.urgency, importance: q.importance))
+          .toList();
+
+      await ref.read(calendarTaskSyncRepositoryProvider).upsert(withQuadrant);
 
       state = state.copyWith(isLoading: false);
       return true;

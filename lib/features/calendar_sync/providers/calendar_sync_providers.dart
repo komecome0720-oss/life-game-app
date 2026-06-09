@@ -214,6 +214,88 @@ final calendarDownloadMapProvider = Provider<Map<String, Set<String>>>((ref) {
   return async.asData?.value ?? const <String, Set<String>>{};
 });
 
+/// カレンダーごとのデフォルト象限（1〜4）を管理。
+/// Firestore パス: `users/{uid}/settings/calendarQuadrant`
+/// フィールド:
+///   quadrants: { `accountId`: { `calendarId`: int } }
+class CalendarQuadrantNotifier
+    extends AsyncNotifier<Map<String, Map<String, int>>> {
+  DocumentReference<Map<String, dynamic>>? _docRef() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return null;
+    return FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .collection('settings')
+        .doc('calendarQuadrant');
+  }
+
+  @override
+  FutureOr<Map<String, Map<String, int>>> build() async {
+    final ref = _docRef();
+    if (ref == null) return {};
+    try {
+      final doc = await ref.get();
+      if (!doc.exists) return {};
+      final data = doc.data() ?? {};
+      final quadrants = data['quadrants'] as Map<String, dynamic>? ?? {};
+      final result = <String, Map<String, int>>{};
+      quadrants.forEach((accountId, v) {
+        final inner = (v as Map<String, dynamic>?) ?? const {};
+        final calMap = <String, int>{};
+        inner.forEach((calId, value) {
+          if (value is int) calMap[calId] = value;
+        });
+        result[accountId] = calMap;
+      });
+      return result;
+    } catch (e) {
+      debugPrint('CalendarQuadrantNotifier.build error: $e');
+      return {};
+    }
+  }
+
+  Future<void> setQuadrant({
+    required String accountId,
+    required String calendarId,
+    required int quadrantNumber,
+  }) async {
+    final current = state.asData?.value ?? const <String, Map<String, int>>{};
+    final currentForAccount =
+        current[accountId] ?? const <String, int>{};
+    state = AsyncValue.data({
+      ...current,
+      accountId: {...currentForAccount, calendarId: quadrantNumber},
+    });
+    final ref = _docRef();
+    if (ref == null) return;
+    try {
+      await ref.set({
+        'quadrants': {
+          accountId: {calendarId: quadrantNumber},
+        },
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('CalendarQuadrantNotifier.setQuadrant error: $e');
+    }
+  }
+
+  int getQuadrant(String accountId, String calendarId) {
+    return state.asData?.value[accountId]?[calendarId] ?? 1;
+  }
+}
+
+final calendarQuadrantProvider = AsyncNotifierProvider<
+    CalendarQuadrantNotifier,
+    Map<String, Map<String, int>>>(CalendarQuadrantNotifier.new);
+
+final calendarQuadrantMapProvider =
+    Provider<Map<String, Map<String, int>>>((ref) {
+  final async = ref.watch(calendarQuadrantProvider);
+  return async.asData?.value ?? const <String, Map<String, int>>{};
+});
+
 /// 現在 Google Calendar 連携でアクティブなアカウント。
 /// ピッカー選択後に設定、セッション中はその値を使って取得する。
 /// MVP では 1アカウント同時動作、切替時はこの値が更新される。
