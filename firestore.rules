@@ -1,10 +1,62 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    function isAdventureEntry(data) {
+      return data.keys().hasOnly([
+          'type',
+          'sourceId',
+          'title',
+          'deltaYen',
+          'balanceBeforeYen',
+          'balanceAfterYen',
+          'occurredAtUtc',
+          'createdAtUtc',
+          'isLegacyEstimate',
+          'note'
+        ]) &&
+        data.type in [
+          'taskCompleted',
+          'taskReverted',
+          'wishPurchased',
+          'wishUnpurchased',
+          'healthAdjusted',
+          'manualAdjusted'
+        ] &&
+        data.title is string &&
+        data.deltaYen is number &&
+        data.balanceBeforeYen is number &&
+        data.balanceAfterYen is number &&
+        data.occurredAtUtc is timestamp &&
+        data.createdAtUtc is timestamp;
+    }
+
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-      match /{document=**} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if isOwner(userId);
+
+      match /adventure_entries/{entryId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isAdventureEntry(request.resource.data);
+        allow update, delete: if false;
+      }
+
+      match /tasks/{taskId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /wishlist/{itemId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /healthLogs/{logId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /settings/{settingId} {
+        allow read, write: if isOwner(userId);
       }
     }
   }

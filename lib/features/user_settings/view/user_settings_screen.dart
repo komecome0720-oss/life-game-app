@@ -120,13 +120,16 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('キャンセル')),
             TextButton(
-              onPressed: () {
+              onPressed: () async {
                 final amount = int.tryParse(ctrl.text) ?? 0;
+                Navigator.pop(ctx);
                 if (amount > 0) {
                   final delta = isAdding ? amount : -amount;
-                  ref.read(userSettingsProvider.notifier).adjustBalance(delta);
+                  await ref.read(userSettingsProvider.notifier).adjustBalance(
+                        delta,
+                        title: isAdding ? '手動で受け取り' : '手動で使用',
+                      );
                 }
-                Navigator.pop(ctx);
               },
               child: const Text('確定'),
             ),
@@ -226,7 +229,8 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
                     Center(
                       child: CircleAvatar(
                         radius: 24,
-                        backgroundColor: presetAvatarColor(_pendingPresetIndex!).withOpacity(0.2),
+                        backgroundColor: presetAvatarColor(_pendingPresetIndex!)
+                            .withValues(alpha: 0.2),
                         child: Icon(presetAvatarIcon(_pendingPresetIndex!),
                             color: presetAvatarColor(_pendingPresetIndex!), size: 24),
                       ),

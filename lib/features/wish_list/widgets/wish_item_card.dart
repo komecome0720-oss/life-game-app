@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 import 'package:task_manager/features/wish_list/model/wish_item.dart';
 import 'package:task_manager/features/wish_list/view/wish_item_completion_screen.dart';
@@ -17,6 +18,17 @@ class WishItemCard extends ConsumerWidget {
       RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
       (m) => '${m[1]},',
     );
+  }
+
+  String _formatDate(DateTime date) {
+    return DateFormat('yyyy/MM/dd').format(date.toLocal());
+  }
+
+  String get _purchasedDateText {
+    if (!item.isPurchased) return '未獲得';
+    final purchasedAt = item.purchasedAt;
+    if (purchasedAt == null) return '未記録';
+    return _formatDate(purchasedAt);
   }
 
   @override
@@ -95,6 +107,21 @@ class WishItemCard extends ConsumerWidget {
                       ),
                     ),
                     const SizedBox(height: 4),
+                    Text(
+                      '追加日：${_formatDate(item.createdAt)}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    Text(
+                      '獲得日：$_purchasedDateText',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
                     statusBadge,
                   ],
                 ),
@@ -124,9 +151,19 @@ class WishItemCard extends ConsumerWidget {
                     IconButton(
                       icon: const Icon(Icons.undo, size: 20),
                       tooltip: '未獲得に戻す',
-                      onPressed: () => ref
-                          .read(wishListProvider.notifier)
-                          .togglePurchased(item),
+                      onPressed: () async {
+                        final result = await ref
+                            .read(wishListProvider.notifier)
+                            .togglePurchased(item);
+                        if (result.missingAmount && context.mounted) {
+                          showAppSnackBar(
+                            context,
+                            const SnackBar(
+                              content: Text('過去データの金額が未記録のため戻せません'),
+                            ),
+                          );
+                        }
+                      },
                     ),
                 ],
               ),
@@ -153,11 +190,10 @@ class WishItemCard extends ConsumerWidget {
             onPressed: () async {
               Navigator.pop(ctx);
               final settings = ref.read(userSettingsProvider).settings;
-              final balanceBefore = settings.totalEarned;
               final ok = await ref
                   .read(wishListProvider.notifier)
                   .togglePurchased(item);
-              if (!ok) {
+              if (ok.insufficientFunds) {
                 if (context.mounted) {
                   showAppSnackBar(
                     context,
@@ -166,13 +202,23 @@ class WishItemCard extends ConsumerWidget {
                 }
                 return;
               }
+              if (ok.missingAmount) {
+                if (context.mounted) {
+                  showAppSnackBar(
+                    context,
+                    const SnackBar(content: Text('金額が未記録のため処理できません')),
+                  );
+                }
+                return;
+              }
+              if (!ok.applied) return;
               navigator.push(
                 MaterialPageRoute<void>(
                   builder: (_) => WishItemCompletionScreen(
                     userName: settings.displayName,
                     itemPrice: item.price,
-                    balanceBeforeYen: balanceBefore,
-                    balanceAfterYen: balanceBefore - item.price,
+                    balanceBeforeYen: ok.balanceBeforeYen,
+                    balanceAfterYen: ok.balanceAfterYen,
                   ),
                 ),
               );

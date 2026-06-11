@@ -1,6 +1,7 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:task_manager/features/adventure_log/providers/adventure_log_providers.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:task_manager/features/auth/presentation/login_screen.dart';
 import 'package:task_manager/features/auth/providers/auth_providers.dart';
@@ -80,6 +81,7 @@ class _MainShell extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(adventureLogBackfillProvider);
     final index = ref.watch(mainTabIndexProvider);
     return Scaffold(
       body: IndexedStack(index: index, children: _pages),

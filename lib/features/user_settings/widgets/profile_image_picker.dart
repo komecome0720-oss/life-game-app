@@ -75,7 +75,7 @@ class ProfileImagePicker extends StatelessWidget {
                     },
                     child: CircleAvatar(
                       radius: 28,
-                      backgroundColor: p.color.withOpacity(0.2),
+                      backgroundColor: p.color.withValues(alpha: 0.2),
                       child: Icon(p.icon, color: p.color, size: 28),
                     ),
                   );

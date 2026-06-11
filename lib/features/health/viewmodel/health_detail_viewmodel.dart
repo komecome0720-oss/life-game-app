@@ -4,8 +4,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/auth/providers/auth_providers.dart';
+import 'package:task_manager/features/economy/providers/economy_providers.dart';
 import 'package:task_manager/features/health/model/health_category.dart';
 import 'package:task_manager/features/health/model/health_log.dart';
+import 'package:task_manager/features/health/model/health_rollover.dart';
 import 'package:task_manager/features/health/model/health_scoring.dart';
 import 'package:task_manager/features/user_settings/model/user_settings.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
@@ -54,6 +56,9 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
   String? get _uid => _auth.currentUser?.uid;
 
   Timer? _midnightTimer;
+  final Set<Future<void>> _activeSaves = {};
+  bool _isRefreshingForToday = false;
+  int _stateGeneration = 0;
 
   @override
   HealthDetailState build() {
@@ -64,7 +69,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     final uid = ref.watch(
       authStateProvider.select((async) => async.asData?.value?.uid),
     );
-    _scheduleMidnightLock();
+    _scheduleMidnightRollover();
     // 目標値や時間単価が変わったら、再計算して保存する。
     ref.listen<UserSettingsState>(userSettingsProvider, (prev, next) {
       if (prev == null) return;
@@ -72,7 +77,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
         _onGoalsChanged();
       }
     });
-    final emptyLog = HealthLog(dateKey: _todayKey(DateTime.now()));
+    final emptyLog = HealthLog(dateKey: HealthRollover.dateKey(DateTime.now()));
     if (uid == null) {
       return HealthDetailState(log: emptyLog, isLoading: false);
     }
@@ -91,11 +96,16 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
   }
 
   Future<void> _onGoalsChanged() async {
-    if (state.isLoading || !state.isEditableNow || state.log.isFinalized) {
+    if (_isRefreshingForToday ||
+        state.isLoading ||
+        !state.isEditableNow ||
+        state.log.isFinalized) {
       return;
     }
     final uid = _uid;
     if (uid == null) return;
+    final saveDateKey = state.log.dateKey;
+    final saveGeneration = _stateGeneration;
     final settings = ref.read(userSettingsProvider).settings;
     final recomputed = _recompute(state.log, settings);
     if (recomputed.totalScore == state.log.totalScore &&
@@ -106,76 +116,84 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     final delta = recomputed.provisionalEarnedYen - lastSaved;
     state = state.copyWith(log: recomputed);
     try {
-      await _db
-          .collection('users')
-          .doc(uid)
-          .collection('healthLogs')
-          .doc(recomputed.dateKey)
-          .set(recomputed.toFirestore(), SetOptions(merge: true));
-      state = state.copyWith(
-        lastSavedProvisionalYen: recomputed.provisionalEarnedYen,
+      await _trackActiveSave(
+        ref
+            .read(economyRepositoryProvider)
+            .saveHealthLogAndAdjust(
+              dateKey: recomputed.dateKey,
+              healthLogData: recomputed.toFirestore(),
+              deltaYen: delta,
+            ),
       );
-      if (delta != 0) {
-        await ref.read(userSettingsProvider.notifier).adjustBalance(delta);
+      if (_shouldApplySaveResult(uid, saveDateKey, saveGeneration)) {
+        state = state.copyWith(
+          lastSavedProvisionalYen: recomputed.provisionalEarnedYen,
+        );
       }
     } catch (e) {
-      state = state.copyWith(errorMessage: '保存に失敗しました: $e');
+      if (_shouldApplySaveResult(uid, saveDateKey, saveGeneration)) {
+        state = state.copyWith(errorMessage: '保存に失敗しました: $e');
+      }
     }
   }
 
-  static String _todayKey(DateTime now) {
-    String pad(int n) => n.toString().padLeft(2, '0');
-    return '${now.year.toString().padLeft(4, '0')}-${pad(now.month)}-${pad(now.day)}';
-  }
-
-  void _scheduleMidnightLock() {
+  void _scheduleMidnightRollover() {
     _midnightTimer?.cancel();
     final now = DateTime.now();
     final nextMidnight = DateTime(now.year, now.month, now.day + 1);
     final delay = nextMidnight.difference(now) + const Duration(seconds: 1);
     _midnightTimer = Timer(delay, () async {
-      // 当日ログを確定して編集不可へ
-      await _finalizeToday();
-      state = state.copyWith(isEditableNow: false);
+      await refreshForToday();
+      _scheduleMidnightRollover();
     });
   }
 
   Future<void> _load(String uid) async {
-    final todayKey = _todayKey(DateTime.now());
+    final todayKey = HealthRollover.dateKey(DateTime.now());
     try {
       final col = _db.collection('users').doc(uid).collection('healthLogs');
-      // 過去日ログで未確定のものを確定（最大5件）
-      await _finalizePastLogs(col, todayKey);
+      final pastError = await _finalizePastLogs(col, todayKey);
 
       final doc = await col.doc(todayKey).get();
       // ロード中にユーザーが切り替わった場合は破棄
       if (_uid != uid) return;
-      final HealthLog log = doc.exists
+      final loadedLog = doc.exists
           ? HealthLog.fromFirestore(doc)
           : HealthLog(dateKey: todayKey);
+      final settings = ref.read(userSettingsProvider).settings;
+      final log = await _syncTodayLogIfNeeded(
+        uid: uid,
+        log: loadedLog,
+        settings: settings,
+      );
+      if (_uid != uid) return;
 
       state = HealthDetailState(
         log: log,
         isLoading: false,
         isEditableNow: true,
+        errorMessage: pastError,
         lastSavedProvisionalYen: log.provisionalEarnedYen,
       );
+      _stateGeneration++;
     } catch (e) {
       if (_uid != uid) return;
       state = state.copyWith(isLoading: false, errorMessage: '読み込みに失敗しました: $e');
     }
   }
 
-  Future<void> _finalizePastLogs(
-      CollectionReference<Map<String, dynamic>> col, String todayKey) async {
+  Future<String?> _finalizePastLogs(
+    CollectionReference<Map<String, dynamic>> col,
+    String todayKey,
+  ) async {
     try {
       final snaps = await col
-          .where('isFinalized', isEqualTo: false)
           .where(FieldPath.documentId, isLessThan: todayKey)
-          .limit(5)
+          .limit(20)
           .get();
       for (final doc in snaps.docs) {
         final log = HealthLog.fromFirestore(doc);
+        if (log.isFinalized) continue;
         await doc.reference.set(
           log
               .copyWith(
@@ -187,50 +205,104 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
           SetOptions(merge: true),
         );
       }
-    } catch (_) {
-      // 失敗しても致命的ではないため無視
+      return null;
+    } catch (e) {
+      return '過去の健康ログ確定に失敗しました: $e';
     }
   }
 
-  Future<void> _finalizeToday() async {
-    final uid = _uid;
-    if (uid == null) return;
-    final log = state.log;
+  Future<void> _finalizeSavedLogForDate({
+    required CollectionReference<Map<String, dynamic>> col,
+    required String dateKey,
+  }) async {
+    final doc = await col.doc(dateKey).get();
+    final log = doc.exists
+        ? HealthLog.fromFirestore(doc)
+        : HealthLog(dateKey: dateKey);
     if (log.isFinalized) return;
     final finalized = log.copyWith(
       isFinalized: true,
       finalizedEarnedYen: log.provisionalEarnedYen,
       finalizedAt: DateTime.now(),
     );
+    await col
+        .doc(dateKey)
+        .set(finalized.toFirestore(), SetOptions(merge: true));
+  }
+
+  Future<void> refreshForToday() async {
+    if (_isRefreshingForToday) return;
+    final uid = _uid;
+    if (uid == null) return;
+    _isRefreshingForToday = true;
     try {
-      await _db
-          .collection('users')
-          .doc(uid)
-          .collection('healthLogs')
-          .doc(finalized.dateKey)
-          .set(finalized.toFirestore(), SetOptions(merge: true));
-      state = state.copyWith(log: finalized);
-    } catch (_) {}
+      while (_activeSaves.isNotEmpty) {
+        await Future.wait(_activeSaves.toList());
+      }
+      final todayKey = HealthRollover.dateKey(DateTime.now());
+      final col = _db.collection('users').doc(uid).collection('healthLogs');
+      final currentDateKey = state.log.dateKey;
+      if (HealthRollover.isPastDateKey(currentDateKey, todayKey)) {
+        await _finalizeSavedLogForDate(col: col, dateKey: currentDateKey);
+      }
+      final pastError = await _finalizePastLogs(col, todayKey);
+      final doc = await col.doc(todayKey).get();
+      if (_uid != uid) return;
+      final loadedLog = doc.exists
+          ? HealthLog.fromFirestore(doc)
+          : HealthLog(dateKey: todayKey);
+      final settings = ref.read(userSettingsProvider).settings;
+      final todayLog = await _syncTodayLogIfNeeded(
+        uid: uid,
+        log: loadedLog,
+        settings: settings,
+      );
+      if (_uid != uid) return;
+      state = HealthDetailState(
+        log: todayLog,
+        isLoading: false,
+        isEditableNow: true,
+        errorMessage: pastError,
+        lastSavedProvisionalYen: todayLog.provisionalEarnedYen,
+      );
+      _stateGeneration++;
+    } catch (e) {
+      if (_uid == uid) {
+        state = state.copyWith(errorMessage: '日付更新に失敗しました: $e');
+      }
+    } finally {
+      _isRefreshingForToday = false;
+    }
   }
 
   // ── 公開API ───────────────────────────────────────────────
   /// ドラッグ中プレビュー。Firestore には書かない。所持金も変更しない。
-  void previewValue(HealthCategory category, int value) {
-    if (!state.isEditableNow) return;
+  void previewValue(HealthCategory category, num value) {
+    if (_isRefreshingForToday || !state.isEditableNow) return;
     final settings = ref.read(userSettingsProvider).settings;
-    final base = _setValue(state.log, category, value);
+    final base = _setValue(
+      state.log,
+      category,
+      category.clampValue(value, settings),
+    );
     final recomputed = _recompute(base, settings);
     state = state.copyWith(log: recomputed);
   }
 
   /// 確定保存（スライダーのドラッグ終了時）。Firestore 書き込み＋totalEarned 差分更新。
-  Future<void> commitValue(HealthCategory category, int value) async {
-    if (!state.isEditableNow) return;
+  Future<void> commitValue(HealthCategory category, num value) async {
+    if (_isRefreshingForToday || !state.isEditableNow) return;
     final uid = _uid;
     if (uid == null) return;
+    final saveDateKey = state.log.dateKey;
+    final saveGeneration = _stateGeneration;
 
     final settings = ref.read(userSettingsProvider).settings;
-    final base = _setValue(state.log, category, value);
+    final base = _setValue(
+      state.log,
+      category,
+      category.clampValue(value, settings),
+    );
     final recomputed = _recompute(base, settings);
     final lastSaved = state.lastSavedProvisionalYen;
     final delta = recomputed.provisionalEarnedYen - lastSaved;
@@ -239,23 +311,86 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     state = state.copyWith(log: recomputed);
 
     try {
-      await _db
-          .collection('users')
-          .doc(uid)
-          .collection('healthLogs')
-          .doc(recomputed.dateKey)
-          .set(recomputed.toFirestore(), SetOptions(merge: true));
-      state = state.copyWith(lastSavedProvisionalYen: recomputed.provisionalEarnedYen);
-      if (delta != 0) {
-        await ref.read(userSettingsProvider.notifier).adjustBalance(delta);
+      await _trackActiveSave(
+        ref
+            .read(economyRepositoryProvider)
+            .saveHealthLogAndAdjust(
+              dateKey: recomputed.dateKey,
+              healthLogData: recomputed.toFirestore(),
+              deltaYen: delta,
+            ),
+      );
+      if (_shouldApplySaveResult(uid, saveDateKey, saveGeneration)) {
+        state = state.copyWith(
+          lastSavedProvisionalYen: recomputed.provisionalEarnedYen,
+        );
       }
     } catch (e) {
-      state = state.copyWith(errorMessage: '保存に失敗しました: $e');
+      if (_shouldApplySaveResult(uid, saveDateKey, saveGeneration)) {
+        state = state.copyWith(errorMessage: '保存に失敗しました: $e');
+      }
     }
   }
 
   // ── helpers ───────────────────────────────────────────────
-  HealthLog _setValue(HealthLog log, HealthCategory c, int v) {
+  Future<HealthLog> _syncTodayLogIfNeeded({
+    required String uid,
+    required HealthLog log,
+    required UserSettings settings,
+  }) async {
+    if (log.isFinalized) return log;
+    final recomputed = _recompute(log, settings);
+    if (!_computedFieldsDiffer(log, recomputed)) return log;
+
+    final delta = recomputed.provisionalEarnedYen - log.provisionalEarnedYen;
+    await _trackActiveSave(
+      ref
+          .read(economyRepositoryProvider)
+          .saveHealthLogAndAdjust(
+            dateKey: recomputed.dateKey,
+            healthLogData: recomputed.toFirestore(),
+            deltaYen: delta,
+          ),
+    );
+    if (_uid != uid) return log;
+    return recomputed;
+  }
+
+  bool _computedFieldsDiffer(HealthLog a, HealthLog b) {
+    return a.mealScore != b.mealScore ||
+        a.sleepScore != b.sleepScore ||
+        a.exerciseScore != b.exerciseScore ||
+        a.meditationScore != b.meditationScore ||
+        a.totalScore != b.totalScore ||
+        a.provisionalEarnedYen != b.provisionalEarnedYen;
+  }
+
+  bool _shouldApplySaveResult(
+    String saveUid,
+    String saveDateKey,
+    int saveGeneration,
+  ) {
+    return HealthRollover.shouldApplySaveResult(
+      saveUid: saveUid,
+      currentUid: _uid,
+      saveDateKey: saveDateKey,
+      currentDateKey: state.log.dateKey,
+      saveGeneration: saveGeneration,
+      currentGeneration: _stateGeneration,
+    );
+  }
+
+  Future<T> _trackActiveSave<T>(Future<T> saveFuture) async {
+    final tracked = saveFuture.then<void>((_) {}, onError: (_) {});
+    _activeSaves.add(tracked);
+    try {
+      return await saveFuture;
+    } finally {
+      _activeSaves.remove(tracked);
+    }
+  }
+
+  HealthLog _setValue(HealthLog log, HealthCategory c, double v) {
     switch (c) {
       case HealthCategory.meal:
         return log.copyWith(mealGrams: v);
@@ -273,15 +408,27 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     // 比率から直接スコアを算出する。`level × weight` だと小数点切り捨ての
     // ズレで点数が目標達成度を正確に反映しないため。
     final mealScore = HealthScoring.score(log.mealGrams, s.mealGoalGrams, 3);
-    final sleepScore = HealthScoring.score(log.sleepMinutes, sleepGoalMin, 3);
-    final exerciseScore =
-        HealthScoring.score(log.exerciseMinutes, s.exerciseGoalMinutes, 2);
+    final sleepScore = HealthScoring.score(
+      log.sleepMinutes,
+      sleepGoalMin,
+      3,
+      baseline: HealthCategoryX.sleepBaselineMinutes,
+    );
+    final exerciseScore = HealthScoring.score(
+      log.exerciseMinutes,
+      s.exerciseGoalMinutes,
+      2,
+    );
     final meditationScore = HealthScoring.score(
-        log.meditationMinutes, s.meditationGoalMinutes, 2);
-    final totalScore =
-        mealScore + sleepScore + exerciseScore + meditationScore;
-    final provisional =
-        HealthScoring.earningsForPoints(totalScore, s.hourlyRate);
+      log.meditationMinutes,
+      s.meditationGoalMinutes,
+      2,
+    );
+    final totalScore = mealScore + sleepScore + exerciseScore + meditationScore;
+    final provisional = HealthScoring.earningsForPoints(
+      totalScore,
+      s.hourlyRate,
+    );
 
     return log.copyWith(
       mealScore: mealScore,
@@ -297,5 +444,5 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
 
 final healthDetailViewModelProvider =
     NotifierProvider<HealthDetailViewModel, HealthDetailState>(
-  HealthDetailViewModel.new,
-);
+      HealthDetailViewModel.new,
+    );

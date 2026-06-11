@@ -93,7 +93,7 @@ void main() {
       await tester.enterText(find.byType(TextField), '45');
       await tester.pump();
       // 完了ボタン
-      await tester.tap(find.text('チェック（完了へ）'));
+      await tester.tap(find.text('完了'));
       await tester.pumpAndSettle();
 
       expect(capturedActual, 45);
@@ -112,7 +112,7 @@ void main() {
         },
       );
 
-      await tester.tap(find.text('チェック（完了へ）'));
+      await tester.tap(find.text('完了'));
       await tester.pumpAndSettle();
 
       expect(find.text('時間ログなしで完了しますか？'), findsOneWidget);
@@ -132,7 +132,7 @@ void main() {
         },
       );
 
-      await tester.tap(find.text('チェック（完了へ）'));
+      await tester.tap(find.text('完了'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('いいえ'));
       await tester.pumpAndSettle();
@@ -154,7 +154,7 @@ void main() {
         },
       );
 
-      await tester.tap(find.text('チェック（完了へ）'));
+      await tester.tap(find.text('完了'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('はい'));
       await tester.pumpAndSettle();

@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/data/mock_home_data.dart';
+import 'package:task_manager/features/adventure_log/view/adventure_log_screen.dart';
 import 'package:task_manager/features/auth/providers/auth_providers.dart';
 import 'package:task_manager/features/calendar_sync/model/google_account_info.dart';
 import 'package:task_manager/features/calendar_sync/model/google_calendar_source.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
+import 'package:task_manager/features/economy/providers/economy_providers.dart';
 import 'package:task_manager/features/health/model/health_category.dart';
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
 import 'package:task_manager/features/health/view/health_detail_screen.dart';
@@ -57,8 +59,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     final now = DateTime.now();
-    _weekStartDay =
-        ref.read(userSettingsProvider).settings.weekStartDay;
+    _weekStartDay = ref.read(userSettingsProvider).settings.weekStartDay;
     _baseWeekStart = startOfWeek(now, _weekStartDay);
     _baseDay = DateTime(now.year, now.month, now.day);
     _weekPageController = PageController(initialPage: _initialPage);
@@ -87,6 +88,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      ref.read(healthDetailViewModelProvider.notifier).refreshForToday();
       // 復帰時は最新化したいのでガードを無視
       _autoRollImportForCurrentWeek(force: true);
     }
@@ -233,117 +235,104 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             .read(calendarSyncViewModelProvider.notifier)
             .promoteRemoteTaskIfNeeded(task);
       },
-      onPauseAndSave: ({required predictedMinutes, required actualMinutes}) async {
-        // 完了済みタスクには保存して中断を行わない（未了に戻す経路を使うべき）。
-        if (task.isCompleted) return;
+      onPauseAndSave:
+          ({required predictedMinutes, required actualMinutes}) async {
+            // 完了済みタスクには保存して中断を行わない（未了に戻す経路を使うべき）。
+            if (task.isCompleted) return;
 
-        // リモート表示中なら DB に promote。戻り値は taskId（保存済みなら既存ID）。
-        final taskId = await ref
-            .read(calendarSyncViewModelProvider.notifier)
-            .promoteRemoteTaskIfNeeded(task);
-        if (taskId == null) {
-          if (mounted) {
-            _showErrorSnackBar('タスクの保存に失敗したため、中断できませんでした');
-          }
-          return;
-        }
+            // リモート表示中なら DB に promote。戻り値は taskId（保存済みなら既存ID）。
+            final taskId = await ref
+                .read(calendarSyncViewModelProvider.notifier)
+                .promoteRemoteTaskIfNeeded(task);
+            if (taskId == null) {
+              if (mounted) {
+                _showErrorSnackBar('タスクの保存に失敗したため、中断できませんでした');
+              }
+              return;
+            }
 
-        try {
-          await ref.read(calendarTaskSyncRepositoryProvider).saveProgress(
-                taskId: taskId,
-                predictedMinutes: predictedMinutes,
-                actualMinutes: actualMinutes,
-              );
-        } catch (e) {
-          if (mounted) _showErrorSnackBar('保存に失敗しました: $e');
-          return;
-        }
+            try {
+              await ref
+                  .read(calendarTaskSyncRepositoryProvider)
+                  .saveProgress(
+                    taskId: taskId,
+                    predictedMinutes: predictedMinutes,
+                    actualMinutes: actualMinutes,
+                  );
+            } catch (e) {
+              if (mounted) _showErrorSnackBar('保存に失敗しました: $e');
+              return;
+            }
 
-        if (!mounted) return;
-        showAppSnackBar(
-          context,
-          const SnackBar(content: Text('一時中断しました（未了のまま保存）')),
-        );
-      },
-      onSaveProgress: ({required predictedMinutes, required actualMinutes}) async {
-        // 完了済みタスクは保存対象としない（未了に戻してから操作する）。
-        if (task.isCompleted) return;
+            if (!mounted) return;
+            showAppSnackBar(
+              context,
+              const SnackBar(content: Text('一時中断しました（未了のまま保存）')),
+            );
+          },
+      onSaveProgress:
+          ({required predictedMinutes, required actualMinutes}) async {
+            // 完了済みタスクは保存対象としない（未了に戻してから操作する）。
+            if (task.isCompleted) return;
 
-        // リモート表示中なら DB に promote。戻り値は taskId（保存済みなら既存ID）。
-        final taskId = await ref
-            .read(calendarSyncViewModelProvider.notifier)
-            .promoteRemoteTaskIfNeeded(task);
-        if (taskId == null) {
-          if (mounted) {
-            _showErrorSnackBar('タスクの保存に失敗しました');
-          }
-          return;
-        }
+            // リモート表示中なら DB に promote。戻り値は taskId（保存済みなら既存ID）。
+            final taskId = await ref
+                .read(calendarSyncViewModelProvider.notifier)
+                .promoteRemoteTaskIfNeeded(task);
+            if (taskId == null) {
+              if (mounted) {
+                _showErrorSnackBar('タスクの保存に失敗しました');
+              }
+              return;
+            }
 
-        try {
-          await ref.read(calendarTaskSyncRepositoryProvider).saveProgress(
-                taskId: taskId,
-                predictedMinutes: predictedMinutes,
-                actualMinutes: actualMinutes,
-              );
-        } catch (e) {
-          if (mounted) _showErrorSnackBar('保存に失敗しました: $e');
-          return;
-        }
+            try {
+              await ref
+                  .read(calendarTaskSyncRepositoryProvider)
+                  .saveProgress(
+                    taskId: taskId,
+                    predictedMinutes: predictedMinutes,
+                    actualMinutes: actualMinutes,
+                  );
+            } catch (e) {
+              if (mounted) _showErrorSnackBar('保存に失敗しました: $e');
+              return;
+            }
 
-        if (!mounted) return;
-        showAppSnackBar(
-          context,
-          const SnackBar(content: Text('保存しました')),
-        );
-      },
+            if (!mounted) return;
+            showAppSnackBar(context, const SnackBar(content: Text('保存しました')));
+          },
       onRevert: () async {
         if (!task.isCompleted) return false;
-        // 付与済み報酬を打ち消すため、完了時と同じ算出ロジックで現在のレートで再計算する。
-        // （完了時の報酬を保存していないため厳密一致ではないが、レート未変更なら一致する）
-        final latestSettings = ref.read(userSettingsProvider).settings;
-        final minutesForReward =
-            task.actualMinutes ?? task.predictedMinutes ?? predictedMinutes;
-        final reward = _calcReward(
-          hourlyRate: latestSettings.hourlyRate,
-          minutes: minutesForReward,
-          fallbackYen: task.rewardYen,
-        );
-
         try {
-          await ref
-              .read(calendarTaskSyncRepositoryProvider)
-              .uncompleteTask(taskId: task.id);
+          final result = await ref
+              .read(economyRepositoryProvider)
+              .revertTask(taskId: task.id, title: task.title);
+          if (result.missingAmount) {
+            if (mounted) _showErrorSnackBar('過去データの報酬額が未記録のため、未了に戻せません');
+            return false;
+          }
         } catch (e) {
           if (mounted) _showErrorSnackBar('未了への変更に失敗しました: $e');
           return false;
         }
 
-        if (reward > 0) {
-          await ref
-              .read(userSettingsProvider.notifier)
-              .adjustBalance(-reward);
-        }
-
         if (!mounted) return true;
-        showAppSnackBar(
-          context,
-          const SnackBar(content: Text('未了に戻しました')),
-        );
+        showAppSnackBar(context, const SnackBar(content: Text('未了に戻しました')));
         return true;
       },
       onTimesChanged: ({required newStart, required newEnd}) async {
         try {
-          await ref.read(calendarTaskSyncRepositoryProvider).updateTask(
-                taskId: task.id,
-                start: newStart,
-                end: newEnd,
-              );
+          await ref
+              .read(calendarTaskSyncRepositoryProvider)
+              .updateTask(taskId: task.id, start: newStart, end: newEnd);
           if (task.sourceType == TaskSourceType.googleCalendar &&
               task.externalCalendarId != null) {
             final key = ExternalCalendarKey.tryParse(task.externalCalendarId);
             if (key != null) {
-              await ref.read(googleCalendarRepositoryProvider).patchEvent(
+              await ref
+                  .read(googleCalendarRepositoryProvider)
+                  .patchEvent(
                     calendarId: key.calendarId,
                     eventId: key.eventId,
                     newStartLocal: newStart,
@@ -382,46 +371,39 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           minutes: minutesForReward,
           fallbackYen: task.rewardYen,
         );
-        final balanceBeforeYen = latestSettings.totalEarned;
-
         try {
-          await ref.read(calendarTaskSyncRepositoryProvider).completeTask(
+          final result = await ref
+              .read(economyRepositoryProvider)
+              .completeTask(
                 taskId: taskId,
+                title: task.title,
+                rewardYen: reward,
                 predictedMinutes: predictedMinutes,
                 actualMinutes: actualMinutes,
               );
+          if (!result.applied) return;
+          if (!mounted) return;
+          Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => TaskCompletionScreen(
+                taskTitle: task.title,
+                rewardYen: reward,
+                balanceBeforeYen: result.balanceBeforeYen,
+                balanceAfterYen: result.balanceAfterYen,
+              ),
+            ),
+          );
         } catch (e) {
           if (mounted) _showErrorSnackBar('完了状態の保存に失敗しました: $e');
           return;
         }
-
-        if (reward > 0) {
-          await ref
-              .read(userSettingsProvider.notifier)
-              .adjustBalance(reward);
-        }
-
-        if (!mounted) return;
-        final balanceAfterYen = balanceBeforeYen + reward;
-        Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(
-            builder: (_) => TaskCompletionScreen(
-              taskTitle: task.title,
-              rewardYen: reward,
-              balanceBeforeYen: balanceBeforeYen,
-              balanceAfterYen: balanceAfterYen,
-            ),
-          ),
-        );
       },
       onEdit: () {
         if (!mounted) return;
         Navigator.of(context).push<bool>(
           MaterialPageRoute<bool>(
-            builder: (_) => TaskEditorScreen(
-              mode: TaskEditorMode.edit,
-              initial: task,
-            ),
+            builder: (_) =>
+                TaskEditorScreen(mode: TaskEditorMode.edit, initial: task),
           ),
         );
       },
@@ -448,8 +430,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             content: Text('「${task.title}」を削除しますか？'),
             actions: [
               TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('キャンセル')),
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('キャンセル'),
+              ),
               FilledButton(
                 style: FilledButton.styleFrom(backgroundColor: Colors.red),
                 onPressed: () => Navigator.pop(ctx, true),
@@ -463,10 +446,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         final ok = await vm.deleteTask(task);
         if (!mounted) return;
         if (ok) {
-          showAppSnackBar(
-            context,
-            const SnackBar(content: Text('削除しました')),
-          );
+          showAppSnackBar(context, const SnackBar(content: Text('削除しました')));
         } else {
           final msg = ref.read(calendarSyncViewModelProvider).errorMessage;
           _showErrorSnackBar(msg ?? '削除に失敗しました');
@@ -478,7 +458,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             .read(calendarSyncViewModelProvider.notifier)
             .promoteRemoteTaskIfNeeded(task);
         if (taskId == null) return;
-        await ref.read(calendarTaskSyncRepositoryProvider).updateQuadrant(
+        await ref
+            .read(calendarTaskSyncRepositoryProvider)
+            .updateQuadrant(
               taskId: taskId,
               urgency: quadrant.urgency,
               importance: quadrant.importance,
@@ -503,14 +485,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final (title, durationMin) = result;
     final end = initialStart.add(Duration(minutes: durationMin));
     final vm = ref.read(calendarSyncViewModelProvider.notifier);
-    final success =
-        await vm.createTask(title: title, start: initialStart, end: end);
+    final success = await vm.createTask(
+      title: title,
+      start: initialStart,
+      end: end,
+    );
     if (!mounted) return;
     if (success) {
-      showAppSnackBar(
-        context,
-        const SnackBar(content: Text('予定を追加しました')),
-      );
+      showAppSnackBar(context, const SnackBar(content: Text('予定を追加しました')));
     } else {
       final errorMsg = ref.read(calendarSyncViewModelProvider).errorMessage;
       _showErrorSnackBar(errorMsg ?? '追加に失敗しました');
@@ -531,8 +513,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     await _openCalendarChooser(weekStart);
   }
 
-  Future<void> _openCalendarChooser(DateTime weekStart,
-      {bool forceAccountPicker = false}) async {
+  Future<void> _openCalendarChooser(
+    DateTime weekStart, {
+    bool forceAccountPicker = false,
+  }) async {
     final repo = ref.read(googleCalendarRepositoryProvider);
     final vm = ref.read(calendarSyncViewModelProvider.notifier);
 
@@ -548,9 +532,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       }
     } catch (e) {
       if (!mounted) return;
-      _showErrorSnackBar('アカウント認証に失敗しました: $e',
-          retry: () => _openCalendarChooser(weekStart,
-              forceAccountPicker: forceAccountPicker));
+      _showErrorSnackBar(
+        'アカウント認証に失敗しました: $e',
+        retry: () => _openCalendarChooser(
+          weekStart,
+          forceAccountPicker: forceAccountPicker,
+        ),
+      );
       return;
     }
     if (account == null) return; // ユーザーキャンセル
@@ -567,8 +555,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     if (!mounted) return;
     final state = ref.read(calendarSyncViewModelProvider);
     if (state.errorMessage != null) {
-      _showErrorSnackBar(state.errorMessage!,
-          retry: () => _openCalendarChooser(weekStart));
+      _showErrorSnackBar(
+        state.errorMessage!,
+        retry: () => _openCalendarChooser(weekStart),
+      );
       vm.clearError();
       return;
     }
@@ -658,8 +648,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                       final dlMap = ref.watch(calendarDownloadMapProvider);
                       final qMap = ref.watch(calendarQuadrantMapProvider);
                       final visible = visMap[account.id] ?? const <String>{};
-                      final downloaded =
-                          dlMap[account.id] ?? const <String>{};
+                      final downloaded = dlMap[account.id] ?? const <String>{};
                       final quadrants =
                           qMap[account.id] ?? const <String, int>{};
                       return ListView.builder(
@@ -734,9 +723,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                                         ),
                                         if (isCurrent) ...[
                                           const SizedBox(width: 4),
-                                          Icon(Icons.check,
-                                              size: 16,
-                                              color: scheme.primary),
+                                          Icon(
+                                            Icons.check,
+                                            size: 16,
+                                            color: scheme.primary,
+                                          ),
                                         ],
                                       ],
                                     ),
@@ -790,7 +781,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     if (turnOn) {
       final qMap = ref.read(calendarQuadrantMapProvider);
       final defaultQ = qMap[accountId]?[calendar.id] ?? 1;
-      final ok = await ref.read(calendarSyncViewModelProvider.notifier).importWeek(
+      final ok = await ref
+          .read(calendarSyncViewModelProvider.notifier)
+          .importWeek(
             calendarId: calendar.id,
             weekStart: weekStart,
             accountId: accountId,
@@ -798,19 +791,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           );
       if (!ok) {
         final msg =
-            ref.read(calendarSyncViewModelProvider).errorMessage ?? '取り込みに失敗しました';
+            ref.read(calendarSyncViewModelProvider).errorMessage ??
+            '取り込みに失敗しました';
         ref.read(calendarSyncViewModelProvider.notifier).clearError();
         if (mounted) _showErrorSnackBar(msg);
         return;
       }
-      await ref.read(calendarDownloadProvider.notifier).setDownloaded(
+      await ref
+          .read(calendarDownloadProvider.notifier)
+          .setDownloaded(
             accountId: accountId,
             calendarId: calendar.id,
             downloaded: true,
           );
       // タスクが見えないと不便なため、表示も自動でON
       if (!wasVisible) {
-        await ref.read(calendarVisibilityProvider.notifier).setVisible(
+        await ref
+            .read(calendarVisibilityProvider.notifier)
+            .setVisible(
               accountId: accountId,
               calendarId: calendar.id,
               visible: true,
@@ -824,7 +822,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       builder: (ctx) => AlertDialog(
         title: const Text('取り込みを解除しますか？'),
         content: Text(
-            '「${calendar.name}」の今週ぶんの取り込み済みタスクを削除します。完了状態などのタスク管理データも失われます。続行しますか？'),
+          '「${calendar.name}」の今週ぶんの取り込み済みタスクを削除します。完了状態などのタスク管理データも失われます。続行しますか？',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -845,7 +844,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             calendarId: calendar.id,
             weekStartLocal: weekStart,
           );
-      await ref.read(calendarDownloadProvider.notifier).setDownloaded(
+      await ref
+          .read(calendarDownloadProvider.notifier)
+          .setDownloaded(
             accountId: accountId,
             calendarId: calendar.id,
             downloaded: false,
@@ -880,7 +881,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       ),
     );
   }
-
 
   void _jumpToToday() {
     if (_viewMode == CalendarViewMode.week) {
@@ -923,22 +923,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     );
 
     // DLチェック設定が変わったら次回スワイプで再取り込みを許可
-    ref.listen<Map<String, Set<String>>>(
-      calendarDownloadMapProvider,
-      (prev, next) {
-        if (prev == next) return;
-        _lastImportedWeekStart = null;
-      },
-    );
+    ref.listen<Map<String, Set<String>>>(calendarDownloadMapProvider, (
+      prev,
+      next,
+    ) {
+      if (prev == next) return;
+      _lastImportedWeekStart = null;
+    });
 
     // アカウント切替時もリセット
-    ref.listen<GoogleAccountInfo?>(
-      currentGoogleAccountProvider,
-      (prev, next) {
-        if (prev?.id == next?.id) return;
-        _lastImportedWeekStart = null;
-      },
-    );
+    ref.listen<GoogleAccountInfo?>(currentGoogleAccountProvider, (prev, next) {
+      if (prev?.id == next?.id) return;
+      _lastImportedWeekStart = null;
+    });
 
     return Scaffold(
       appBar: AppBar(
@@ -972,20 +969,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               accountName: Text(user?.displayName ?? 'ユーザー'),
               accountEmail: Text(user?.email ?? ''),
               currentAccountPicture: CircleAvatar(
-                backgroundColor:
-                    Theme.of(context).colorScheme.primaryContainer,
+                backgroundColor: Theme.of(context).colorScheme.primaryContainer,
                 child: Text(
                   (user?.displayName?.isNotEmpty == true
                           ? user!.displayName![0]
                           : user?.email?[0] ?? '?')
                       .toUpperCase(),
                   style: TextStyle(
-                      fontSize: 24,
-                      color: Theme.of(context).colorScheme.primary),
+                    fontSize: 24,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                 ),
               ),
-              decoration:
-                  BoxDecoration(color: Theme.of(context).colorScheme.primary),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary,
+              ),
             ),
             if (syncCalendars.isNotEmpty) ...[
               Padding(
@@ -993,9 +991,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 child: Text(
                   'カレンダー',
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
               ...syncCalendars.map((cal) {
@@ -1008,7 +1006,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                   onChanged: currentAccountId == null
                       ? null
                       : (on) {
-                          ref.read(calendarVisibilityProvider.notifier).setVisible(
+                          ref
+                              .read(calendarVisibilityProvider.notifier)
+                              .setVisible(
                                 accountId: currentAccountId,
                                 calendarId: cal.id,
                                 visible: on == true,
@@ -1034,6 +1034,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               const Divider(),
             ],
             ListTile(
+              leading: const Icon(Icons.auto_stories_outlined),
+              title: const Text('冒険の記録'),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const AdventureLogScreen(),
+                  ),
+                );
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.logout),
               title: const Text('ログアウト'),
               onTap: () async {
@@ -1046,101 +1058,106 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       ),
       body: MessageGuard(
         child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Column(
-            children: [
-              IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Expanded(child: UserStatusPanel()),
-                    const SizedBox(width: 10),
-                    const Expanded(child: _HealthPanelConnector()),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
-              Expanded(
-                child: Card(
-                  margin: EdgeInsets.zero,
-                  clipBehavior: Clip.antiAlias,
-                  child: Column(
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Column(
+              children: [
+                IntrinsicHeight(
+                  child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      ScheduleHeaderBar(
-                        viewMode: _viewMode,
-                        isOnToday: _isOnToday,
-                        onViewModeChanged: _handleViewModeChange,
-                        onJumpToToday: _jumpToToday,
-                        onImportFromCalendar: () =>
-                            _handleImport(_currentWeekStart),
-                        isImporting: syncState.isLoading,
-                      ),
-                      const Divider(height: 1),
-                      Expanded(
-                        child: IndexedStack(
-                          index:
-                              _viewMode == CalendarViewMode.week ? 0 : 1,
-                          children: [
-                            PageView.builder(
-                              controller: _weekPageController,
-                              onPageChanged: (p) {
-                                final prevWs =
-                                    _weekStartForPage(_currentWeekPage);
-                                final newWs = _weekStartForPage(p);
-                                setState(() => _currentWeekPage = p);
-                                if (prevWs != newWs) {
-                                  _scheduleAutoImport(newWs);
-                                }
-                              },
-                              itemBuilder: (context, index) {
-                                final ws = _weekStartForPage(index);
-                                final visibleDays = List.generate(
-                                    7, (i) => ws.add(Duration(days: i)));
-                                return _SchedulePage(
-                                  visibleDays: visibleDays,
-                                  onTaskTap: _openTask,
-                                  onEmptyTap: _handleEmptyTap,
-                                );
-                              },
-                            ),
-                            Listener(
-                              onPointerMove: _handleDayDragPointerMove,
-                              child: PageView.builder(
-                                controller: _dayPageController,
+                      const Expanded(child: UserStatusPanel()),
+                      const SizedBox(width: 10),
+                      const Expanded(child: _HealthPanelConnector()),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: Card(
+                    margin: EdgeInsets.zero,
+                    clipBehavior: Clip.antiAlias,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        ScheduleHeaderBar(
+                          viewMode: _viewMode,
+                          isOnToday: _isOnToday,
+                          onViewModeChanged: _handleViewModeChange,
+                          onJumpToToday: _jumpToToday,
+                          onImportFromCalendar: () =>
+                              _handleImport(_currentWeekStart),
+                          isImporting: syncState.isLoading,
+                        ),
+                        const Divider(height: 1),
+                        Expanded(
+                          child: IndexedStack(
+                            index: _viewMode == CalendarViewMode.week ? 0 : 1,
+                            children: [
+                              PageView.builder(
+                                controller: _weekPageController,
                                 onPageChanged: (p) {
-                                  final prevWs = startOfWeek(
-                                      _dayForPage(_currentDayPage),
-                                      _weekStartDay);
-                                  final newWs = startOfWeek(
-                                      _dayForPage(p), _weekStartDay);
-                                  setState(() => _currentDayPage = p);
+                                  final prevWs = _weekStartForPage(
+                                    _currentWeekPage,
+                                  );
+                                  final newWs = _weekStartForPage(p);
+                                  setState(() => _currentWeekPage = p);
                                   if (prevWs != newWs) {
                                     _scheduleAutoImport(newWs);
                                   }
                                 },
                                 itemBuilder: (context, index) {
-                                  final day = _dayForPage(index);
+                                  final ws = _weekStartForPage(index);
+                                  final visibleDays = List.generate(
+                                    7,
+                                    (i) => ws.add(Duration(days: i)),
+                                  );
                                   return _SchedulePage(
-                                    visibleDays: [day],
+                                    visibleDays: visibleDays,
                                     onTaskTap: _openTask,
                                     onEmptyTap: _handleEmptyTap,
                                   );
                                 },
                               ),
-                            ),
-                          ],
+                              Listener(
+                                onPointerMove: _handleDayDragPointerMove,
+                                child: PageView.builder(
+                                  controller: _dayPageController,
+                                  onPageChanged: (p) {
+                                    final prevWs = startOfWeek(
+                                      _dayForPage(_currentDayPage),
+                                      _weekStartDay,
+                                    );
+                                    final newWs = startOfWeek(
+                                      _dayForPage(p),
+                                      _weekStartDay,
+                                    );
+                                    setState(() => _currentDayPage = p);
+                                    if (prevWs != newWs) {
+                                      _scheduleAutoImport(newWs);
+                                    }
+                                  },
+                                  itemBuilder: (context, index) {
+                                    final day = _dayForPage(index);
+                                    return _SchedulePage(
+                                      visibleDays: [day],
+                                      onTaskTap: _openTask,
+                                      onEmptyTap: _handleEmptyTap,
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -1161,8 +1178,9 @@ class _SchedulePage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final weekStartDay =
-        ref.watch(userSettingsProvider.select((s) => s.settings.weekStartDay));
+    final weekStartDay = ref.watch(
+      userSettingsProvider.select((s) => s.settings.weekStartDay),
+    );
     final weekStart = startOfWeek(visibleDays.first, weekStartDay);
 
     // Firestore 保存済みタスク
@@ -1197,8 +1215,9 @@ class _SchedulePage extends ConsumerWidget {
     final account = ref.watch(currentGoogleAccountProvider);
     final visibilityMap = ref.watch(calendarVisibilityMapProvider);
 
-    final dayKeys =
-        visibleDays.map((d) => DateTime(d.year, d.month, d.day)).toSet();
+    final dayKeys = visibleDays
+        .map((d) => DateTime(d.year, d.month, d.day))
+        .toSet();
 
     bool inRange(CalendarTask t) {
       final start = t.start;
@@ -1271,8 +1290,7 @@ class _SchedulePage extends ConsumerWidget {
       SnackBar(
         showCloseIcon: true,
         duration: const Duration(seconds: 8),
-        content: const Text(
-            '表示専用なので動かせません。ダウンロードするとタスクとして管理・移動できます。'),
+        content: const Text('表示専用なので動かせません。ダウンロードするとタスクとして管理・移動できます。'),
         action: !canDownload
             ? null
             : SnackBarAction(
@@ -1282,8 +1300,7 @@ class _SchedulePage extends ConsumerWidget {
                   final accountId = key.accountId ?? account?.id;
                   if (accountId == null) return;
                   final qMap = ref.read(calendarQuadrantMapProvider);
-                  final defaultQ =
-                      qMap[accountId]?[key.calendarId] ?? 1;
+                  final defaultQ = qMap[accountId]?[key.calendarId] ?? 1;
                   final ok = await ref
                       .read(calendarSyncViewModelProvider.notifier)
                       .importWeek(
@@ -1367,12 +1384,7 @@ class _CalendarRow extends StatelessWidget {
             const Icon(Icons.star, size: 14, color: Colors.amber),
             const SizedBox(width: 4),
           ],
-          Expanded(
-            child: Text(
-              calendar.name,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
+          Expanded(child: Text(calendar.name, overflow: TextOverflow.ellipsis)),
           GestureDetector(
             onTap: onQuadrantTap,
             child: Container(
@@ -1382,10 +1394,7 @@ class _CalendarRow extends StatelessWidget {
               decoration: BoxDecoration(
                 color: qColor,
                 shape: BoxShape.circle,
-                border: Border.all(
-                  color: scheme.outlineVariant,
-                  width: 1,
-                ),
+                border: Border.all(color: scheme.outlineVariant, width: 1),
               ),
             ),
           ),

@@ -4,10 +4,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class HealthLog {
   const HealthLog({
     required this.dateKey,
-    this.mealGrams = 0,
-    this.exerciseMinutes = 0,
-    this.sleepMinutes = 0,
-    this.meditationMinutes = 0,
+    this.mealGrams = 0.0,
+    this.exerciseMinutes = 0.0,
+    this.sleepMinutes = 0.0,
+    this.meditationMinutes = 0.0,
     this.mealScore = 0,
     this.sleepScore = 0,
     this.exerciseScore = 0,
@@ -21,10 +21,10 @@ class HealthLog {
   });
 
   final String dateKey;
-  final int mealGrams;
-  final int exerciseMinutes;
-  final int sleepMinutes;
-  final int meditationMinutes;
+  final double mealGrams;
+  final double exerciseMinutes;
+  final double sleepMinutes;
+  final double meditationMinutes;
 
   /// 重み付き点数（食事・睡眠は max30、運動・瞑想は max20）
   final int mealScore;
@@ -44,10 +44,10 @@ class HealthLog {
 
   HealthLog copyWith({
     String? dateKey,
-    int? mealGrams,
-    int? exerciseMinutes,
-    int? sleepMinutes,
-    int? meditationMinutes,
+    double? mealGrams,
+    double? exerciseMinutes,
+    double? sleepMinutes,
+    double? meditationMinutes,
     int? mealScore,
     int? sleepScore,
     int? exerciseScore,
@@ -81,12 +81,13 @@ class HealthLog {
   factory HealthLog.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
     DateTime? ts(Object? v) => v is Timestamp ? v.toDate() : null;
+    double decimal(Object? v) => (v as num?)?.toDouble() ?? 0.0;
     return HealthLog(
       dateKey: data['dateKey'] as String? ?? doc.id,
-      mealGrams: (data['mealGrams'] as num?)?.toInt() ?? 0,
-      exerciseMinutes: (data['exerciseMinutes'] as num?)?.toInt() ?? 0,
-      sleepMinutes: (data['sleepMinutes'] as num?)?.toInt() ?? 0,
-      meditationMinutes: (data['meditationMinutes'] as num?)?.toInt() ?? 0,
+      mealGrams: decimal(data['mealGrams']),
+      exerciseMinutes: decimal(data['exerciseMinutes']),
+      sleepMinutes: decimal(data['sleepMinutes']),
+      meditationMinutes: decimal(data['meditationMinutes']),
       mealScore: (data['mealScore'] as num?)?.toInt() ?? 0,
       sleepScore: (data['sleepScore'] as num?)?.toInt() ?? 0,
       exerciseScore: (data['exerciseScore'] as num?)?.toInt() ?? 0,

@@ -31,6 +31,9 @@ class HealthItemRow extends ConsumerStatefulWidget {
 }
 
 class _HealthItemRowState extends ConsumerState<HealthItemRow> {
+  static const double _goalColumnWidth = 144;
+  static const double _statsColumnWidth = 52;
+
   late final TextEditingController _primaryCtrl;
   late final TextEditingController _sleepHoursCtrl;
   late final TextEditingController _sleepMinsCtrl;
@@ -78,12 +81,14 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
         _primaryCtrl.text = s.mealGoalGrams == 0 ? '' : '${s.mealGoalGrams}';
         break;
       case HealthCategory.exercise:
-        _primaryCtrl.text =
-            s.exerciseGoalMinutes == 0 ? '' : '${s.exerciseGoalMinutes}';
+        _primaryCtrl.text = s.exerciseGoalMinutes == 0
+            ? ''
+            : '${s.exerciseGoalMinutes}';
         break;
       case HealthCategory.sleep:
-        _sleepHoursCtrl.text =
-            s.sleepGoalHours == 0 ? '' : '${s.sleepGoalHours}';
+        _sleepHoursCtrl.text = s.sleepGoalHours == 0
+            ? ''
+            : '${s.sleepGoalHours}';
         _sleepMinsCtrl.text = s.sleepGoalMinutesExtra == 0
             ? ''
             : '${s.sleepGoalMinutesExtra}';
@@ -116,7 +121,7 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
       textDirection: TextDirection.ltr,
       textScaler: MediaQuery.textScalerOf(context),
     )..layout();
-    return tp.width + 6 * 2 + 18;
+    return tp.width + 6 * 2 + 10;
   }
 
   Widget _goalSaveControl(TextTheme text, ColorScheme scheme) {
@@ -175,8 +180,7 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
           _showInvalid('睡眠（時間）は0以上の数で入力してください');
           return;
         }
-        if (_sleepMinsCtrl.text.isNotEmpty &&
-            (m == null || m < 0 || m > 59)) {
+        if (_sleepMinsCtrl.text.isNotEmpty && (m == null || m < 0 || m > 59)) {
           _showInvalid('睡眠（分）は0〜59で入力してください');
           return;
         }
@@ -192,15 +196,18 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
         break;
     }
 
+    final validationError = widget.category.validateGoal(updated);
+    if (validationError != null) {
+      _showInvalid(validationError);
+      return;
+    }
+
     final vm = ref.read(userSettingsProvider.notifier);
     vm.update(updated);
     final success = await vm.save();
     if (!mounted) return;
     if (success) {
-      showAppSnackBar(
-        context,
-        const SnackBar(content: Text('目標を保存しました')),
-      );
+      showAppSnackBar(context, const SnackBar(content: Text('目標を保存しました')));
     } else {
       final err = ref.read(userSettingsProvider).errorMessage;
       showAppSnackBar(
@@ -233,17 +240,17 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
     final level = widget.category.level(widget.log, settings);
     final score = widget.category.score(widget.log);
     final maxPoints = widget.category.maxPoints;
-    final earnings =
-        HealthScoring.earningsForPoints(score, settings.hourlyRate);
+    final earnings = HealthScoring.earningsForPoints(
+      score,
+      settings.hourlyRate,
+    );
 
-    final sliderValue = current
-        .toDouble()
-        .clamp(widget.category.sliderMin, widget.category.sliderMax);
+    final sliderLevel = widget.category.levelForValue(current, settings);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -257,16 +264,16 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
                 ),
               ],
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  flex: 1,
+                SizedBox(
+                  width: _goalColumnWidth,
                   child: _buildGoalInputsColumn(text, scheme),
                 ),
+                const SizedBox(width: 6),
                 Expanded(
-                  flex: 2,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -274,11 +281,13 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
                       Text(
                         widget.category.formatValue(current),
                         textAlign: TextAlign.center,
-                        style: text.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w700),
+                        style: text.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          height: 1,
+                        ),
                       ),
                       SizedBox(
-                        height: 32,
+                        height: 28,
                         width: double.infinity,
                         child: SliderTheme(
                           data: SliderTheme.of(context).copyWith(
@@ -291,29 +300,37 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
                             ),
                           ),
                           child: Slider(
-                            value: sliderValue,
-                            min: widget.category.sliderMin,
-                            max: widget.category.sliderMax,
-                            divisions: widget.category.sliderDivisions,
+                            value: sliderLevel.clamp(0, 10).toDouble(),
+                            min: 0,
+                            max: 10,
+                            divisions: 10,
                             onChanged: widget.enabled
-                                ? (v) => ref
-                                    .read(
-                                      healthDetailViewModelProvider.notifier,
-                                    )
-                                    .previewValue(
-                                      widget.category,
+                                ? (v) {
+                                    final value = widget.category.valueForLevel(
                                       v.round(),
-                                    )
+                                      settings,
+                                    );
+                                    ref
+                                        .read(
+                                          healthDetailViewModelProvider
+                                              .notifier,
+                                        )
+                                        .previewValue(widget.category, value);
+                                  }
                                 : null,
                             onChangeEnd: widget.enabled
-                                ? (v) => ref
-                                    .read(
-                                      healthDetailViewModelProvider.notifier,
-                                    )
-                                    .commitValue(
-                                      widget.category,
+                                ? (v) {
+                                    final value = widget.category.valueForLevel(
                                       v.round(),
-                                    )
+                                      settings,
+                                    );
+                                    ref
+                                        .read(
+                                          healthDetailViewModelProvider
+                                              .notifier,
+                                        )
+                                        .commitValue(widget.category, value);
+                                  }
                                 : null,
                           ),
                         ),
@@ -321,41 +338,47 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
                     ],
                   ),
                 ),
-                Expanded(
-                  flex: 1,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      RichText(
-                        textAlign: TextAlign.right,
-                        text: TextSpan(
-                          style: text.bodyMedium,
-                          children: [
-                            TextSpan(
-                              text: '$level',
-                              style: text.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w800,
-                                color: scheme.primary,
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: _statsColumnWidth,
+                  child: Transform.translate(
+                    offset: const Offset(0, -2),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        RichText(
+                          textAlign: TextAlign.right,
+                          text: TextSpan(
+                            style: text.bodyMedium?.copyWith(height: 1),
+                            children: [
+                              TextSpan(
+                                text: '$level',
+                                style: text.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  color: scheme.primary,
+                                  height: 1,
+                                ),
                               ),
-                            ),
-                            const TextSpan(text: '/10'),
-                          ],
+                              const TextSpan(text: '/10'),
+                            ],
+                          ),
                         ),
-                      ),
-                      Text(
-                        '$score/$maxPoints点',
-                        style: text.labelSmall,
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '+¥${_fmtYen(earnings)}',
-                        style: text.titleSmall?.copyWith(
-                          color: scheme.tertiary,
-                          fontWeight: FontWeight.w700,
+                        Text(
+                          '$score/$maxPoints点',
+                          style: text.labelSmall?.copyWith(height: 1),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 1),
+                        Text(
+                          '+¥${_fmtYen(earnings)}',
+                          style: text.titleSmall?.copyWith(
+                            color: scheme.tertiary,
+                            fontWeight: FontWeight.w700,
+                            height: 1,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -371,7 +394,7 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
     switch (widget.category) {
       case HealthCategory.sleep:
         final w2 = _halfWidthDigitFieldWidth(context, bodySmall, 2);
-        Widget sleepValueRow({
+        Widget sleepValueField({
           required TextEditingController controller,
           required String unit,
           required int maxLen,
@@ -393,10 +416,8 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
                   style: bodySmall,
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.only(left: 6),
-                child: Text(unit, style: bodySmall),
-              ),
+              const SizedBox(width: 4),
+              Text(unit, style: bodySmall),
             ],
           );
         }
@@ -406,16 +427,20 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
           children: [
             _goalLabelRow(text, scheme),
             const SizedBox(height: 4),
-            sleepValueRow(
-              controller: _sleepHoursCtrl,
-              unit: '時間',
-              maxLen: 2,
-            ),
-            const SizedBox(height: 4),
-            sleepValueRow(
-              controller: _sleepMinsCtrl,
-              unit: '分',
-              maxLen: 2,
+            Row(
+              children: [
+                sleepValueField(
+                  controller: _sleepHoursCtrl,
+                  unit: '時間',
+                  maxLen: 2,
+                ),
+                const SizedBox(width: 6),
+                sleepValueField(
+                  controller: _sleepMinsCtrl,
+                  unit: '分',
+                  maxLen: 2,
+                ),
+              ],
             ),
           ],
         );
@@ -462,7 +487,7 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
   }
 
   String _fmtYen(int n) => n.toString().replaceAllMapped(
-        RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-        (m) => '${m[1]},',
-      );
+    RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+    (m) => '${m[1]},',
+  );
 }

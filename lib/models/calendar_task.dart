@@ -33,6 +33,7 @@ class CalendarTask {
     this.recurrence,
     this.recurringEventId,
     this.completedAt,
+    this.completedRewardYen,
     this.predictedMinutes,
     this.actualMinutes,
   });
@@ -90,6 +91,9 @@ class CalendarTask {
   /// 完了時刻（端末ローカル時刻）。未完了なら null。
   final DateTime? completedAt;
 
+  /// 完了時に実際に加算した報酬額。未了戻し時の唯一の減算元。
+  final int? completedRewardYen;
+
   /// 予測時間（分）。完了時にカレンダー枠または手入力から記録される。
   final int? predictedMinutes;
 
@@ -118,6 +122,7 @@ class CalendarTask {
     List<String>? recurrence,
     String? recurringEventId,
     DateTime? completedAt,
+    int? completedRewardYen,
     int? predictedMinutes,
     int? actualMinutes,
   }) {
@@ -144,6 +149,7 @@ class CalendarTask {
       recurrence: recurrence ?? this.recurrence,
       recurringEventId: recurringEventId ?? this.recurringEventId,
       completedAt: completedAt ?? this.completedAt,
+      completedRewardYen: completedRewardYen ?? this.completedRewardYen,
       predictedMinutes: predictedMinutes ?? this.predictedMinutes,
       actualMinutes: actualMinutes ?? this.actualMinutes,
     );
@@ -172,6 +178,7 @@ class CalendarTask {
       if (recurringEventId != null) 'recurringEventId': recurringEventId,
       if (completedAt != null)
         'completedAtUtc': Timestamp.fromDate(completedAt!.toUtc()),
+      if (completedRewardYen != null) 'completedRewardYen': completedRewardYen,
       if (predictedMinutes != null) 'predictedMinutes': predictedMinutes,
       if (actualMinutes != null) 'actualMinutes': actualMinutes,
     };
@@ -206,6 +213,7 @@ class CalendarTask {
       recurrence: (data['recurrence'] as List?)?.whereType<String>().toList(),
       recurringEventId: data['recurringEventId'] as String?,
       completedAt: (data['completedAtUtc'] as Timestamp?)?.toDate().toLocal(),
+      completedRewardYen: (data['completedRewardYen'] as num?)?.toInt(),
       predictedMinutes: (data['predictedMinutes'] as num?)?.toInt(),
       actualMinutes: (data['actualMinutes'] as num?)?.toInt(),
     );

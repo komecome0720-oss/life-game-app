@@ -5,7 +5,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:task_manager/features/adventure_log/model/adventure_log_entry.dart';
 import 'package:task_manager/features/auth/providers/auth_providers.dart';
+import 'package:task_manager/features/economy/providers/economy_providers.dart';
 import 'package:task_manager/features/user_settings/model/user_settings.dart';
 
 class UserSettingsState {
@@ -109,13 +111,33 @@ class UserSettingsViewModel extends Notifier<UserSettingsState> {
     return ref.getDownloadURL();
   }
 
-  Future<bool> adjustBalance(int delta) async {
-    final updated = state.settings.copyWith(
-      totalEarned: state.settings.totalEarned + delta,
-    );
-    _cachedSettings = updated;
-    state = state.copyWith(settings: updated);
-    return save();
+  Future<bool> adjustBalance(
+    int delta, {
+    AdventureEntryType type = AdventureEntryType.manualAdjusted,
+    String title = '所持金を手動調整',
+    String? sourceId,
+    String? note,
+  }) async {
+    if (delta == 0) return true;
+    state = state.copyWith(isSaving: true);
+    try {
+      final result = await ref.read(economyRepositoryProvider).adjustBalance(
+            deltaYen: delta,
+            type: type,
+            title: title,
+            sourceId: sourceId,
+            note: note,
+          );
+      final updated = state.settings.copyWith(
+        totalEarned: result.balanceAfterYen,
+      );
+      _cachedSettings = updated;
+      state = state.copyWith(settings: updated, isSaving: false);
+      return true;
+    } catch (e) {
+      state = state.copyWith(isSaving: false, errorMessage: '保存に失敗しました: $e');
+      return false;
+    }
   }
 
   Future<bool> save() async {

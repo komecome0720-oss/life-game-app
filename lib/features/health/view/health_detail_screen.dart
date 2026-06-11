@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/health/model/health_category.dart';
 import 'package:task_manager/features/health/viewmodel/health_detail_viewmodel.dart';
+import 'package:task_manager/features/health/widgets/health_history_section.dart';
 import 'package:task_manager/features/health/widgets/health_item_row.dart';
 import 'package:task_manager/features/health/widgets/total_cards.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
@@ -32,9 +33,7 @@ class HealthDetailScreen extends ConsumerWidget {
     final editable = state.isEditableNow && !state.log.isFinalized;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('健康管理'),
-      ),
+      appBar: AppBar(title: const Text('健康管理')),
       body: MessageGuard(
         child: state.isLoading
             ? const Center(child: CircularProgressIndicator())
@@ -71,6 +70,8 @@ class HealthDetailScreen extends ConsumerWidget {
                         ],
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    const HealthHistorySection(),
                     const SizedBox(height: 16),
                   ],
                 ),
@@ -120,9 +121,7 @@ class _LockBanner extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              isFinalized
-                  ? '本日分は確定済みのため編集できません。'
-                  : '日付が変わったため編集できません。',
+              isFinalized ? '本日分は確定済みのため編集できません。' : '日付が変わったため編集できません。',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),

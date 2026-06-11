@@ -6,7 +6,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/auth/providers/auth_providers.dart';
-import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
+import 'package:task_manager/features/economy/data/economy_repository.dart';
+import 'package:task_manager/features/economy/providers/economy_providers.dart';
 import 'package:task_manager/features/wish_list/model/wish_item.dart';
 
 class WishListViewModel extends Notifier<AsyncValue<List<WishItem>>> {
@@ -84,27 +85,24 @@ class WishListViewModel extends Notifier<AsyncValue<List<WishItem>>> {
         .add(item.toFirestore());
   }
 
-  /// 戻り値: true = 成功 / false = 残高不足で操作を拒否
-  Future<bool> togglePurchased(WishItem item) async {
+  /// 戻り値: transaction の適用結果。残高不足などは result flags で返す。
+  Future<BalanceLedgerResult> togglePurchased(WishItem item) async {
     final uid = _uid;
-    if (uid == null) return false;
-
-    final newPurchased = !item.isPurchased;
-    final delta = newPurchased ? -item.price : item.price;
-
-    if (newPurchased) {
-      final balance = ref.read(userSettingsProvider).settings.totalEarned;
-      if (balance < item.price) return false;
+    if (uid == null) {
+      return const BalanceLedgerResult(
+        applied: false,
+        deltaYen: 0,
+        balanceBeforeYen: 0,
+        balanceAfterYen: 0,
+      );
     }
 
-    await _db
-        .collection('users')
-        .doc(uid)
-        .collection('wishlist')
-        .doc(item.id)
-        .update({'isPurchased': newPurchased});
-    await ref.read(userSettingsProvider.notifier).adjustBalance(delta);
-    return true;
+    final newPurchased = !item.isPurchased;
+    final economy = ref.read(economyRepositoryProvider);
+    final result = newPurchased
+        ? await economy.purchaseWish(itemId: item.id, title: item.name)
+        : await economy.unpurchaseWish(itemId: item.id, title: item.name);
+    return result;
   }
 
   Future<void> deleteItem(String itemId) async {
