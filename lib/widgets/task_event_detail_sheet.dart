@@ -515,7 +515,6 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
     final running = _stopwatch?.isRunning ?? false;
     final predictedLabel = widget.predictedMinutes > 0
@@ -559,89 +558,12 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
             ],
             if (widget.onQuadrantChanged != null) ...[
               const SizedBox(height: 12),
-              GestureDetector(
-                onTapUp: (details) async {
-                  final selected = await showMenu<Quadrant>(
-                    context: context,
-                    position: RelativeRect.fromLTRB(
-                      details.globalPosition.dx,
-                      details.globalPosition.dy,
-                      details.globalPosition.dx,
-                      details.globalPosition.dy,
-                    ),
-                    items: Quadrant.values.map((q) {
-                      final isCurrent = q == _currentQuadrant;
-                      return PopupMenuItem<Quadrant>(
-                        value: q,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              width: 12,
-                              height: 12,
-                              decoration: BoxDecoration(
-                                color: q.accentColor(scheme),
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              q.label,
-                              style: TextStyle(
-                                fontWeight: isCurrent
-                                    ? FontWeight.bold
-                                    : FontWeight.normal,
-                              ),
-                            ),
-                            if (isCurrent) ...[
-                              const SizedBox(width: 4),
-                              Icon(Icons.check,
-                                  size: 16, color: scheme.primary),
-                            ],
-                          ],
-                        ),
-                      );
-                    }).toList(),
-                  );
-                  if (selected == null || selected == _currentQuadrant) return;
-                  setState(() => _currentQuadrant = selected);
-                  await widget.onQuadrantChanged!(selected);
+              _QuadrantDropdown(
+                currentQuadrant: _currentQuadrant,
+                onSelect: (q) async {
+                  setState(() => _currentQuadrant = q);
+                  await widget.onQuadrantChanged!(q);
                 },
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: _currentQuadrant
-                        .backgroundColor(scheme),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: _currentQuadrant.accentColor(scheme)
-                          .withValues(alpha: 0.4),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 14,
-                        height: 14,
-                        decoration: BoxDecoration(
-                          color: _currentQuadrant.accentColor(scheme),
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '領域 ${_currentQuadrant.label}',
-                        style: text.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const Spacer(),
-                      Icon(Icons.unfold_more,
-                          size: 18, color: scheme.onSurfaceVariant),
-                    ],
-                  ),
-                ),
               ),
             ],
             const SizedBox(height: 12),
@@ -668,59 +590,23 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
               onSave: widget.onSaveProgress == null ? null : _onTapSave,
               onRevert: widget.onRevert == null ? null : _onTapRevert,
             ),
-            if (widget.onEdit != null ||
-                widget.onDuplicate != null ||
-                widget.onDelete != null) ...[
-              const SizedBox(height: 12),
-              const Divider(),
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  if (widget.onEdit != null)
-                    Expanded(
-                      child: TextButton.icon(
-                        onPressed: () {
-                          _ticker?.cancel();
-                          Navigator.of(context).pop();
-                          widget.onEdit!();
-                        },
-                        icon: const Icon(Icons.edit_outlined),
-                        label: const Text('編集'),
-                      ),
-                    ),
-                  if (widget.onDuplicate != null)
-                    Expanded(
-                      child: TextButton.icon(
-                        onPressed: () {
-                          _ticker?.cancel();
-                          Navigator.of(context).pop();
-                          widget.onDuplicate!();
-                        },
-                        icon: const Icon(Icons.copy_outlined),
-                        label: const Text('複製'),
-                      ),
-                    ),
-                  if (widget.onDelete != null)
-                    Expanded(
-                      child: TextButton.icon(
-                        onPressed: () {
-                          _ticker?.cancel();
-                          Navigator.of(context).pop();
-                          widget.onDelete!();
-                        },
-                        icon: Icon(
-                          Icons.delete_outline,
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                        label: Text(
-                          '削除',
-                          style: TextStyle(color: Theme.of(context).colorScheme.error),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ],
+            _ActionButtonsRow(
+              onEdit: widget.onEdit == null ? null : () {
+                _ticker?.cancel();
+                Navigator.of(context).pop();
+                widget.onEdit!();
+              },
+              onDuplicate: widget.onDuplicate == null ? null : () {
+                _ticker?.cancel();
+                Navigator.of(context).pop();
+                widget.onDuplicate!();
+              },
+              onDelete: widget.onDelete == null ? null : () {
+                _ticker?.cancel();
+                Navigator.of(context).pop();
+                widget.onDelete!();
+              },
+            ),
           ],
         ),
       ),
@@ -1059,6 +945,148 @@ class _CompleteOrRevertRow extends StatelessWidget {
             icon: const Icon(Icons.check_circle_outline),
             label: const Text('完了', overflow: TextOverflow.ellipsis),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+class _QuadrantDropdown extends StatelessWidget {
+  const _QuadrantDropdown({
+    required this.currentQuadrant,
+    required this.onSelect,
+  });
+
+  final Quadrant currentQuadrant;
+  final Future<void> Function(Quadrant) onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    return GestureDetector(
+      onTapUp: (details) async {
+        final selected = await showMenu<Quadrant>(
+          context: context,
+          position: RelativeRect.fromLTRB(
+            details.globalPosition.dx,
+            details.globalPosition.dy,
+            details.globalPosition.dx,
+            details.globalPosition.dy,
+          ),
+          items: Quadrant.values.map((q) {
+            final isCurrent = q == currentQuadrant;
+            return PopupMenuItem<Quadrant>(
+              value: q,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 12,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: q.accentColor(scheme),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    q.label,
+                    style: TextStyle(
+                      fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  if (isCurrent) ...[
+                    const SizedBox(width: 4),
+                    Icon(Icons.check, size: 16, color: scheme.primary),
+                  ],
+                ],
+              ),
+            );
+          }).toList(),
+        );
+        if (selected == null || selected == currentQuadrant) return;
+        await onSelect(selected);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: currentQuadrant.backgroundColor(scheme),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: currentQuadrant.accentColor(scheme).withValues(alpha: 0.4),
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 14,
+              height: 14,
+              decoration: BoxDecoration(
+                color: currentQuadrant.accentColor(scheme),
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '領域 ${currentQuadrant.label}',
+              style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const Spacer(),
+            Icon(Icons.unfold_more, size: 18, color: scheme.onSurfaceVariant),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ActionButtonsRow extends StatelessWidget {
+  const _ActionButtonsRow({this.onEdit, this.onDuplicate, this.onDelete});
+
+  final VoidCallback? onEdit;
+  final VoidCallback? onDuplicate;
+  final VoidCallback? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    if (onEdit == null && onDuplicate == null && onDelete == null) {
+      return const SizedBox.shrink();
+    }
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 12),
+        const Divider(),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            if (onEdit != null)
+              Expanded(
+                child: TextButton.icon(
+                  onPressed: onEdit,
+                  icon: const Icon(Icons.edit_outlined),
+                  label: const Text('編集'),
+                ),
+              ),
+            if (onDuplicate != null)
+              Expanded(
+                child: TextButton.icon(
+                  onPressed: onDuplicate,
+                  icon: const Icon(Icons.copy_outlined),
+                  label: const Text('複製'),
+                ),
+              ),
+            if (onDelete != null)
+              Expanded(
+                child: TextButton.icon(
+                  onPressed: onDelete,
+                  icon: Icon(Icons.delete_outline, color: scheme.error),
+                  label: Text('削除', style: TextStyle(color: scheme.error)),
+                ),
+              ),
+          ],
         ),
       ],
     );
