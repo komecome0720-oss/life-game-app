@@ -78,7 +78,7 @@ class AdventureTimelineTile extends StatelessWidget {
                           ),
                     ),
                     if (entry.isLegacyEstimate)
-                      _Badge(label: '推定', color: scheme.tertiary),
+                      _Badge(label: '推定', color: scheme.outline),
                     if (entry.note != null)
                       Text(
                         entry.note!,
