@@ -240,6 +240,7 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
                   _Field(
                     controller: _nameCtrl,
                     label: '名前',
+                    maxLength: 30,
                     validator: (v) => (v == null || v.trim().isEmpty) ? '名前を入力してください' : null,
                   ),
                   const SizedBox(height: 12),
@@ -314,15 +315,17 @@ class _SectionHeader extends StatelessWidget {
 }
 
 class _Field extends StatelessWidget {
-  const _Field({required this.controller, required this.label, this.validator});
+  const _Field({required this.controller, required this.label, this.validator, this.maxLength});
   final TextEditingController controller;
   final String label;
   final String? Function(String?)? validator;
+  final int? maxLength;
 
   @override
   Widget build(BuildContext context) {
     return TextFormField(
       controller: controller,
+      maxLength: maxLength,
       decoration: InputDecoration(labelText: label, border: const OutlineInputBorder()),
       validator: validator,
     );
