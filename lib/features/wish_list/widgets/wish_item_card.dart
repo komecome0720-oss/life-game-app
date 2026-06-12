@@ -37,18 +37,19 @@ class WishItemCard extends ConsumerWidget {
     final balanceYen = settings.totalEarned;
     final colorScheme = Theme.of(context).colorScheme;
 
+    final scheme = Theme.of(context).colorScheme;
     Widget statusBadge;
     if (balanceYen >= item.price) {
       statusBadge = Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
-          color: Colors.green,
+          color: scheme.tertiaryContainer,
           borderRadius: BorderRadius.circular(12),
         ),
-        child: const Text(
+        child: Text(
           '獲得可能',
           style: TextStyle(
-            color: Colors.white,
+            color: scheme.onTertiaryContainer,
             fontSize: 11,
             fontWeight: FontWeight.bold,
           ),
