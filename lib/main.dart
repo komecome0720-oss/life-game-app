@@ -11,6 +11,7 @@ import 'package:task_manager/features/user_settings/viewmodel/user_settings_view
 import 'package:task_manager/features/wish_list/view/wish_list_screen.dart';
 import 'package:task_manager/firebase_options.dart';
 import 'package:task_manager/screens/home_screen.dart';
+import 'package:task_manager/theme/app_tokens.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,6 +35,7 @@ class TaskManagerApp extends ConsumerWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: _seedColor),
         useMaterial3: true,
+        cardTheme: CardThemeData(shape: RoundedRectangleBorder(borderRadius: AppRadius.card)),
       ),
       darkTheme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
@@ -41,6 +43,7 @@ class TaskManagerApp extends ConsumerWidget {
           brightness: Brightness.dark,
         ),
         useMaterial3: true,
+        cardTheme: CardThemeData(shape: RoundedRectangleBorder(borderRadius: AppRadius.card)),
       ),
       themeMode: _parseThemeMode(themeModeStr),
       home: const _AuthGate(),
