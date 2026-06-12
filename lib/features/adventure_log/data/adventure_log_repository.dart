@@ -250,6 +250,17 @@ class AdventureLogRepository {
       if (!controller.isClosed) controller.add(merged);
     }
 
+    // 1本がエラーになったとき残り全 subscription をキャンセルしてから error を流す。
+    void handleError(Object e, StackTrace st) {
+      for (final sub in subscriptions) {
+        sub.cancel();
+      }
+      if (!controller.isClosed) {
+        controller.addError(e, st);
+        controller.close();
+      }
+    }
+
     final userRef = _db.collection('users').doc(uid);
     subscriptions.add(
       userRef
@@ -261,7 +272,7 @@ class AdventureLogRepository {
                 .map(AdventureLogEntry.fromFirestore)
                 .toList();
             emit();
-          }, onError: controller.addError),
+          }, onError: handleError),
     );
 
     subscriptions.add(
@@ -280,7 +291,7 @@ class AdventureLogRepository {
                 .map(AdventureLogEntry.legacyTask)
                 .toList();
             emit();
-          }, onError: controller.addError),
+          }, onError: handleError),
     );
 
     subscriptions.add(
@@ -295,7 +306,7 @@ class AdventureLogRepository {
                 .map(AdventureLogEntry.legacyWish)
                 .toList();
             emit();
-          }, onError: controller.addError),
+          }, onError: handleError),
     );
 
     controller.onCancel = () async {
