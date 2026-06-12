@@ -182,7 +182,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     final todayKey = HealthRollover.dateKey(DateTime.now());
     try {
       final col = _db.collection('users').doc(uid).collection('healthLogs');
-      final pastError = await _finalizePastLogs(col, todayKey);
+      final pastResult = await _fetchPastLogs(col, todayKey);
 
       final doc = await col.doc(todayKey).get();
       // ロード中にユーザーが切り替わった場合は破棄
@@ -202,24 +202,11 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
         log: log,
         isLoading: false,
         isEditableNow: true,
-        errorMessage: pastError,
+        errorMessage: pastResult.error,
         lastSavedProvisionalYen: log.provisionalEarnedYen,
-        historyLogs: const [],
-        isHistoryLoading: true,
-        historyErrorMessage: null,
-      );
-
-      final historyResult = await _loadHistoryLogs(
-        uid: uid,
-        col: col,
-        todayKey: todayKey,
-        generation: loadGeneration,
-      );
-      if (_uid != uid || loadGeneration != _stateGeneration) return;
-      state = state.copyWith(
-        historyLogs: historyResult.logs,
+        historyLogs: pastResult.logs.take(14).toList(growable: false),
         isHistoryLoading: false,
-        historyErrorMessage: historyResult.errorMessage,
+        historyErrorMessage: null,
       );
     } catch (e) {
       if (_uid != uid || loadGeneration != _stateGeneration) return;
@@ -232,64 +219,40 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     }
   }
 
-  Future<String?> _finalizePastLogs(
+  /// 過去ログを最大20件フェッチし、未確定ログをWriteBatchで一括確定させる。
+  /// FieldPath.documentId の降順 orderBy は __name__ DESC の手動インデックスが必要。
+  /// dateKey は常にドキュメントIDと同値で、自動の単一フィールドインデックスで足りる。
+  Future<({List<HealthLog> logs, String? error})> _fetchPastLogs(
     CollectionReference<Map<String, dynamic>> col,
     String todayKey,
   ) async {
     try {
-      // FieldPath.documentId の降順 orderBy は __name__ DESC の手動インデックスが必要。
-      // dateKey は常にドキュメントIDと同値で、自動の単一フィールドインデックスで足りる。
       final snaps = await col
           .where('dateKey', isLessThan: todayKey)
           .orderBy('dateKey', descending: true)
           .limit(20)
           .get();
-      for (final doc in snaps.docs) {
-        final log = HealthLog.fromFirestore(doc);
-        if (log.isFinalized) continue;
-        await doc.reference.set(
-          log
-              .copyWith(
-                isFinalized: true,
-                finalizedEarnedYen: log.provisionalEarnedYen,
-                finalizedAt: DateTime.now(),
-              )
-              .toFirestore(),
-          SetOptions(merge: true),
-        );
-      }
-      return null;
-    } catch (e) {
-      return '過去の健康ログ確定に失敗しました: $e';
-    }
-  }
 
-  Future<_HistoryLoadResult> _loadHistoryLogs({
-    required String uid,
-    required CollectionReference<Map<String, dynamic>> col,
-    required String todayKey,
-    required int generation,
-  }) async {
-    try {
-      // FieldPath.documentId の降順 orderBy は __name__ DESC の手動インデックスが必要。
-      // dateKey は常にドキュメントIDと同値で、自動の単一フィールドインデックスで足りる。
-      final snaps = await col
-          .where('dateKey', isLessThan: todayKey)
-          .orderBy('dateKey', descending: true)
-          .limit(14)
-          .get();
-      if (_uid != uid || generation != _stateGeneration) {
-        return const _HistoryLoadResult(logs: []);
-      }
-      final logs = snaps.docs
-          .map(HealthLog.fromFirestore)
-          .toList(growable: false);
-      return _HistoryLoadResult(logs: logs);
+      final batch = _db.batch();
+      var hasBatchWrites = false;
+
+      final logs = snaps.docs.map((doc) {
+        final log = HealthLog.fromFirestore(doc);
+        if (log.isFinalized) return log;
+        final finalized = log.copyWith(
+          isFinalized: true,
+          finalizedEarnedYen: log.provisionalEarnedYen,
+          finalizedAt: DateTime.now(),
+        );
+        batch.set(doc.reference, finalized.toFirestore(), SetOptions(merge: true));
+        hasBatchWrites = true;
+        return finalized;
+      }).toList(growable: false);
+
+      if (hasBatchWrites) await batch.commit();
+      return (logs: logs, error: null);
     } catch (e) {
-      return _HistoryLoadResult(
-        logs: const [],
-        errorMessage: '履歴の読み込みに失敗しました: $e',
-      );
+      return (logs: <HealthLog>[], error: '過去の健康ログ確定に失敗しました: $e');
     }
   }
 
@@ -328,7 +291,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       if (HealthRollover.isPastDateKey(currentDateKey, todayKey)) {
         await _finalizeSavedLogForDate(col: col, dateKey: currentDateKey);
       }
-      final pastError = await _finalizePastLogs(col, todayKey);
+      final pastResult = await _fetchPastLogs(col, todayKey);
       final doc = await col.doc(todayKey).get();
       if (_uid != uid || loadGeneration != _stateGeneration) return;
       final loadedLog = doc.exists
@@ -345,23 +308,11 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
         log: todayLog,
         isLoading: false,
         isEditableNow: true,
-        errorMessage: pastError,
+        errorMessage: pastResult.error,
         lastSavedProvisionalYen: todayLog.provisionalEarnedYen,
-        historyLogs: const [],
-        isHistoryLoading: true,
-        historyErrorMessage: null,
-      );
-      final historyResult = await _loadHistoryLogs(
-        uid: uid,
-        col: col,
-        todayKey: todayKey,
-        generation: loadGeneration,
-      );
-      if (_uid != uid || loadGeneration != _stateGeneration) return;
-      state = state.copyWith(
-        historyLogs: historyResult.logs,
+        historyLogs: pastResult.logs.take(14).toList(growable: false),
         isHistoryLoading: false,
-        historyErrorMessage: historyResult.errorMessage,
+        historyErrorMessage: null,
       );
     } catch (e) {
       if (_uid == uid && loadGeneration == _stateGeneration) {
@@ -541,13 +492,6 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       updatedAt: DateTime.now(),
     );
   }
-}
-
-class _HistoryLoadResult {
-  const _HistoryLoadResult({required this.logs, this.errorMessage});
-
-  final List<HealthLog> logs;
-  final String? errorMessage;
 }
 
 final healthDetailViewModelProvider =
