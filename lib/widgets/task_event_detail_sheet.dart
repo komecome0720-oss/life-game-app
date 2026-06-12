@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
+import 'package:task_manager/utils/app_messenger.dart';
 
 /// タイマー列と実績分列のラベル行を同じ高さにそろえる（ヘルプアイコン行とテキストのみ行のズレ防止）。
 const double _kTimerSectionLabelRowHeight = 48;
@@ -387,7 +388,8 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
   }
 
   void _showInvalidRangeMessage() {
-    ScaffoldMessenger.of(context).showSnackBar(
+    showAppSnackBar(
+      context,
       const SnackBar(content: Text('終了時刻は開始時刻より後にしてください')),
     );
   }
