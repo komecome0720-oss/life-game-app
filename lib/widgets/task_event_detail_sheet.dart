@@ -650,157 +650,16 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
               expectedRewardYen: widget.expectedRewardYen,
             ),
             const SizedBox(height: 16),
-            IgnorePointer(
-              ignoring: _isCompleted,
-              child: Opacity(
-                opacity: _isCompleted ? 0.4 : 1.0,
-                child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox(
-                        height: _kTimerSectionLabelRowHeight,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Text('タイマー', style: text.labelLarge),
-                            IconButton(
-                              onPressed: _showTimerHelp,
-                              icon: const Icon(Icons.help_outline),
-                              tooltip: 'タイマーの使い方',
-                              iconSize: 18,
-                              visualDensity: VisualDensity.compact,
-                              padding: const EdgeInsets.all(4),
-                              constraints: const BoxConstraints(),
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        height: 48,
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Flexible(
-                              child: FittedBox(
-                                fit: BoxFit.scaleDown,
-                                alignment: Alignment.centerLeft,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    FilledButton.tonalIcon(
-                                      onPressed: () => _toggleTimer(),
-                                      icon: Icon(
-                                        running
-                                            ? Icons.pause_rounded
-                                            : Icons.play_arrow_rounded,
-                                      ),
-                                      label: Text(running ? '一時停止' : 'スタート'),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      _elapsedLabel(),
-                                      style: text.titleMedium?.copyWith(
-                                        fontFeatures: const [
-                                          FontFeature.tabularFigures(),
-                                        ],
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    // 一時停止中（経過 > 0）のみ有効
-                                    IconButton(
-                                      onPressed:
-                                          (!running &&
-                                              (_stopwatch?.elapsed.inSeconds ??
-                                                      0) >
-                                                  0)
-                                          ? _resetTimer
-                                          : null,
-                                      icon: const Icon(Icons.refresh_rounded),
-                                      tooltip: 'リセット',
-                                      visualDensity: VisualDensity.compact,
-                                      style: IconButton.styleFrom(
-                                        shape: const CircleBorder(),
-                                        side: BorderSide(
-                                          color: scheme.outlineVariant,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      height: _kTimerSectionLabelRowHeight,
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          '実際にかかった時間',
-                          style: text.labelLarge,
-                          softWrap: true,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      height: 48,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          SizedBox(
-                            width: _fourDigitMinutesFieldWidth(context),
-                            child: TextField(
-                              controller: _actualMinutesCtrl,
-                              focusNode: _actualMinutesFocus,
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                    decimal: false,
-                                  ),
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                                LengthLimitingTextInputFormatter(4),
-                              ],
-                              textAlign: TextAlign.end,
-                              textAlignVertical: TextAlignVertical.center,
-                              decoration: const InputDecoration(
-                                isDense: true,
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 10,
-                                ),
-                                border: OutlineInputBorder(),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text('分', style: text.bodyMedium),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-                ),
-              ),
+            _TimerAndActualRow(
+              isCompleted: _isCompleted,
+              running: running,
+              elapsedLabel: _elapsedLabel(),
+              canResetTimer: !running && (_stopwatch?.elapsed.inSeconds ?? 0) > 0,
+              onToggle: _toggleTimer,
+              onReset: _resetTimer,
+              onShowHelp: _showTimerHelp,
+              controller: _actualMinutesCtrl,
+              focusNode: _actualMinutesFocus,
             ),
             const SizedBox(height: 20),
             if (_isCompleted && widget.onRevert != null)
@@ -1005,6 +864,181 @@ class _TimeChip extends StatelessWidget {
                 fontFeatures: const [FontFeature.tabularFigures()],
                 color: disabled ? scheme.onSurfaceVariant : scheme.onSurface,
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TimerAndActualRow extends StatelessWidget {
+  const _TimerAndActualRow({
+    required this.isCompleted,
+    required this.running,
+    required this.elapsedLabel,
+    required this.canResetTimer,
+    required this.onToggle,
+    required this.onReset,
+    required this.onShowHelp,
+    required this.controller,
+    required this.focusNode,
+  });
+
+  final bool isCompleted;
+  final bool running;
+  final String elapsedLabel;
+  final bool canResetTimer;
+  final VoidCallback onToggle;
+  final VoidCallback onReset;
+  final VoidCallback onShowHelp;
+  final TextEditingController controller;
+  final FocusNode focusNode;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    return IgnorePointer(
+      ignoring: isCompleted,
+      child: Opacity(
+        opacity: isCompleted ? 0.4 : 1.0,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    height: _kTimerSectionLabelRowHeight,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Text('タイマー', style: text.labelLarge),
+                        IconButton(
+                          onPressed: onShowHelp,
+                          icon: const Icon(Icons.help_outline),
+                          tooltip: 'タイマーの使い方',
+                          iconSize: 18,
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.all(AppSpacing.xs),
+                          constraints: const BoxConstraints(),
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  SizedBox(
+                    height: 48,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Flexible(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                FilledButton.tonalIcon(
+                                  onPressed: onToggle,
+                                  icon: Icon(
+                                    running
+                                        ? Icons.pause_rounded
+                                        : Icons.play_arrow_rounded,
+                                  ),
+                                  label: Text(running ? '一時停止' : 'スタート'),
+                                ),
+                                const SizedBox(width: AppSpacing.sm),
+                                Text(
+                                  elapsedLabel,
+                                  style: text.titleMedium?.copyWith(
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures(),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: AppSpacing.xs),
+                                // 一時停止中（経過 > 0）のみ有効
+                                IconButton(
+                                  onPressed: canResetTimer ? onReset : null,
+                                  icon: const Icon(Icons.refresh_rounded),
+                                  tooltip: 'リセット',
+                                  visualDensity: VisualDensity.compact,
+                                  style: IconButton.styleFrom(
+                                    shape: const CircleBorder(),
+                                    side: BorderSide(
+                                      color: scheme.outlineVariant,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: AppSpacing.lg),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  height: _kTimerSectionLabelRowHeight,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '実際にかかった時間',
+                      style: text.labelLarge,
+                      softWrap: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                SizedBox(
+                  height: 48,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: _fourDigitMinutesFieldWidth(context),
+                        child: TextField(
+                          controller: controller,
+                          focusNode: focusNode,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: false,
+                          ),
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                            LengthLimitingTextInputFormatter(4),
+                          ],
+                          textAlign: TextAlign.end,
+                          textAlignVertical: TextAlignVertical.center,
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 10,
+                            ),
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Text('分', style: text.bodyMedium),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ],
         ),
