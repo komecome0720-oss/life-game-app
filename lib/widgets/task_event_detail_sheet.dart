@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
+import 'package:task_manager/theme/app_tokens.dart';
 import 'package:task_manager/utils/app_messenger.dart';
 
 /// タイマー列と実績分列のラベル行を同じ高さにそろえる（ヘルプアイコン行とテキストのみ行のズレ防止）。
@@ -644,52 +645,9 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
               ),
             ],
             const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: scheme.primaryContainer.withValues(alpha: 0.55),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.schedule, size: 18, color: scheme.primary),
-                      const SizedBox(width: 6),
-                      Text(
-                        '見込時間：$predictedLabel',
-                        style: text.bodyMedium?.copyWith(
-                          color: scheme.onPrimaryContainer,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Icon(Icons.paid_outlined, color: scheme.primary),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'このタスクを達成すると',
-                          style: text.bodySmall?.copyWith(
-                            color: scheme.onPrimaryContainer,
-                          ),
-                        ),
-                      ),
-                      Text(
-                        '¥${_formatYen(widget.expectedRewardYen)}',
-                        style: text.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w900,
-                          color: scheme.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+            _RewardCard(
+              predictedLabel: predictedLabel,
+              expectedRewardYen: widget.expectedRewardYen,
             ),
             const SizedBox(height: 16),
             IgnorePointer(
@@ -937,10 +895,69 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
     );
   }
 
-  String _formatYen(int n) {
-    return n.toString().replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-      (m) => '${m[1]},',
+}
+
+String _formatYen(int n) {
+  return n.toString().replaceAllMapped(
+    RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+    (m) => '${m[1]},',
+  );
+}
+
+class _RewardCard extends StatelessWidget {
+  const _RewardCard({required this.predictedLabel, required this.expectedRewardYen});
+
+  final String predictedLabel;
+  final int expectedRewardYen;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer.withValues(alpha: 0.55),
+        borderRadius: AppRadius.card,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.schedule, size: 18, color: scheme.primary),
+              const SizedBox(width: 6),
+              Text(
+                '見込時間：$predictedLabel',
+                style: text.bodyMedium?.copyWith(
+                  color: scheme.onPrimaryContainer,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              Icon(Icons.paid_outlined, color: scheme.primary),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  'このタスクを達成すると',
+                  style: text.bodySmall?.copyWith(color: scheme.onPrimaryContainer),
+                ),
+              ),
+              Text(
+                '¥${_formatYen(expectedRewardYen)}',
+                style: text.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w900,
+                  color: scheme.primary,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
