@@ -205,7 +205,7 @@ class _SocialButton extends StatelessWidget {
       child: ElevatedButton.icon(
         onPressed: onPressed,
         icon: Icon(icon, color: foregroundColor),
-        label: Text(label, style: TextStyle(color: foregroundColor, fontWeight: FontWeight.w600)),
+        label: Text(label, style: Theme.of(context).textTheme.labelLarge?.copyWith(color: foregroundColor, fontWeight: FontWeight.w600)),
         style: ElevatedButton.styleFrom(
           backgroundColor: backgroundColor,
           elevation: 0,

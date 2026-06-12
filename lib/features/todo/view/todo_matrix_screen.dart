@@ -49,7 +49,7 @@ class TodoMatrixScreen extends ConsumerWidget {
                       fit: BoxFit.scaleDown,
                       child: Text(
                         q.label,
-                        style: TextStyle(
+                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
                           color: isSelected
                               ? scheme.onPrimaryContainer
                               : scheme.onSurfaceVariant,

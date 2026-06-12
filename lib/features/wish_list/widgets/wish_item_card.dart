@@ -38,6 +38,7 @@ class WishItemCard extends ConsumerWidget {
     final colorScheme = Theme.of(context).colorScheme;
 
     final scheme = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
     Widget statusBadge;
     if (balanceYen >= item.price) {
       statusBadge = Container(
@@ -48,9 +49,8 @@ class WishItemCard extends ConsumerWidget {
         ),
         child: Text(
           '獲得可能',
-          style: TextStyle(
+          style: text.labelSmall?.copyWith(
             color: scheme.onTertiaryContainer,
-            fontSize: 11,
             fontWeight: FontWeight.bold,
           ),
         ),
@@ -59,7 +59,7 @@ class WishItemCard extends ConsumerWidget {
       final remaining = item.price - balanceYen;
       statusBadge = Text(
         'あと¥${_formatMoney(remaining)}',
-        style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+        style: text.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
       );
     }
 
@@ -94,15 +94,14 @@ class WishItemCard extends ConsumerWidget {
                   children: [
                     Text(
                       item.name,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
+                      style: text.titleSmall?.copyWith(fontWeight: FontWeight.w600),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
                     Text(
                       '¥${_formatMoney(item.price)}',
-                      style: TextStyle(
-                        fontSize: 13,
+                      style: text.bodySmall?.copyWith(
                         color: colorScheme.primary,
                         fontWeight: FontWeight.bold,
                       ),
@@ -110,15 +109,13 @@ class WishItemCard extends ConsumerWidget {
                     const SizedBox(height: 4),
                     Text(
                       '追加日：${_formatDate(item.createdAt)}',
-                      style: TextStyle(
-                        fontSize: 12,
+                      style: text.bodySmall?.copyWith(
                         color: colorScheme.onSurfaceVariant,
                       ),
                     ),
                     Text(
                       '獲得日：$_purchasedDateText',
-                      style: TextStyle(
-                        fontSize: 12,
+                      style: text.bodySmall?.copyWith(
                         color: colorScheme.onSurfaceVariant,
                       ),
                     ),
