@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:task_manager/features/adventure_log/model/adventure_log_entry.dart';
+import 'package:task_manager/theme/app_tokens.dart';
 
 class AdventureTimelineTile extends StatelessWidget {
   const AdventureTimelineTile({super.key, required this.entry});
@@ -16,8 +17,8 @@ class AdventureTimelineTile extends StatelessWidget {
     final accent = muted
         ? scheme.outline
         : positive
-            ? Colors.green.shade700
-            : Colors.deepOrange.shade700;
+            ? AppColors.positive(context)
+            : AppColors.negative(context);
     final money = NumberFormat('#,###').format(entry.deltaYen.abs());
     final time = entry.occurredAt == null
         ? '日時未記録'
