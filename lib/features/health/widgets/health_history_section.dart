@@ -1,16 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:task_manager/features/health/model/health_category.dart';
+import 'package:task_manager/features/health/model/health_log.dart';
 
 class HealthHistorySection extends StatelessWidget {
-  const HealthHistorySection({super.key});
+  const HealthHistorySection({
+    super.key,
+    required this.logs,
+    this.isLoading = false,
+    this.errorMessage,
+  });
 
   static const double sectionHeight = 236;
+
+  final List<HealthLog> logs;
+  final bool isLoading;
+  final String? errorMessage;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
-    final entries = _mockHistoryEntries();
 
     return Card(
       margin: EdgeInsets.zero,
@@ -29,7 +38,7 @@ class HealthHistorySection extends StatelessWidget {
                 ),
                 const Spacer(),
                 Text(
-                  '過去14日',
+                  '直近14件',
                   style: text.labelSmall?.copyWith(
                     color: scheme.onSurfaceVariant,
                   ),
@@ -37,22 +46,44 @@ class HealthHistorySection extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
-            SizedBox(
-              height: sectionHeight - 40,
-              child: ScrollConfiguration(
-                behavior: const _NoGlowScrollBehavior(),
-                child: ListView.separated(
-                  padding: EdgeInsets.zero,
-                  itemCount: entries.length,
-                  itemBuilder: (context, index) {
-                    return _HistoryTile(entry: entries[index]);
-                  },
-                  separatorBuilder: (_, _) => const SizedBox(height: 6),
-                ),
-              ),
-            ),
+            SizedBox(height: sectionHeight - 40, child: _buildBody(context)),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildBody(BuildContext context) {
+    if (isLoading) {
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+    }
+
+    final message = errorMessage;
+    if (message != null && message.isNotEmpty) {
+      return _StatusMessage(
+        icon: Icons.error_outline,
+        title: '履歴を読み込めませんでした',
+        message: message,
+      );
+    }
+
+    if (logs.isEmpty) {
+      return _StatusMessage(
+        icon: Icons.inbox_outlined,
+        title: '保存済みの履歴がありません',
+        message: '過去に保存したスコアがここに表示されます。',
+      );
+    }
+
+    return ScrollConfiguration(
+      behavior: const _NoGlowScrollBehavior(),
+      child: ListView.separated(
+        padding: EdgeInsets.zero,
+        itemCount: logs.length,
+        itemBuilder: (context, index) {
+          return _HistoryTile(entry: logs[index]);
+        },
+        separatorBuilder: (_, _) => const SizedBox(height: 6),
       ),
     );
   }
@@ -61,13 +92,16 @@ class HealthHistorySection extends StatelessWidget {
 class _HistoryTile extends StatelessWidget {
   const _HistoryTile({required this.entry});
 
-  final _HealthHistoryEntry entry;
+  final HealthLog entry;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
     final accent = _scoreColor(scheme, entry.totalScore);
+    final earnedYen = entry.isFinalized
+        ? entry.finalizedEarnedYen
+        : entry.provisionalEarnedYen;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
@@ -77,44 +111,56 @@ class _HistoryTile extends StatelessWidget {
         border: Border.all(color: accent.withValues(alpha: 0.18)),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           SizedBox(
-            width: 36,
+            width: 38,
             child: Text(
-              _formatDate(entry.date),
+              _formatDateKey(entry.dateKey),
               style: text.titleSmall?.copyWith(fontWeight: FontWeight.w700),
             ),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 8),
           Expanded(
-            child: Row(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 4,
               children: [
-                for (final category in HealthCategory.values) ...[
+                for (final category in HealthCategory.values)
                   _InlineScore(
                     category: category,
-                    score: entry.scores[category] ?? 0,
+                    score: category.score(entry),
                   ),
-                  if (category != HealthCategory.values.last)
-                    const SizedBox(width: 8),
-                ],
               ],
             ),
           ),
           const SizedBox(width: 8),
-          Text(
-            '${entry.totalScore}点',
-            style: text.labelLarge?.copyWith(
-              fontWeight: FontWeight.w800,
-              color: accent,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            '¥${_formatYen(entry.earnedYen)}',
-            style: text.labelLarge?.copyWith(
-              fontWeight: FontWeight.w700,
-              color: scheme.tertiary,
-            ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${entry.totalScore}点',
+                style: text.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: accent,
+                ),
+              ),
+              const SizedBox(height: 2),
+              SizedBox(
+                width: 86,
+                child: FittedBox(
+                  alignment: Alignment.centerRight,
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    '¥${_formatYen(earnedYen)}',
+                    style: text.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: scheme.tertiary,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -153,83 +199,57 @@ class _InlineScore extends StatelessWidget {
   }
 }
 
-class _HealthHistoryEntry {
-  const _HealthHistoryEntry({
-    required this.date,
-    required this.scores,
-    required this.totalScore,
-    required this.earnedYen,
+class _StatusMessage extends StatelessWidget {
+  const _StatusMessage({
+    required this.icon,
+    required this.title,
+    required this.message,
   });
 
-  final DateTime date;
-  final Map<HealthCategory, int> scores;
-  final int totalScore;
-  final int earnedYen;
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Icon(icon, color: scheme.onSurfaceVariant),
+            const SizedBox(height: 6),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: text.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-List<_HealthHistoryEntry> _mockHistoryEntries() {
-  final today = DateTime.now();
-  const seed = <Map<HealthCategory, int>>[
-    {
-      HealthCategory.meal: 8,
-      HealthCategory.exercise: 6,
-      HealthCategory.sleep: 9,
-      HealthCategory.meditation: 4,
-    },
-    {
-      HealthCategory.meal: 6,
-      HealthCategory.exercise: 8,
-      HealthCategory.sleep: 7,
-      HealthCategory.meditation: 7,
-    },
-    {
-      HealthCategory.meal: 9,
-      HealthCategory.exercise: 4,
-      HealthCategory.sleep: 8,
-      HealthCategory.meditation: 6,
-    },
-    {
-      HealthCategory.meal: 5,
-      HealthCategory.exercise: 3,
-      HealthCategory.sleep: 6,
-      HealthCategory.meditation: 2,
-    },
-    {
-      HealthCategory.meal: 10,
-      HealthCategory.exercise: 8,
-      HealthCategory.sleep: 10,
-      HealthCategory.meditation: 8,
-    },
-    {
-      HealthCategory.meal: 7,
-      HealthCategory.exercise: 5,
-      HealthCategory.sleep: 8,
-      HealthCategory.meditation: 5,
-    },
-    {
-      HealthCategory.meal: 4,
-      HealthCategory.exercise: 7,
-      HealthCategory.sleep: 5,
-      HealthCategory.meditation: 6,
-    },
-  ];
-
-  return List.generate(14, (index) {
-    final scores = seed[index % seed.length];
-    final total = HealthCategory.values.fold<int>(
-      0,
-      (sum, category) => sum + (scores[category] ?? 0) * category.weight,
-    );
-    return _HealthHistoryEntry(
-      date: DateTime(today.year, today.month, today.day - (index + 1)),
-      scores: scores,
-      totalScore: total,
-      earnedYen: total * 92,
-    );
-  });
+String _formatDateKey(String dateKey) {
+  final parts = dateKey.split('-');
+  if (parts.length != 3) return dateKey;
+  final month = int.tryParse(parts[1]);
+  final day = int.tryParse(parts[2]);
+  if (month == null || day == null) return dateKey;
+  return '$month/$day';
 }
-
-String _formatDate(DateTime date) => '${date.month}/${date.day}';
 
 String _formatYen(int value) => value.toString().replaceAllMapped(
   RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),

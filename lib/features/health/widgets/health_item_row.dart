@@ -31,7 +31,8 @@ class HealthItemRow extends ConsumerStatefulWidget {
 }
 
 class _HealthItemRowState extends ConsumerState<HealthItemRow> {
-  static const double _goalColumnWidth = 144;
+  static const double _goalColumnWidth = 120;
+  static const double _sleepGoalColumnWidth = 132;
   static const double _statsColumnWidth = 52;
 
   late final TextEditingController _primaryCtrl;
@@ -122,6 +123,16 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
       textScaler: MediaQuery.textScalerOf(context),
     )..layout();
     return tp.width + 6 * 2 + 10;
+  }
+
+  double _goalColumnWidthForCategory() {
+    return switch (widget.category) {
+      HealthCategory.sleep => _sleepGoalColumnWidth,
+      HealthCategory.meal ||
+      HealthCategory.exercise ||
+      HealthCategory.meditation =>
+        _goalColumnWidth,
+    };
   }
 
   Widget _goalSaveControl(TextTheme text, ColorScheme scheme) {
@@ -269,7 +280,7 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SizedBox(
-                  width: _goalColumnWidth,
+                  width: _goalColumnWidthForCategory(),
                   child: _buildGoalInputsColumn(text, scheme),
                 ),
                 const SizedBox(width: 6),

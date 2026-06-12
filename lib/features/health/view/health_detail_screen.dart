@@ -71,7 +71,11 @@ class HealthDetailScreen extends ConsumerWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    const HealthHistorySection(),
+                    HealthHistorySection(
+                      logs: state.historyLogs,
+                      isLoading: state.isHistoryLoading,
+                      errorMessage: state.historyErrorMessage,
+                    ),
                     const SizedBox(height: 16),
                   ],
                 ),

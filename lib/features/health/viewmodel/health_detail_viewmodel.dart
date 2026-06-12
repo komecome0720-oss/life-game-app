@@ -19,7 +19,12 @@ class HealthDetailState {
     this.isEditableNow = true,
     this.errorMessage,
     this.lastSavedProvisionalYen = 0,
-  });
+    List<HealthLog> historyLogs = const [],
+    bool isHistoryLoading = false,
+    String? historyErrorMessage,
+  }) : _historyLogs = historyLogs,
+       _isHistoryLoading = isHistoryLoading,
+       _historyErrorMessage = historyErrorMessage;
 
   final HealthLog log;
   final bool isLoading;
@@ -32,12 +37,25 @@ class HealthDetailState {
   /// 直近の Firestore 書き込み時点の provisional。totalEarned 差分計算に使用。
   final int lastSavedProvisionalYen;
 
+  // Hot reload直後の古いStateインスタンスでも安全に読めるよう、
+  // 追加フィールドはnullableで保持しつつ公開getterで既定値に寄せる。
+  final List<HealthLog>? _historyLogs;
+  final bool? _isHistoryLoading;
+  final String? _historyErrorMessage;
+
+  List<HealthLog> get historyLogs => _historyLogs ?? const [];
+  bool get isHistoryLoading => _isHistoryLoading ?? false;
+  String? get historyErrorMessage => _historyErrorMessage;
+
   HealthDetailState copyWith({
     HealthLog? log,
     bool? isLoading,
     bool? isEditableNow,
     String? errorMessage,
     int? lastSavedProvisionalYen,
+    List<HealthLog>? historyLogs,
+    bool? isHistoryLoading,
+    Object? historyErrorMessage = _unset,
   }) {
     return HealthDetailState(
       log: log ?? this.log,
@@ -46,8 +64,15 @@ class HealthDetailState {
       errorMessage: errorMessage,
       lastSavedProvisionalYen:
           lastSavedProvisionalYen ?? this.lastSavedProvisionalYen,
+      historyLogs: historyLogs ?? this.historyLogs,
+      isHistoryLoading: isHistoryLoading ?? this.isHistoryLoading,
+      historyErrorMessage: identical(historyErrorMessage, _unset)
+          ? this.historyErrorMessage
+          : historyErrorMessage as String?,
     );
   }
+
+  static const Object _unset = Object();
 }
 
 class HealthDetailViewModel extends Notifier<HealthDetailState> {
@@ -83,7 +108,11 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     }
     // 初期ロードは非同期。現時点は今日の空ログで isLoading=true。
     Future.microtask(() => _load(uid));
-    return HealthDetailState(log: emptyLog, isLoading: true);
+    return HealthDetailState(
+      log: emptyLog,
+      isLoading: true,
+      isHistoryLoading: true,
+    );
   }
 
   bool _goalsAffectScore(UserSettings a, UserSettings b) {
@@ -149,6 +178,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
   }
 
   Future<void> _load(String uid) async {
+    final loadGeneration = ++_stateGeneration;
     final todayKey = HealthRollover.dateKey(DateTime.now());
     try {
       final col = _db.collection('users').doc(uid).collection('healthLogs');
@@ -156,7 +186,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
 
       final doc = await col.doc(todayKey).get();
       // ロード中にユーザーが切り替わった場合は破棄
-      if (_uid != uid) return;
+      if (_uid != uid || loadGeneration != _stateGeneration) return;
       final loadedLog = doc.exists
           ? HealthLog.fromFirestore(doc)
           : HealthLog(dateKey: todayKey);
@@ -166,7 +196,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
         log: loadedLog,
         settings: settings,
       );
-      if (_uid != uid) return;
+      if (_uid != uid || loadGeneration != _stateGeneration) return;
 
       state = HealthDetailState(
         log: log,
@@ -174,11 +204,31 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
         isEditableNow: true,
         errorMessage: pastError,
         lastSavedProvisionalYen: log.provisionalEarnedYen,
+        historyLogs: const [],
+        isHistoryLoading: true,
+        historyErrorMessage: null,
       );
-      _stateGeneration++;
+
+      final historyResult = await _loadHistoryLogs(
+        uid: uid,
+        col: col,
+        todayKey: todayKey,
+        generation: loadGeneration,
+      );
+      if (_uid != uid || loadGeneration != _stateGeneration) return;
+      state = state.copyWith(
+        historyLogs: historyResult.logs,
+        isHistoryLoading: false,
+        historyErrorMessage: historyResult.errorMessage,
+      );
     } catch (e) {
-      if (_uid != uid) return;
-      state = state.copyWith(isLoading: false, errorMessage: '読み込みに失敗しました: $e');
+      if (_uid != uid || loadGeneration != _stateGeneration) return;
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: '読み込みに失敗しました: $e',
+        isHistoryLoading: false,
+        historyLogs: const [],
+      );
     }
   }
 
@@ -187,8 +237,11 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     String todayKey,
   ) async {
     try {
+      // FieldPath.documentId の降順 orderBy は __name__ DESC の手動インデックスが必要。
+      // dateKey は常にドキュメントIDと同値で、自動の単一フィールドインデックスで足りる。
       final snaps = await col
-          .where(FieldPath.documentId, isLessThan: todayKey)
+          .where('dateKey', isLessThan: todayKey)
+          .orderBy('dateKey', descending: true)
           .limit(20)
           .get();
       for (final doc in snaps.docs) {
@@ -208,6 +261,35 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       return null;
     } catch (e) {
       return '過去の健康ログ確定に失敗しました: $e';
+    }
+  }
+
+  Future<_HistoryLoadResult> _loadHistoryLogs({
+    required String uid,
+    required CollectionReference<Map<String, dynamic>> col,
+    required String todayKey,
+    required int generation,
+  }) async {
+    try {
+      // FieldPath.documentId の降順 orderBy は __name__ DESC の手動インデックスが必要。
+      // dateKey は常にドキュメントIDと同値で、自動の単一フィールドインデックスで足りる。
+      final snaps = await col
+          .where('dateKey', isLessThan: todayKey)
+          .orderBy('dateKey', descending: true)
+          .limit(14)
+          .get();
+      if (_uid != uid || generation != _stateGeneration) {
+        return const _HistoryLoadResult(logs: []);
+      }
+      final logs = snaps.docs
+          .map(HealthLog.fromFirestore)
+          .toList(growable: false);
+      return _HistoryLoadResult(logs: logs);
+    } catch (e) {
+      return _HistoryLoadResult(
+        logs: const [],
+        errorMessage: '履歴の読み込みに失敗しました: $e',
+      );
     }
   }
 
@@ -234,6 +316,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     if (_isRefreshingForToday) return;
     final uid = _uid;
     if (uid == null) return;
+    final loadGeneration = ++_stateGeneration;
     _isRefreshingForToday = true;
     try {
       while (_activeSaves.isNotEmpty) {
@@ -247,7 +330,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       }
       final pastError = await _finalizePastLogs(col, todayKey);
       final doc = await col.doc(todayKey).get();
-      if (_uid != uid) return;
+      if (_uid != uid || loadGeneration != _stateGeneration) return;
       final loadedLog = doc.exists
           ? HealthLog.fromFirestore(doc)
           : HealthLog(dateKey: todayKey);
@@ -257,18 +340,36 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
         log: loadedLog,
         settings: settings,
       );
-      if (_uid != uid) return;
+      if (_uid != uid || loadGeneration != _stateGeneration) return;
       state = HealthDetailState(
         log: todayLog,
         isLoading: false,
         isEditableNow: true,
         errorMessage: pastError,
         lastSavedProvisionalYen: todayLog.provisionalEarnedYen,
+        historyLogs: const [],
+        isHistoryLoading: true,
+        historyErrorMessage: null,
       );
-      _stateGeneration++;
+      final historyResult = await _loadHistoryLogs(
+        uid: uid,
+        col: col,
+        todayKey: todayKey,
+        generation: loadGeneration,
+      );
+      if (_uid != uid || loadGeneration != _stateGeneration) return;
+      state = state.copyWith(
+        historyLogs: historyResult.logs,
+        isHistoryLoading: false,
+        historyErrorMessage: historyResult.errorMessage,
+      );
     } catch (e) {
-      if (_uid == uid) {
-        state = state.copyWith(errorMessage: '日付更新に失敗しました: $e');
+      if (_uid == uid && loadGeneration == _stateGeneration) {
+        state = state.copyWith(
+          errorMessage: '日付更新に失敗しました: $e',
+          isHistoryLoading: false,
+          historyLogs: const [],
+        );
       }
     } finally {
       _isRefreshingForToday = false;
@@ -440,6 +541,13 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       updatedAt: DateTime.now(),
     );
   }
+}
+
+class _HistoryLoadResult {
+  const _HistoryLoadResult({required this.logs, this.errorMessage});
+
+  final List<HealthLog> logs;
+  final String? errorMessage;
 }
 
 final healthDetailViewModelProvider =
