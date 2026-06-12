@@ -662,39 +662,12 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
               focusNode: _actualMinutesFocus,
             ),
             const SizedBox(height: 20),
-            if (_isCompleted && widget.onRevert != null)
-              FilledButton.icon(
-                onPressed: _onTapRevert,
-                icon: const Icon(Icons.replay_rounded),
-                label: const Text('未了に戻す'),
-              )
-            else
-              Row(
-                children: [
-                  Expanded(
-                    child: FilledButton.tonalIcon(
-                      onPressed:
-                          widget.onSaveProgress == null ? null : _onTapSave,
-                      icon: const Icon(Icons.save_outlined),
-                      label: const Text(
-                        '保存',
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: _onTapComplete,
-                      icon: const Icon(Icons.check_circle_outline),
-                      label: const Text(
-                        '完了',
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+            _CompleteOrRevertRow(
+              isCompleted: _isCompleted,
+              onComplete: _onTapComplete,
+              onSave: widget.onSaveProgress == null ? null : _onTapSave,
+              onRevert: widget.onRevert == null ? null : _onTapRevert,
+            ),
             if (widget.onEdit != null ||
                 widget.onDuplicate != null ||
                 widget.onDelete != null) ...[
@@ -1043,6 +1016,51 @@ class _TimerAndActualRow extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+
+class _CompleteOrRevertRow extends StatelessWidget {
+  const _CompleteOrRevertRow({
+    required this.isCompleted,
+    required this.onComplete,
+    this.onSave,
+    this.onRevert,
+  });
+
+  final bool isCompleted;
+  final VoidCallback onComplete;
+  final VoidCallback? onSave;
+  final VoidCallback? onRevert;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isCompleted && onRevert != null) {
+      return FilledButton.icon(
+        onPressed: onRevert,
+        icon: const Icon(Icons.replay_rounded),
+        label: const Text('未了に戻す'),
+      );
+    }
+    return Row(
+      children: [
+        Expanded(
+          child: FilledButton.tonalIcon(
+            onPressed: onSave,
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('保存', overflow: TextOverflow.ellipsis),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.md),
+        Expanded(
+          child: FilledButton.icon(
+            onPressed: onComplete,
+            icon: const Icon(Icons.check_circle_outline),
+            label: const Text('完了', overflow: TextOverflow.ellipsis),
+          ),
+        ),
+      ],
     );
   }
 }
