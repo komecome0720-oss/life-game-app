@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:task_manager/features/health/model/health_category.dart';
 import 'package:task_manager/features/health/model/health_log.dart';
+import 'package:task_manager/widgets/empty_state_view.dart';
 
 class HealthHistorySection extends StatelessWidget {
   const HealthHistorySection({
@@ -68,10 +69,12 @@ class HealthHistorySection extends StatelessWidget {
     }
 
     if (logs.isEmpty) {
-      return _StatusMessage(
-        icon: Icons.inbox_outlined,
-        title: '保存済みの履歴がありません',
-        message: '過去に保存したスコアがここに表示されます。',
+      return const Center(
+        child: EmptyStateView(
+          icon: Icons.inbox_outlined,
+          message: '保存済みの履歴がありません',
+          hint: '過去に保存したスコアがここに表示されます。',
+        ),
       );
     }
 

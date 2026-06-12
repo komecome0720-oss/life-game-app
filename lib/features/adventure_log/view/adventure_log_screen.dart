@@ -6,6 +6,7 @@ import 'package:task_manager/features/adventure_log/providers/adventure_log_prov
 import 'package:task_manager/features/adventure_log/widgets/adventure_timeline_tile.dart';
 import 'package:task_manager/features/adventure_log/widgets/balance_history_chart.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
+import 'package:task_manager/widgets/empty_state_view.dart';
 import 'package:task_manager/widgets/message_guard.dart';
 
 class AdventureLogScreen extends ConsumerWidget {
@@ -51,16 +52,10 @@ class _AdventureLogContent extends StatelessWidget {
             currentBalanceYen: currentBalanceYen,
           ),
           const SizedBox(height: 80),
-          Icon(
-            Icons.auto_stories_outlined,
-            size: 56,
-            color: Theme.of(context).colorScheme.outline,
-          ),
-          const SizedBox(height: 12),
-          Center(
-            child: Text(
-              'まだ冒険の記録がありません',
-              style: TextStyle(color: Theme.of(context).colorScheme.outline),
+          const Center(
+            child: EmptyStateView(
+              icon: Icons.auto_stories_outlined,
+              message: 'まだ冒険の記録がありません',
             ),
           ),
         ],

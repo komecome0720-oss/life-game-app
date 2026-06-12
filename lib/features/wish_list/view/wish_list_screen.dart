@@ -4,6 +4,7 @@ import 'package:task_manager/features/wish_list/model/wish_item.dart';
 import 'package:task_manager/features/wish_list/viewmodel/wish_list_viewmodel.dart';
 import 'package:task_manager/features/wish_list/widgets/add_wish_item_sheet.dart';
 import 'package:task_manager/features/wish_list/widgets/wish_item_card.dart';
+import 'package:task_manager/widgets/empty_state_view.dart';
 import 'package:task_manager/widgets/message_guard.dart';
 
 class WishListScreen extends ConsumerWidget {
@@ -88,14 +89,10 @@ class _ItemList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.favorite_border, size: 48, color: Theme.of(context).colorScheme.outlineVariant),
-            const SizedBox(height: 12),
-            Text('アイテムがありません', style: TextStyle(color: Theme.of(context).colorScheme.outline)),
-          ],
+      return const Center(
+        child: EmptyStateView(
+          icon: Icons.favorite_border,
+          message: 'アイテムがありません',
         ),
       );
     }
