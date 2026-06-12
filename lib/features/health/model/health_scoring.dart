@@ -27,8 +27,8 @@ class HealthScoring {
     return v;
   }
 
-  /// 合計点(0〜100) と時間単価から、獲得金額を算出。
-  /// 100点 = 1日分(24時間)の1/8 = 3時間分の時間単価。
+  /// 合計点(0〜100) と時間単価から、獲得金額を算出。四捨五入（.round()）。
+  /// 100点 = 1日分(24時間)の1/8 = 3時間分の時間単価。挙動変更禁止（過去残高との整合）。
   static int earningsForPoints(int points, double hourlyRate) {
     if (hourlyRate <= 0 || points <= 0) return 0;
     return (hourlyRate * 3 * points / 100).round();

@@ -18,6 +18,25 @@ void main() {
       expect(HealthScoring.score(450, 300, 3), 30);
     });
 
+    // earningsForPoints は (hourlyRate * 3 * points / 100).round() で四捨五入する仕様。
+    // 過去の残高と不整合が出るため挙動を変えてはならない。
+    test('earningsForPoints rounds half-up at 0.5 boundary', () {
+      // 端数なし
+      expect(HealthScoring.earningsForPoints(100, 1000), 3000); // 3000.0
+      expect(HealthScoring.earningsForPoints(50, 1000), 1500); // 1500.0
+
+      // .5 境界: 四捨五入で切り上げ
+      expect(HealthScoring.earningsForPoints(1, 50), 2); // 50*3*1/100=1.5 → 2
+      expect(HealthScoring.earningsForPoints(3, 50), 5); // 50*3*3/100=4.5 → 5
+
+      // .5 未満: 切り捨て
+      expect(HealthScoring.earningsForPoints(1, 49), 1); // 49*3/100=1.47 → 1
+
+      // エッジ: points=0 や hourlyRate=0 は 0
+      expect(HealthScoring.earningsForPoints(0, 1000), 0);
+      expect(HealthScoring.earningsForPoints(50, 0), 0);
+    });
+
     test('scores sleep from three hours to the goal', () {
       const baseline = HealthCategoryX.sleepBaselineMinutes;
       expect(HealthScoring.level(180, 420, baseline: baseline), 0);
