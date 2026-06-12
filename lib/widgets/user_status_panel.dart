@@ -13,6 +13,7 @@ class UserStatusPanel extends ConsumerWidget {
     final settings = uState.settings;
     final isFirstLoad = uState.isLoading && _isDefault(settings);
     final text = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
 
     return Card(
       margin: EdgeInsets.zero,
@@ -45,7 +46,7 @@ class UserStatusPanel extends ConsumerWidget {
                           width: 16,
                           height: 16,
                           decoration: BoxDecoration(
-                            color: Colors.grey.shade300,
+                            color: scheme.surfaceContainerHighest,
                             shape: BoxShape.circle,
                           ),
                         ),
@@ -54,7 +55,7 @@ class UserStatusPanel extends ConsumerWidget {
                           child: Container(
                             height: 12,
                             decoration: BoxDecoration(
-                              color: Colors.grey.shade200,
+                              color: scheme.outlineVariant,
                               borderRadius: BorderRadius.circular(4),
                             ),
                           ),
