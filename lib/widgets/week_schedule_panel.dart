@@ -196,6 +196,12 @@ class _WeekSchedulePanelState extends ConsumerState<WeekSchedulePanel> {
 
   List<List<CalendarTask>> _splitByDay() {
     final days = widget.visibleDays;
+    // 日付正規化をループ前に1回だけ計算する（タスク数 × days数 の繰り返しを防ぐ）。
+    final normalizedDays = List.generate(
+      days.length,
+      (i) => DateTime(days[i].year, days[i].month, days[i].day),
+      growable: false,
+    );
     final result = List<List<CalendarTask>>.generate(days.length, (_) => []);
     for (final t in widget.tasks) {
       final ts = t.start;
@@ -204,9 +210,7 @@ class _WeekSchedulePanelState extends ConsumerState<WeekSchedulePanel> {
       }
       final taskDay = DateTime(ts.year, ts.month, ts.day);
       for (var i = 0; i < days.length; i++) {
-        final d = days[i];
-        final norm = DateTime(d.year, d.month, d.day);
-        if (norm == taskDay) {
+        if (normalizedDays[i] == taskDay) {
           result[i].add(t);
           break;
         }
