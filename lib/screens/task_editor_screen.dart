@@ -262,7 +262,7 @@ class _TaskEditorScreenState extends ConsumerState<TaskEditorScreen> {
               onPressed: () => Navigator.pop(ctx, false),
               child: const Text('キャンセル')),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('削除'),
           ),
@@ -492,10 +492,10 @@ class _TaskEditorScreenState extends ConsumerState<TaskEditorScreen> {
             if (isEdit)
               OutlinedButton.icon(
                 onPressed: _saving ? null : _delete,
-                icon: const Icon(Icons.delete_outline, color: Colors.red),
-                label: const Text('削除', style: TextStyle(color: Colors.red)),
+                icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+                label: Text('削除', style: TextStyle(color: Theme.of(context).colorScheme.error)),
                 style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Colors.red),
+                  side: BorderSide(color: Theme.of(context).colorScheme.error),
                 ),
               ),
             const SizedBox(height: 40),

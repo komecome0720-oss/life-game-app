@@ -918,13 +918,13 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
                           Navigator.of(context).pop();
                           widget.onDelete!();
                         },
-                        icon: const Icon(
+                        icon: Icon(
                           Icons.delete_outline,
-                          color: Colors.red,
+                          color: Theme.of(context).colorScheme.error,
                         ),
-                        label: const Text(
+                        label: Text(
                           '削除',
-                          style: TextStyle(color: Colors.red),
+                          style: TextStyle(color: Theme.of(context).colorScheme.error),
                         ),
                       ),
                     ),

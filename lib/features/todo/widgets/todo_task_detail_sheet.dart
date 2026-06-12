@@ -77,7 +77,7 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
               child: const Text('キャンセル')),
           TextButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('削除', style: TextStyle(color: Colors.red))),
+              child: Text('削除', style: TextStyle(color: Theme.of(ctx).colorScheme.error))),
         ],
       ),
     );
@@ -178,8 +178,8 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
               children: [
                 TextButton.icon(
                   onPressed: _confirmDelete,
-                  icon: const Icon(Icons.delete_outline, color: Colors.red),
-                  label: const Text('削除', style: TextStyle(color: Colors.red)),
+                  icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+                  label: Text('削除', style: TextStyle(color: Theme.of(context).colorScheme.error)),
                 ),
                 const Spacer(),
                 TextButton(

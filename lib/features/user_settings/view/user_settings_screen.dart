@@ -162,7 +162,7 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
       context,
       SnackBar(
         content: Text(success ? '保存しました' : (errorMsg ?? '保存に失敗しました')),
-        backgroundColor: success ? null : Colors.red,
+        backgroundColor: success ? null : Theme.of(context).colorScheme.error,
       ),
     );
     if (success) Navigator.of(context).pop();

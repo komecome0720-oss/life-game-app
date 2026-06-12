@@ -30,7 +30,7 @@ class WishListScreen extends ConsumerWidget {
               ref.read(wishListProvider.notifier).deleteItem(item.id);
               Navigator.pop(ctx);
             },
-            child: const Text('削除', style: TextStyle(color: Colors.red)),
+            child: Text('削除', style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
           ),
         ],
       ),

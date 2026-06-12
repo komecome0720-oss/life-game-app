@@ -434,7 +434,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 child: const Text('キャンセル'),
               ),
               FilledButton(
-                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
                 onPressed: () => Navigator.pop(ctx, true),
                 child: const Text('削除'),
               ),
@@ -874,7 +874,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         action: retry != null
             ? SnackBarAction(
                 label: '再試行',
-                textColor: Colors.white,
+                textColor: Theme.of(context).colorScheme.onError,
                 onPressed: retry,
               )
             : null,
