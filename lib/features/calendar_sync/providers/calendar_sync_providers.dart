@@ -1,3 +1,8 @@
+// 設計メモ:
+// Visibility / Download / Quadrant は別ドキュメント（settings/calendarVisibility 等）を
+// 各1回 get する設計。常時表示のホーム画面が依存するため autoDispose は付けない。
+// StreamProvider 化は setVisible 等の楽観的更新（state 先行更新）との整合検証が必要なため見送り。
+
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
