@@ -263,7 +263,16 @@ class EconomyRepository {
           balanceAfterYen: before,
         );
       }
-      final price = (itemData['price'] as num?)?.toInt() ?? 0;
+      final price = (itemData['price'] as num?)?.toInt();
+      if (price == null) {
+        return BalanceLedgerResult(
+          applied: false,
+          deltaYen: 0,
+          balanceBeforeYen: before,
+          balanceAfterYen: before,
+          missingAmount: true,
+        );
+      }
       if (before < price) {
         return BalanceLedgerResult(
           applied: false,
