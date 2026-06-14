@@ -3,6 +3,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/widgets/task_event_detail_sheet.dart';
 
+// 実績分フィールドを特定するキーを再エクスポート
+const _actualKey = kActualMinutesFieldKey;
+
 CalendarTask _sampleTask({bool isCompleted = false}) {
   final start = DateTime(2026, 5, 6, 9, 0);
   final end = start.add(const Duration(minutes: 60));
@@ -62,10 +65,18 @@ void main() {
       expect(find.text('実際にかかった時間'), findsOneWidget);
     });
 
-    testWidgets('見込時間 0 のとき "—" を表示', (tester) async {
+    testWidgets('見込時間 0 かつ start/end なしのとき "—" を表示', (tester) async {
+      // start/end のないタスク（ToDo相当）: _livePredictedMinutes が widget.predictedMinutes=0 にフォールバック
+      const taskWithoutTimes = CalendarTask(
+        id: 't2',
+        title: 'noTimeTask',
+        start: null,
+        end: null,
+        rewardYen: 0,
+      );
       await _pumpSheet(
         tester,
-        task: _sampleTask(),
+        task: taskWithoutTimes,
         predictedMinutes: 0,
         expectedRewardYen: 0,
         onComplete: ({required predictedMinutes, required actualMinutes}) async {},
@@ -89,10 +100,11 @@ void main() {
         },
       );
 
-      // フィールドに 45 を入力
-      await tester.enterText(find.byType(TextField), '45');
+      // 実績分フィールドに 45 を入力（Key で特定）
+      await tester.enterText(find.byKey(_actualKey), '45');
       await tester.pump();
-      // 完了ボタン
+      // 完了ボタン（SingleChildScrollView 内にある可能性があるため ensureVisible）
+      await tester.ensureVisible(find.text('完了'));
       await tester.tap(find.text('完了'));
       await tester.pumpAndSettle();
 
@@ -112,6 +124,7 @@ void main() {
         },
       );
 
+      await tester.ensureVisible(find.text('完了'));
       await tester.tap(find.text('完了'));
       await tester.pumpAndSettle();
 
@@ -132,6 +145,7 @@ void main() {
         },
       );
 
+      await tester.ensureVisible(find.text('完了'));
       await tester.tap(find.text('完了'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('いいえ'));
@@ -154,6 +168,7 @@ void main() {
         },
       );
 
+      await tester.ensureVisible(find.text('完了'));
       await tester.tap(find.text('完了'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('はい'));

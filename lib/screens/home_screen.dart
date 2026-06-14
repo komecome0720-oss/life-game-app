@@ -234,6 +234,59 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       task: task,
       predictedMinutes: predictedMinutes,
       expectedRewardYen: expectedReward,
+      calcReward: (minutes) {
+        final s = ref.read(userSettingsProvider).settings;
+        return _calcReward(
+          hourlyRate: s.hourlyRate,
+          minutes: minutes,
+          fallbackYen: task.rewardYen,
+        );
+      },
+      onSaveEdits: ({
+        required title,
+        required quadrant,
+        required start,
+        required end,
+      }) async {
+        try {
+          final taskId = await ref
+              .read(calendarSyncViewModelProvider.notifier)
+              .promoteRemoteTaskIfNeeded(task);
+          if (taskId == null) {
+            if (mounted) _showErrorSnackBar('保存に失敗しました（promote エラー）');
+            return false;
+          }
+          await ref.read(calendarTaskSyncRepositoryProvider).updateTask(
+            taskId: taskId,
+            title: title,
+            start: start,
+            end: end,
+          );
+          await ref.read(calendarTaskSyncRepositoryProvider).updateQuadrant(
+            taskId: taskId,
+            urgency: quadrant.urgency,
+            importance: quadrant.importance,
+          );
+          if (task.sourceType == TaskSourceType.googleCalendar &&
+              task.externalCalendarId != null &&
+              start != null &&
+              end != null) {
+            final key = ExternalCalendarKey.tryParse(task.externalCalendarId);
+            if (key != null) {
+              await ref.read(googleCalendarRepositoryProvider).patchEvent(
+                calendarId: key.calendarId,
+                eventId: key.eventId,
+                newStartLocal: start,
+                newEndLocal: end,
+              );
+            }
+          }
+          return true;
+        } catch (e) {
+          if (mounted) _showErrorSnackBar('保存に失敗しました: $e');
+          return false;
+        }
+      },
       onTimerStart: () async {
         // リモート表示中なら DB に promote（保存済みなら no-op）
         await ref
@@ -242,10 +295,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       },
       onPauseAndSave:
           ({required predictedMinutes, required actualMinutes}) async {
-            // 完了済みタスクには保存して中断を行わない（未了に戻す経路を使うべき）。
             if (task.isCompleted) return;
-
-            // リモート表示中なら DB に promote。戻り値は taskId（保存済みなら既存ID）。
             final taskId = await ref
                 .read(calendarSyncViewModelProvider.notifier)
                 .promoteRemoteTaskIfNeeded(task);
@@ -255,7 +305,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               }
               return;
             }
-
             try {
               await ref
                   .read(calendarTaskSyncRepositoryProvider)
@@ -268,7 +317,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               if (mounted) _showErrorSnackBar('保存に失敗しました: $e');
               return;
             }
-
             if (!mounted) return;
             showAppSnackBar(
               context,
@@ -277,20 +325,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           },
       onSaveProgress:
           ({required predictedMinutes, required actualMinutes}) async {
-            // 完了済みタスクは保存対象としない（未了に戻してから操作する）。
             if (task.isCompleted) return;
-
-            // リモート表示中なら DB に promote。戻り値は taskId（保存済みなら既存ID）。
             final taskId = await ref
                 .read(calendarSyncViewModelProvider.notifier)
                 .promoteRemoteTaskIfNeeded(task);
             if (taskId == null) {
-              if (mounted) {
-                _showErrorSnackBar('タスクの保存に失敗しました');
-              }
+              if (mounted) _showErrorSnackBar('タスクの保存に失敗しました');
               return;
             }
-
             try {
               await ref
                   .read(calendarTaskSyncRepositoryProvider)
@@ -303,7 +345,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               if (mounted) _showErrorSnackBar('保存に失敗しました: $e');
               return;
             }
-
             if (!mounted) return;
             showAppSnackBar(context, const SnackBar(content: Text('保存しました')));
           },
@@ -321,44 +362,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           if (mounted) _showErrorSnackBar('未了への変更に失敗しました: $e');
           return false;
         }
-
         if (!mounted) return true;
         showAppSnackBar(context, const SnackBar(content: Text('未了に戻しました')));
         return true;
       },
-      onTimesChanged: ({required newStart, required newEnd}) async {
-        try {
-          await ref
-              .read(calendarTaskSyncRepositoryProvider)
-              .updateTask(taskId: task.id, start: newStart, end: newEnd);
-          if (task.sourceType == TaskSourceType.googleCalendar &&
-              task.externalCalendarId != null) {
-            final key = ExternalCalendarKey.tryParse(task.externalCalendarId);
-            if (key != null) {
-              await ref
-                  .read(googleCalendarRepositoryProvider)
-                  .patchEvent(
-                    calendarId: key.calendarId,
-                    eventId: key.eventId,
-                    newStartLocal: newStart,
-                    newEndLocal: newEnd,
-                  );
-            }
-          }
-          return true;
-        } catch (e) {
-          if (mounted) _showErrorSnackBar('時刻の更新に失敗しました: $e');
-          return false;
-        }
-      },
       onComplete: ({required predictedMinutes, required actualMinutes}) async {
-        // 注: シートを開いた時点の task.isCompleted で二重完了ガードは行わない。
-        // 「未了に戻す」→「完了」の同一シート内フローでは、ローカルの task は
-        // 元の isCompleted=true のままになるため、ここで弾くと再完了できなくなる。
-        // 完了状態の最終判定はシート側 _isCompleted に任せ、Firestore 側も
-        // completeTask は idempotent なので二重実行されても問題ない。
-
-        // リモート表示中なら DB に promote。戻り値は taskId（保存済みなら既存ID）。
         final taskId = await ref
             .read(calendarSyncViewModelProvider.notifier)
             .promoteRemoteTaskIfNeeded(task);
@@ -368,7 +376,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           }
           return;
         }
-
         final latestSettings = ref.read(userSettingsProvider).settings;
         final minutesForReward = actualMinutes ?? predictedMinutes;
         final reward = _calcReward(
@@ -387,8 +394,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 actualMinutes: actualMinutes,
               );
           if (!result.applied) return;
-          // お金付与が確定したあと（トランザクション外）に1回だけ抽選する。
-          // 抽選・チケット発行に失敗しても完了自体は成立しているため、握りつぶして演出だけ省く。
           RouletteOutcome? outcome;
           try {
             outcome = await ref.read(rouletteServiceProvider).spin(
@@ -428,7 +433,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       },
       onDuplicate: () {
         if (!mounted) return;
-        // 複製：元タスクをベースに新規作成モードへ。初期開始は元の end 直後。
         final baseStart = task.end ?? DateTime.now();
         Navigator.of(context).push<bool>(
           MaterialPageRoute<bool>(
@@ -471,19 +475,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           _showErrorSnackBar(msg ?? '削除に失敗しました');
           vm.clearError();
         }
-      },
-      onQuadrantChanged: (quadrant) async {
-        final taskId = await ref
-            .read(calendarSyncViewModelProvider.notifier)
-            .promoteRemoteTaskIfNeeded(task);
-        if (taskId == null) return;
-        await ref
-            .read(calendarTaskSyncRepositoryProvider)
-            .updateQuadrant(
-              taskId: taskId,
-              urgency: quadrant.urgency,
-              importance: quadrant.importance,
-            );
       },
     );
   }

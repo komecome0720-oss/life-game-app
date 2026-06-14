@@ -41,10 +41,11 @@ class TodoRepository {
     bool importance = true,
     int estimatedMinutes = 30,
     int orderIndex = 0,
+    String? description,
   }) async {
     final uid = _uid;
     if (uid == null) throw Exception('Not authenticated');
-    final ref = await _col(uid).add({
+    final data = <String, dynamic>{
       'title': title,
       'reward': 0,
       'sourceType': 'manual',
@@ -56,7 +57,9 @@ class TodoRepository {
       'orderIndex': orderIndex,
       'estimatedMinutes': estimatedMinutes,
       'updatedAt': FieldValue.serverTimestamp(),
-    });
+    };
+    if (description != null) data['description'] = description;
+    final ref = await _col(uid).add(data);
     return ref.id;
   }
 
@@ -71,6 +74,7 @@ class TodoRepository {
       'orderIndex': task.orderIndex,
       'estimatedMinutes': task.estimatedMinutes,
       'note': task.note,
+      'description': task.description ?? '',
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }

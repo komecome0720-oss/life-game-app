@@ -7,6 +7,7 @@ import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart'
 import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/theme/app_tokens.dart';
 import 'package:task_manager/utils/app_messenger.dart';
+import 'package:task_manager/widgets/task_detail/quadrant_selector.dart';
 
 /// タイマー列と実績分列のラベル行を同じ高さにそろえる（ヘルプアイコン行とテキストのみ行のズレ防止）。
 const double _kTimerSectionLabelRowHeight = 48;
@@ -42,32 +43,40 @@ typedef TaskTimesChangedCallback =
       required DateTime newEnd,
     });
 
+/// タイトル・象限・時刻を一括保存するコールバック。
+/// 戻り値 true で保存成功、false でエラー（シートは閉じない）。
+typedef TaskSaveEditsCallback =
+    Future<bool> Function({
+      required String title,
+      required Quadrant quadrant,
+      required DateTime? start,
+      required DateTime? end,
+    });
+
 /// 予定タップ時のボトムシート: 見込時間・報酬・タイマー・実績入力・完了 + 編集/複製/削除
 ///
-/// [predictedMinutes] と [expectedRewardYen] は呼び出し側で計算して渡す
-/// （シートは Riverpod 非依存に保つため）。
-/// [onTimerStart] はタイマー開始時に呼ばれる（戻り値は未使用、呼び出し側で DB 保存可能）。
-/// [onPauseAndSave] はタイマー一時停止時に呼ばれる（未了のまま進捗保存する用途）。
-/// [onSaveProgress] は「保存」ボタン押下時に呼ばれる。ステータスは変えずに、
-/// 現状の実績時間など進捗だけをコレクションへ保存する用途（タイマーは止めない）。
+/// [predictedMinutes] と [expectedRewardYen] は呼び出し側で計算して渡す（Riverpod非依存）。
+/// [calcReward] は編集後の見込時間から報酬を再計算する関数（ライブ更新用）。
+/// [onSaveEdits] はタイトル・象限・開始/終了時刻を一括保存するコールバック。
+/// [onTimerStart] はタイマー開始時に呼ばれる。
+/// [onPauseAndSave] はタイマー一時停止時に呼ばれる（未了のまま進捗保存）。
+/// [onSaveProgress] は「保存」ボタン押下時に呼ばれる（進捗のみ保存）。
 /// [onRevert] は task.isCompleted=true のとき「未了に戻す」ボタンから呼ばれる。
-/// 戻り値 true なら未了化に成功した扱いとし、シートを開いたまま操作を再開できるようにする。
-/// [onTimesChanged] は開始・終了時刻が編集されたときに呼ばれる。
 Future<void> showTaskEventDetailSheet({
   required BuildContext context,
   required CalendarTask task,
   required int predictedMinutes,
   required int expectedRewardYen,
   required TaskCompleteCallback onComplete,
+  int Function(int minutes)? calcReward,
+  TaskSaveEditsCallback? onSaveEdits,
   Future<void> Function()? onTimerStart,
   TaskPauseAndSaveCallback? onPauseAndSave,
   TaskSaveProgressCallback? onSaveProgress,
   Future<bool> Function()? onRevert,
-  TaskTimesChangedCallback? onTimesChanged,
   VoidCallback? onEdit,
   VoidCallback? onDuplicate,
   VoidCallback? onDelete,
-  Future<void> Function(Quadrant quadrant)? onQuadrantChanged,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -80,15 +89,15 @@ Future<void> showTaskEventDetailSheet({
         predictedMinutes: predictedMinutes,
         expectedRewardYen: expectedRewardYen,
         onComplete: onComplete,
+        calcReward: calcReward,
+        onSaveEdits: onSaveEdits,
         onTimerStart: onTimerStart,
         onPauseAndSave: onPauseAndSave,
         onSaveProgress: onSaveProgress,
         onRevert: onRevert,
-        onTimesChanged: onTimesChanged,
         onEdit: onEdit,
         onDuplicate: onDuplicate,
         onDelete: onDelete,
-        onQuadrantChanged: onQuadrantChanged,
       ),
     ),
   );
@@ -115,30 +124,30 @@ class _TaskEventDetailBody extends StatefulWidget {
     required this.predictedMinutes,
     required this.expectedRewardYen,
     required this.onComplete,
+    this.calcReward,
+    this.onSaveEdits,
     this.onTimerStart,
     this.onPauseAndSave,
     this.onSaveProgress,
     this.onRevert,
-    this.onTimesChanged,
     this.onEdit,
     this.onDuplicate,
     this.onDelete,
-    this.onQuadrantChanged,
   });
 
   final CalendarTask task;
   final int predictedMinutes;
   final int expectedRewardYen;
   final TaskCompleteCallback onComplete;
+  final int Function(int minutes)? calcReward;
+  final TaskSaveEditsCallback? onSaveEdits;
   final Future<void> Function()? onTimerStart;
   final TaskPauseAndSaveCallback? onPauseAndSave;
   final TaskSaveProgressCallback? onSaveProgress;
   final Future<bool> Function()? onRevert;
-  final TaskTimesChangedCallback? onTimesChanged;
   final VoidCallback? onEdit;
   final VoidCallback? onDuplicate;
   final VoidCallback? onDelete;
-  final Future<void> Function(Quadrant quadrant)? onQuadrantChanged;
 
   @override
   State<_TaskEventDetailBody> createState() => _TaskEventDetailBodyState();
@@ -147,6 +156,7 @@ class _TaskEventDetailBody extends StatefulWidget {
 class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
   Stopwatch? _stopwatch;
   Timer? _ticker;
+  late final TextEditingController _titleCtrl;
   final TextEditingController _actualMinutesCtrl = TextEditingController();
   final FocusNode _actualMinutesFocus = FocusNode();
 
@@ -156,8 +166,8 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
   bool _needsBaselineCapture = true;
 
   // 完了状態は未了に戻す操作で書き換わる可能性があるので、シート内で保持する。
-  // late にしない（ホットリロードで State が再利用されると initState が走らず未初期化になる）。
   bool _isCompleted = false;
+  bool _isSavingEdits = false;
 
   // 開始・終了時刻はシート内で編集できる。null は ToDo（カレンダー枠なし）。
   DateTime? _currentStart;
@@ -165,9 +175,38 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
 
   late Quadrant _currentQuadrant;
 
+  bool get _isDirty {
+    if (_titleCtrl.text.trim() != widget.task.title) return true;
+    if (_currentStart != widget.task.start) return true;
+    if (_currentEnd != widget.task.end) return true;
+    if (_currentQuadrant != QuadrantX.from(
+      urgency: widget.task.urgency,
+      importance: widget.task.importance,
+    )) { return true; }
+    return false;
+  }
+
+  /// ステージ後の start/end から算出した見込時間（分）。
+  int get _livePredictedMinutes {
+    final s = _currentStart;
+    final e = _currentEnd;
+    if (s != null && e != null) {
+      final m = e.difference(s).inMinutes;
+      if (m > 0) return m.clamp(1, 24 * 60);
+    }
+    return widget.predictedMinutes;
+  }
+
+  int get _liveRewardYen {
+    final calc = widget.calcReward;
+    if (calc != null) return calc(_livePredictedMinutes);
+    return widget.expectedRewardYen;
+  }
+
   @override
   void initState() {
     super.initState();
+    _titleCtrl = TextEditingController(text: widget.task.title);
     // 完了済み・未完了どちらでも、過去に記録された実績時間があれば初期表示する。
     final saved = widget.task.actualMinutes;
     if (saved != null && saved > 0) {
@@ -194,6 +233,7 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
   @override
   void dispose() {
     _ticker?.cancel();
+    _titleCtrl.dispose();
     _actualMinutesCtrl.dispose();
     _actualMinutesFocus.dispose();
     super.dispose();
@@ -212,7 +252,7 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
             int.tryParse(_actualMinutesCtrl.text.trim()) ?? 0;
         try {
           await pauseSave(
-            predictedMinutes: widget.predictedMinutes,
+            predictedMinutes: _livePredictedMinutes,
             actualMinutes: actual,
           );
         } catch (_) {
@@ -372,7 +412,7 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
       _showInvalidRangeMessage();
       return;
     }
-    await _applyTimeChange(newStart: picked, newEnd: newEnd);
+    _applyTimeChange(newStart: picked, newEnd: newEnd);
   }
 
   Future<void> _onTapEnd() async {
@@ -385,7 +425,7 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
       _showInvalidRangeMessage();
       return;
     }
-    await _applyTimeChange(newStart: newStart, newEnd: picked);
+    _applyTimeChange(newStart: newStart, newEnd: picked);
   }
 
   void _showInvalidRangeMessage() {
@@ -395,27 +435,69 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
     );
   }
 
-  Future<void> _applyTimeChange({
+  void _applyTimeChange({
     required DateTime newStart,
     required DateTime newEnd,
-  }) async {
-    final cb = widget.onTimesChanged;
-    final prevStart = _currentStart;
-    final prevEnd = _currentEnd;
+  }) {
     setState(() {
       _currentStart = newStart;
       _currentEnd = newEnd;
     });
+  }
+
+  /// 「変更を保存」ボタン：タイトル・象限・開始/終了を一括保存。
+  Future<void> _onTapSaveEdits() async {
+    final cb = widget.onSaveEdits;
     if (cb == null) return;
-    final ok = await cb(newStart: newStart, newEnd: newEnd);
-    if (!mounted) return;
-    if (!ok) {
-      // 失敗時は表示を巻き戻す。
-      setState(() {
-        _currentStart = prevStart;
-        _currentEnd = prevEnd;
-      });
+    final title = _titleCtrl.text.trim();
+    if (title.isEmpty) return;
+    setState(() => _isSavingEdits = true);
+    try {
+      final ok = await cb(
+        title: title,
+        quadrant: _currentQuadrant,
+        start: _currentStart,
+        end: _currentEnd,
+      );
+      if (!mounted) return;
+      if (ok) {
+        showAppSnackBar(context, const SnackBar(content: Text('保存しました')));
+      } else {
+        showAppSnackBar(context, const SnackBar(content: Text('保存に失敗しました')));
+      }
+    } finally {
+      if (mounted) setState(() => _isSavingEdits = false);
     }
+  }
+
+  Future<bool> _onWillPop() async {
+    if (!_isDirty) return true;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('変更を保存しますか？'),
+        content: const Text('タイトル・領域・時刻の変更が保存されていません。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'discard'),
+            child: const Text('破棄'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'cancel'),
+            child: const Text('キャンセル'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, 'save'),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    if (result == 'save') {
+      await _onTapSaveEdits();
+      return true;
+    }
+    return result == 'discard';
   }
 
   Future<void> _onTapRevert() async {
@@ -459,7 +541,7 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
     Navigator.of(context).pop();
     try {
       await cb(
-        predictedMinutes: widget.predictedMinutes,
+        predictedMinutes: _livePredictedMinutes,
         actualMinutes: actual,
       );
     } catch (_) {
@@ -508,7 +590,7 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
     if (!mounted) return;
     Navigator.of(context).pop();
     await widget.onComplete(
-      predictedMinutes: widget.predictedMinutes,
+      predictedMinutes: _livePredictedMinutes,
       actualMinutes: actual,
     );
   }
@@ -516,98 +598,144 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
     final running = _stopwatch?.isRunning ?? false;
-    final predictedLabel = widget.predictedMinutes > 0
-        ? '${widget.predictedMinutes}分'
-        : '—';
+    final liveMinutes = _livePredictedMinutes;
+    final predictedLabel = liveMinutes > 0 ? '$liveMinutes分' : '—';
 
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              widget.task.title,
-              style: text.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-            ),
-            if (_currentStart != null && _currentEnd != null) ...[
-              const SizedBox(height: 12),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final nav = Navigator.of(context);
+        final canLeave = await _onWillPop();
+        if (canLeave) nav.pop();
+      },
+      child: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 種別チップ
               Row(
                 children: [
-                  Expanded(
-                    child: _TimeChip(
-                      label: '開始',
-                      time: _formatHm(_currentStart!),
-                      onTap: _isCompleted ? null : _onTapStart,
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: scheme.secondaryContainer,
+                      borderRadius: BorderRadius.circular(4),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text('〜', style: text.titleMedium),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _TimeChip(
-                      label: '終了',
-                      time: _formatHm(_currentEnd!),
-                      onTap: _isCompleted ? null : _onTapEnd,
+                    child: Text(
+                      '予定',
+                      style: text.labelSmall?.copyWith(
+                        color: scheme.onSecondaryContainer,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ],
               ),
-            ],
-            if (widget.onQuadrantChanged != null) ...[
+              const SizedBox(height: 8),
+              // タイトル（インライン編集）
+              TextField(
+                controller: _titleCtrl,
+                style: text.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                decoration: const InputDecoration(
+                  hintText: 'タイトル',
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                onChanged: (_) => setState(() {}),
+                enabled: !_isCompleted,
+              ),
+              // 時刻チップ
+              if (_currentStart != null && _currentEnd != null) ...[
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _TimeChip(
+                        label: '開始',
+                        time: _formatHm(_currentStart!),
+                        onTap: _isCompleted ? null : _onTapStart,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text('〜', style: text.titleMedium),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _TimeChip(
+                        label: '終了',
+                        time: _formatHm(_currentEnd!),
+                        onTap: _isCompleted ? null : _onTapEnd,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              // 領域セレクター
               const SizedBox(height: 12),
-              _QuadrantDropdown(
-                currentQuadrant: _currentQuadrant,
-                onSelect: (q) async {
-                  setState(() => _currentQuadrant = q);
-                  await widget.onQuadrantChanged!(q);
+              Text('領域', style: text.labelMedium),
+              const SizedBox(height: 8),
+              QuadrantSelector(
+                selected: _currentQuadrant,
+                onSelect: (q) => setState(() => _currentQuadrant = q),
+                enabled: !_isCompleted,
+              ),
+              // 報酬カード（ライブ更新）
+              const SizedBox(height: 12),
+              _RewardCard(
+                predictedLabel: predictedLabel,
+                expectedRewardYen: _liveRewardYen,
+              ),
+              const SizedBox(height: 16),
+              _TimerAndActualRow(
+                isCompleted: _isCompleted,
+                running: running,
+                elapsedLabel: _elapsedLabel(),
+                canResetTimer: !running && (_stopwatch?.elapsed.inSeconds ?? 0) > 0,
+                onToggle: _toggleTimer,
+                onReset: _resetTimer,
+                onShowHelp: _showTimerHelp,
+                controller: _actualMinutesCtrl,
+                focusNode: _actualMinutesFocus,
+              ),
+              const SizedBox(height: 16),
+              // 変更を保存ボタン（dirty時のみ活性）
+              if (widget.onSaveEdits != null)
+                FilledButton.tonalIcon(
+                  onPressed: (_isDirty && !_isSavingEdits) ? _onTapSaveEdits : null,
+                  icon: const Icon(Icons.save_outlined),
+                  label: Text(_isDirty ? '変更を保存' : '保存済み'),
+                ),
+              const SizedBox(height: 8),
+              _CompleteOrRevertRow(
+                isCompleted: _isCompleted,
+                onComplete: _onTapComplete,
+                onSave: widget.onSaveProgress == null ? null : _onTapSave,
+                onRevert: widget.onRevert == null ? null : _onTapRevert,
+              ),
+              _ActionButtonsRow(
+                onEdit: widget.onEdit == null ? null : () {
+                  _ticker?.cancel();
+                  Navigator.of(context).pop();
+                  widget.onEdit!();
+                },
+                onDuplicate: widget.onDuplicate == null ? null : () {
+                  _ticker?.cancel();
+                  Navigator.of(context).pop();
+                  widget.onDuplicate!();
+                },
+                onDelete: widget.onDelete == null ? null : () {
+                  _ticker?.cancel();
+                  Navigator.of(context).pop();
+                  widget.onDelete!();
                 },
               ),
             ],
-            const SizedBox(height: 12),
-            _RewardCard(
-              predictedLabel: predictedLabel,
-              expectedRewardYen: widget.expectedRewardYen,
-            ),
-            const SizedBox(height: 16),
-            _TimerAndActualRow(
-              isCompleted: _isCompleted,
-              running: running,
-              elapsedLabel: _elapsedLabel(),
-              canResetTimer: !running && (_stopwatch?.elapsed.inSeconds ?? 0) > 0,
-              onToggle: _toggleTimer,
-              onReset: _resetTimer,
-              onShowHelp: _showTimerHelp,
-              controller: _actualMinutesCtrl,
-              focusNode: _actualMinutesFocus,
-            ),
-            const SizedBox(height: 20),
-            _CompleteOrRevertRow(
-              isCompleted: _isCompleted,
-              onComplete: _onTapComplete,
-              onSave: widget.onSaveProgress == null ? null : _onTapSave,
-              onRevert: widget.onRevert == null ? null : _onTapRevert,
-            ),
-            _ActionButtonsRow(
-              onEdit: widget.onEdit == null ? null : () {
-                _ticker?.cancel();
-                Navigator.of(context).pop();
-                widget.onEdit!();
-              },
-              onDuplicate: widget.onDuplicate == null ? null : () {
-                _ticker?.cancel();
-                Navigator.of(context).pop();
-                widget.onDuplicate!();
-              },
-              onDelete: widget.onDelete == null ? null : () {
-                _ticker?.cancel();
-                Navigator.of(context).pop();
-                widget.onDelete!();
-              },
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -730,6 +858,9 @@ class _TimeChip extends StatelessWidget {
     );
   }
 }
+
+/// Key for the actual-minutes text field — used in widget tests.
+const Key kActualMinutesFieldKey = Key('actual_minutes_field');
 
 class _TimerAndActualRow extends StatelessWidget {
   const _TimerAndActualRow({
@@ -871,6 +1002,7 @@ class _TimerAndActualRow extends StatelessWidget {
                       SizedBox(
                         width: _fourDigitMinutesFieldWidth(context),
                         child: TextField(
+                          key: kActualMinutesFieldKey,
                           controller: controller,
                           focusNode: focusNode,
                           keyboardType: const TextInputType.numberWithOptions(
@@ -947,96 +1079,6 @@ class _CompleteOrRevertRow extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _QuadrantDropdown extends StatelessWidget {
-  const _QuadrantDropdown({
-    required this.currentQuadrant,
-    required this.onSelect,
-  });
-
-  final Quadrant currentQuadrant;
-  final Future<void> Function(Quadrant) onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final text = Theme.of(context).textTheme;
-    return GestureDetector(
-      onTapUp: (details) async {
-        final selected = await showMenu<Quadrant>(
-          context: context,
-          position: RelativeRect.fromLTRB(
-            details.globalPosition.dx,
-            details.globalPosition.dy,
-            details.globalPosition.dx,
-            details.globalPosition.dy,
-          ),
-          items: Quadrant.values.map((q) {
-            final isCurrent = q == currentQuadrant;
-            return PopupMenuItem<Quadrant>(
-              value: q,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: q.accentColor(scheme),
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    q.label,
-                    style: TextStyle(
-                      fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                    ),
-                  ),
-                  if (isCurrent) ...[
-                    const SizedBox(width: 4),
-                    Icon(Icons.check, size: 16, color: scheme.primary),
-                  ],
-                ],
-              ),
-            );
-          }).toList(),
-        );
-        if (selected == null || selected == currentQuadrant) return;
-        await onSelect(selected);
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: currentQuadrant.backgroundColor(scheme),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: currentQuadrant.accentColor(scheme).withValues(alpha: 0.4),
-          ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 14,
-              height: 14,
-              decoration: BoxDecoration(
-                color: currentQuadrant.accentColor(scheme),
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              '領域 ${currentQuadrant.label}',
-              style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-            ),
-            const Spacer(),
-            Icon(Icons.unfold_more, size: 18, color: scheme.onSurfaceVariant),
-          ],
-        ),
-      ),
     );
   }
 }
