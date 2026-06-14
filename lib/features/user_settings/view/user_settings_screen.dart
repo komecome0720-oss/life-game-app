@@ -21,7 +21,6 @@ class UserSettingsScreen extends ConsumerStatefulWidget {
 class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameCtrl;
-  late final TextEditingController _levelCtrl;
   late final TextEditingController _budgetCtrl;
   late final TextEditingController _daysCtrl;
   late final TextEditingController _minutesCtrl;
@@ -43,7 +42,6 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
   void initState() {
     super.initState();
     _nameCtrl = TextEditingController();
-    _levelCtrl = TextEditingController();
     _budgetCtrl = TextEditingController();
     _daysCtrl = TextEditingController();
     _minutesCtrl = TextEditingController();
@@ -55,7 +53,7 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
 
   @override
   void dispose() {
-    for (final ctrl in [_nameCtrl, _levelCtrl, _budgetCtrl, _daysCtrl, _minutesCtrl]) {
+    for (final ctrl in [_nameCtrl, _budgetCtrl, _daysCtrl, _minutesCtrl]) {
       ctrl.dispose();
     }
     super.dispose();
@@ -65,7 +63,6 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
     if (_initialized) return;
     _initialized = true;
     _nameCtrl.text = s.displayName;
-    _levelCtrl.text = s.level <= 1 ? '' : '${s.level}';
     _budgetCtrl.text = s.monthlyBudget == 0 ? '' : '${s.monthlyBudget}';
     _daysCtrl.text = s.monthlyQuestDays == 0 ? '' : '${s.monthlyQuestDays}';
     _minutesCtrl.text = s.dailyQuestMinutes == 0 ? '' : '${s.dailyQuestMinutes}';
@@ -75,7 +72,6 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
     final base = ref.read(userSettingsProvider).settings;
     return base.copyWith(
       displayName: _nameCtrl.text.trim(),
-      level: int.tryParse(_levelCtrl.text) ?? 1,
       monthlyBudget: int.tryParse(_budgetCtrl.text) ?? 0,
       monthlyQuestDays: int.tryParse(_daysCtrl.text) ?? 0,
       dailyQuestMinutes: int.tryParse(_minutesCtrl.text) ?? 0,
@@ -242,17 +238,6 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
                     label: '名前',
                     maxLength: 30,
                     validator: (v) => (v == null || v.trim().isEmpty) ? '名前を入力してください' : null,
-                  ),
-                  const SizedBox(height: 12),
-                  SettingsNumberField(
-                    controller: _levelCtrl,
-                    label: 'レベル',
-                    suffix: '',
-                    validator: (v) {
-                      final n = int.tryParse(v ?? '');
-                      if (v != null && v.isNotEmpty && (n == null || n < 1)) return '1以上';
-                      return null;
-                    },
                   ),
                   const SizedBox(height: 12),
                   _BalanceRow(

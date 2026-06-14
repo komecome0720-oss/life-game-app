@@ -67,7 +67,7 @@ class UserStatusPanel extends ConsumerWidget {
               else ...[
                 _line(Icons.badge_outlined, '名前',
                     settings.displayName.isEmpty ? '—' : settings.displayName, text),
-                _line(Icons.trending_up, 'レベル', '${settings.level}', text),
+                _levelLine(settings, text, scheme),
                 _line(Icons.savings_outlined, '所持金',
                     '¥${_fmt(settings.totalEarned)}', text),
                 _line(
@@ -90,6 +90,50 @@ class UserStatusPanel extends ConsumerWidget {
         s.level == 1 &&
         s.totalEarned == 0 &&
         s.monthlyBudget == 0;
+  }
+
+  /// レベル行＝「Lv.X 称号」＋次レベルまでの進捗バー（累計タスク数から導出）。
+  Widget _levelLine(UserSettings settings, TextTheme text, ColorScheme scheme) {
+    final p = settings.levelProgress;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.trending_up, size: 16),
+              const SizedBox(width: 6),
+              Expanded(
+                flex: 4,
+                child: Text('レベル',
+                    style: text.bodySmall,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+              ),
+              Expanded(
+                flex: 6,
+                child: Text('Lv.${p.level} ${p.title}',
+                    style:
+                        text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                    textAlign: TextAlign.right,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(value: p.fraction, minHeight: 4),
+          ),
+          const SizedBox(height: 2),
+          Text('次まであと${p.remainingToNext}',
+              style: text.labelSmall?.copyWith(color: scheme.outline)),
+        ],
+      ),
+    );
   }
 
   Widget _line(IconData icon, String label, String value, TextTheme text) {

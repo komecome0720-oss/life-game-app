@@ -13,6 +13,9 @@ import 'package:task_manager/features/health/model/health_category.dart';
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
 import 'package:task_manager/features/health/view/health_detail_screen.dart';
 import 'package:task_manager/features/health/viewmodel/health_detail_viewmodel.dart';
+import 'package:task_manager/features/roulette/model/roulette_outcome.dart';
+import 'package:task_manager/features/roulette/providers/roulette_providers.dart';
+import 'package:task_manager/features/roulette/view/roulette_settings_screen.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/models/health_scores.dart';
@@ -67,6 +70,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     // 起動時に「ダウンロード対象」のカレンダーの当該週を取り込む（idempotent）
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _autoRollImportForCurrentWeek();
+      // 累計タスク数を既存の完了タスクから一度だけバックフィル（ガード付き・冪等）。
+      ref.read(rouletteRepositoryProvider).ensureCumulativeTaskCountBackfilled();
     });
   }
 
@@ -382,6 +387,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 actualMinutes: actualMinutes,
               );
           if (!result.applied) return;
+          // お金付与が確定したあと（トランザクション外）に1回だけ抽選する。
+          // 抽選・チケット発行に失敗しても完了自体は成立しているため、握りつぶして演出だけ省く。
+          RouletteOutcome? outcome;
+          try {
+            outcome = await ref.read(rouletteServiceProvider).spin(
+                  completionId: taskId,
+                  settings: latestSettings,
+                );
+          } catch (_) {
+            outcome = null;
+          }
           if (!mounted) return;
           Navigator.of(context).push<void>(
             MaterialPageRoute<void>(
@@ -390,6 +406,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 rewardYen: reward,
                 balanceBeforeYen: result.balanceBeforeYen,
                 balanceAfterYen: result.balanceAfterYen,
+                outcome: outcome,
+                cumulativeTaskCountBefore: result.cumulativeTaskCountBefore,
+                cumulativeTaskCountAfter: result.cumulativeTaskCountAfter,
               ),
             ),
           );
@@ -1041,6 +1060,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 Navigator.of(context).push<void>(
                   MaterialPageRoute<void>(
                     builder: (_) => const AdventureLogScreen(),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.casino_outlined),
+              title: const Text('ルーレット設定'),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const RouletteSettingsScreen(),
                   ),
                 );
               },

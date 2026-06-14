@@ -10,6 +10,8 @@ class BalanceLedgerResult {
     required this.balanceAfterYen,
     this.insufficientFunds = false,
     this.missingAmount = false,
+    this.cumulativeTaskCountBefore = 0,
+    this.cumulativeTaskCountAfter = 0,
   });
 
   final bool applied;
@@ -18,6 +20,11 @@ class BalanceLedgerResult {
   final int balanceAfterYen;
   final bool insufficientFunds;
   final bool missingAmount;
+
+  /// 完了／未了戻しの前後の累計タスク達成数（レベル算出のソース）。
+  /// `completeTask` / `revertTask` のみ意味を持つ（他は 0）。
+  final int cumulativeTaskCountBefore;
+  final int cumulativeTaskCountAfter;
 }
 
 class EconomyRepository {
@@ -36,6 +43,10 @@ class EconomyRepository {
 
   int _balanceFrom(DocumentSnapshot<Map<String, dynamic>> doc) {
     return (doc.data()?['totalEarned'] as num?)?.toInt() ?? 0;
+  }
+
+  int _cumulativeFrom(DocumentSnapshot<Map<String, dynamic>> doc) {
+    return (doc.data()?['cumulativeTaskCount'] as num?)?.toInt() ?? 0;
   }
 
   Map<String, dynamic> _entryData({
@@ -132,16 +143,20 @@ class EconomyRepository {
       final taskDoc = await tx.get(taskRef);
       final userDoc = await tx.get(userRef);
       final before = _balanceFrom(userDoc);
+      final beforeCount = _cumulativeFrom(userDoc);
       if (taskDoc.data()?['isCompleted'] == true) {
         return BalanceLedgerResult(
           applied: false,
           deltaYen: 0,
           balanceBeforeYen: before,
           balanceAfterYen: before,
+          cumulativeTaskCountBefore: beforeCount,
+          cumulativeTaskCountAfter: beforeCount,
         );
       }
 
       final after = before + rewardYen;
+      final afterCount = beforeCount + 1;
       final taskData = <String, dynamic>{
         'isCompleted': true,
         'completedAtUtc': FieldValue.serverTimestamp(),
@@ -152,8 +167,11 @@ class EconomyRepository {
       if (actualMinutes != null) taskData['actualMinutes'] = actualMinutes;
 
       tx.update(taskRef, taskData);
+      // 累計タスク数も同一トランザクションで決定的にインクリメント（レベルのソース）。
+      // 抽選（乱数）はトランザクション外で行う（リトライによる再ロールを避けるため）。
       tx.set(userRef, {
         'totalEarned': after,
+        'cumulativeTaskCount': afterCount,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
       tx.set(
@@ -172,6 +190,8 @@ class EconomyRepository {
         deltaYen: rewardYen,
         balanceBeforeYen: before,
         balanceAfterYen: after,
+        cumulativeTaskCountBefore: beforeCount,
+        cumulativeTaskCountAfter: afterCount,
       );
     });
   }
@@ -189,6 +209,7 @@ class EconomyRepository {
       final taskDoc = await tx.get(taskRef);
       final userDoc = await tx.get(userRef);
       final before = _balanceFrom(userDoc);
+      final beforeCount = _cumulativeFrom(userDoc);
       final taskData = taskDoc.data() ?? {};
       if (taskData['isCompleted'] != true) {
         return BalanceLedgerResult(
@@ -196,6 +217,8 @@ class EconomyRepository {
           deltaYen: 0,
           balanceBeforeYen: before,
           balanceAfterYen: before,
+          cumulativeTaskCountBefore: beforeCount,
+          cumulativeTaskCountAfter: beforeCount,
         );
       }
       final reward = (taskData['completedRewardYen'] as num?)?.toInt();
@@ -206,11 +229,15 @@ class EconomyRepository {
           balanceBeforeYen: before,
           balanceAfterYen: before,
           missingAmount: true,
+          cumulativeTaskCountBefore: beforeCount,
+          cumulativeTaskCountAfter: beforeCount,
         );
       }
 
       final delta = -reward;
       final after = before + delta;
+      // 累計タスク数を-1（0未満にしない）。発行済みチケットは取り消さない（仕様決定）。
+      final afterCount = beforeCount > 0 ? beforeCount - 1 : 0;
       tx.update(taskRef, {
         'isCompleted': false,
         'completedAtUtc': FieldValue.delete(),
@@ -219,6 +246,7 @@ class EconomyRepository {
       });
       tx.set(userRef, {
         'totalEarned': after,
+        'cumulativeTaskCount': afterCount,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
       tx.set(
@@ -237,6 +265,8 @@ class EconomyRepository {
         deltaYen: delta,
         balanceBeforeYen: before,
         balanceAfterYen: after,
+        cumulativeTaskCountBefore: beforeCount,
+        cumulativeTaskCountAfter: afterCount,
       );
     });
   }

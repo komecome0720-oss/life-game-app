@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/wish_list/model/wish_item.dart';
 import 'package:task_manager/features/wish_list/viewmodel/wish_list_viewmodel.dart';
+import 'package:task_manager/features/roulette/widgets/reward_tickets_tab.dart';
 import 'package:task_manager/features/wish_list/widgets/add_wish_item_sheet.dart';
 import 'package:task_manager/features/wish_list/widgets/wish_item_card.dart';
 import 'package:task_manager/widgets/empty_state_view.dart';
@@ -43,7 +44,7 @@ class WishListScreen extends ConsumerWidget {
     final asyncItems = ref.watch(wishListProvider);
 
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('欲しいものリスト'),
@@ -51,13 +52,26 @@ class WishListScreen extends ConsumerWidget {
             tabs: [
               Tab(text: '未獲得'),
               Tab(text: '獲得済み'),
+              Tab(text: 'ご褒美チケット'),
             ],
           ),
         ),
-        floatingActionButton: FloatingActionButton(
-          heroTag: 'wish_list_fab',
-          onPressed: () => _showAddSheet(context),
-          child: const Icon(Icons.add),
+        // 追加(+)FABはウィッシュアイテム用なので、チケットタブでは隠す。
+        floatingActionButton: Builder(
+          builder: (context) {
+            final controller = DefaultTabController.of(context);
+            return AnimatedBuilder(
+              animation: controller,
+              builder: (context, _) {
+                if (controller.index == 2) return const SizedBox.shrink();
+                return FloatingActionButton(
+                  heroTag: 'wish_list_fab',
+                  onPressed: () => _showAddSheet(context),
+                  child: const Icon(Icons.add),
+                );
+              },
+            );
+          },
         ),
         body: MessageGuard(
           child: asyncItems.when(
@@ -70,6 +84,7 @@ class WishListScreen extends ConsumerWidget {
                 children: [
                   _ItemList(items: active, onDelete: (item) => _confirmDelete(context, ref, item)),
                   _ItemList(items: purchased, onDelete: (item) => _confirmDelete(context, ref, item)),
+                  const RewardTicketsTab(),
                 ],
               );
             },
