@@ -247,8 +247,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         required quadrant,
         required start,
         required end,
+        required predictedMinutes,
+        required actualMinutes,
       }) async {
         try {
+          // promote は1回だけ。
           final taskId = await ref
               .read(calendarSyncViewModelProvider.notifier)
               .promoteRemoteTaskIfNeeded(task);
@@ -267,10 +270,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             urgency: quadrant.urgency,
             importance: quadrant.importance,
           );
+          // Google カレンダー連携は「時刻が実際に変わった時のみ」patch（API浪費回避）。
           if (task.sourceType == TaskSourceType.googleCalendar &&
               task.externalCalendarId != null &&
               start != null &&
-              end != null) {
+              end != null &&
+              (start != task.start || end != task.end)) {
             final key = ExternalCalendarKey.tryParse(task.externalCalendarId);
             if (key != null) {
               await ref.read(googleCalendarRepositoryProvider).patchEvent(
@@ -280,6 +285,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 newEndLocal: end,
               );
             }
+          }
+          // 進捗（実績分）も同じ保存操作で永続化（完了済みは対象外）。
+          if (!task.isCompleted) {
+            await ref.read(calendarTaskSyncRepositoryProvider).saveProgress(
+              taskId: taskId,
+              predictedMinutes: predictedMinutes,
+              actualMinutes: actualMinutes,
+            );
           }
           return true;
         } catch (e) {
@@ -322,31 +335,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               context,
               const SnackBar(content: Text('一時中断しました（未了のまま保存）')),
             );
-          },
-      onSaveProgress:
-          ({required predictedMinutes, required actualMinutes}) async {
-            if (task.isCompleted) return;
-            final taskId = await ref
-                .read(calendarSyncViewModelProvider.notifier)
-                .promoteRemoteTaskIfNeeded(task);
-            if (taskId == null) {
-              if (mounted) _showErrorSnackBar('タスクの保存に失敗しました');
-              return;
-            }
-            try {
-              await ref
-                  .read(calendarTaskSyncRepositoryProvider)
-                  .saveProgress(
-                    taskId: taskId,
-                    predictedMinutes: predictedMinutes,
-                    actualMinutes: actualMinutes,
-                  );
-            } catch (e) {
-              if (mounted) _showErrorSnackBar('保存に失敗しました: $e');
-              return;
-            }
-            if (!mounted) return;
-            showAppSnackBar(context, const SnackBar(content: Text('保存しました')));
           },
       onRevert: () async {
         if (!task.isCompleted) return false;

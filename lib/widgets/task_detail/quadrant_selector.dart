@@ -70,7 +70,7 @@ class _Cell extends StatelessWidget {
         onTap: enabled ? () => onSelect(q) : null,
         borderRadius: BorderRadius.circular(8),
         child: Container(
-          constraints: const BoxConstraints(minHeight: 60),
+          constraints: const BoxConstraints(minHeight: 48),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           decoration: BoxDecoration(
             color: bg,
@@ -79,51 +79,45 @@ class _Cell extends StatelessWidget {
                 ? Border.all(color: accent, width: 2)
                 : Border.all(color: accent.withValues(alpha: 0.3), width: 1),
           ),
-          child: Stack(
+          // 数字＋説明を1行に（スペース節約）。説明は FittedBox で縮小し省略を避ける。
+          child: Row(
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 10,
-                        height: 10,
-                        decoration: BoxDecoration(
-                          color: accent,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '${q.number}',
-                        style: text.labelLarge?.copyWith(
-                          color: accent,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: accent,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '${q.number}',
+                style: text.labelLarge?.copyWith(
+                  color: accent,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
                     q.adjectives,
+                    maxLines: 1,
                     style: text.labelSmall?.copyWith(
                       color: isSelected
                           ? accent
                           : scheme.onSurfaceVariant.withValues(alpha: 0.7),
                     ),
-                    maxLines: 2,
-                    softWrap: true,
                   ),
-                ],
-              ),
-              if (isSelected)
-                Positioned(
-                  top: 0,
-                  right: 0,
-                  child: Icon(Icons.check_circle, size: 16, color: accent),
                 ),
+              ),
+              if (isSelected) ...[
+                const SizedBox(width: 4),
+                Icon(Icons.check_circle, size: 14, color: accent),
+              ],
             ],
           ),
         ),

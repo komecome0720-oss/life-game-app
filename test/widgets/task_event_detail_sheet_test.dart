@@ -26,6 +26,7 @@ Future<void> _pumpSheet(
   required int predictedMinutes,
   required int expectedRewardYen,
   required TaskCompleteCallback onComplete,
+  TaskSaveEditsCallback? onSaveEdits,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -38,6 +39,7 @@ Future<void> _pumpSheet(
               predictedMinutes: predictedMinutes,
               expectedRewardYen: expectedRewardYen,
               onComplete: onComplete,
+              onSaveEdits: onSaveEdits,
             ),
             child: const Text('OPEN'),
           ),
@@ -176,6 +178,69 @@ void main() {
 
       expect(capturedActual, isNull);
       expect(capturedPredicted, 60);
+    });
+
+    testWidgets('保存ボタンで onSaveEdits が呼ばれ、成功でシートが閉じる', (tester) async {
+      int callCount = 0;
+      int? savedActual;
+      await _pumpSheet(
+        tester,
+        task: _sampleTask(),
+        predictedMinutes: 60,
+        expectedRewardYen: 1500,
+        onComplete: ({required predictedMinutes, required actualMinutes}) async {},
+        onSaveEdits: ({
+          required title,
+          required quadrant,
+          required start,
+          required end,
+          required predictedMinutes,
+          required actualMinutes,
+        }) async {
+          callCount++;
+          savedActual = actualMinutes;
+          return true;
+        },
+      );
+
+      // 実績分を入力して保存
+      await tester.enterText(find.byKey(_actualKey), '42');
+      await tester.pump();
+      await tester.ensureVisible(find.text('保存'));
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+
+      // onSaveEdits は1回だけ・実績分が渡る・シートは閉じる（保存ボタンが消える）
+      expect(callCount, 1);
+      expect(savedActual, 42);
+      expect(find.text('保存'), findsNothing);
+    });
+
+    testWidgets('保存に失敗するとシートは閉じない', (tester) async {
+      await _pumpSheet(
+        tester,
+        task: _sampleTask(),
+        predictedMinutes: 60,
+        expectedRewardYen: 1500,
+        onComplete: ({required predictedMinutes, required actualMinutes}) async {},
+        onSaveEdits: ({
+          required title,
+          required quadrant,
+          required start,
+          required end,
+          required predictedMinutes,
+          required actualMinutes,
+        }) async {
+          return false; // 保存失敗
+        },
+      );
+
+      await tester.ensureVisible(find.text('保存'));
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+
+      // 失敗時はシートが開いたまま（保存ボタンが残る）
+      expect(find.text('保存'), findsOneWidget);
     });
   });
 }

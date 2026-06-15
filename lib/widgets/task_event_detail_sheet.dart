@@ -28,13 +28,6 @@ typedef TaskPauseAndSaveCallback =
       required int actualMinutes,
     });
 
-/// 「保存」ボタン押下時に、ステータスは変えずに現状の進捗（実績時間など）だけを保存するコールバック。
-typedef TaskSaveProgressCallback =
-    Future<void> Function({
-      required int predictedMinutes,
-      required int actualMinutes,
-    });
-
 /// 開始・終了時刻が変更されたときに呼ばれるコールバック。
 /// 戻り値 true で成功扱いとし、シート側の表示を更新する。
 typedef TaskTimesChangedCallback =
@@ -43,7 +36,7 @@ typedef TaskTimesChangedCallback =
       required DateTime newEnd,
     });
 
-/// タイトル・象限・時刻を一括保存するコールバック。
+/// タイトル・象限・時刻＋進捗（実績分）を一括保存するコールバック。
 /// 戻り値 true で保存成功、false でエラー（シートは閉じない）。
 typedef TaskSaveEditsCallback =
     Future<bool> Function({
@@ -51,6 +44,8 @@ typedef TaskSaveEditsCallback =
       required Quadrant quadrant,
       required DateTime? start,
       required DateTime? end,
+      required int predictedMinutes,
+      required int actualMinutes,
     });
 
 /// 予定タップ時のボトムシート: 見込時間・報酬・タイマー・実績入力・完了 + 編集/複製/削除
@@ -60,7 +55,6 @@ typedef TaskSaveEditsCallback =
 /// [onSaveEdits] はタイトル・象限・開始/終了時刻を一括保存するコールバック。
 /// [onTimerStart] はタイマー開始時に呼ばれる。
 /// [onPauseAndSave] はタイマー一時停止時に呼ばれる（未了のまま進捗保存）。
-/// [onSaveProgress] は「保存」ボタン押下時に呼ばれる（進捗のみ保存）。
 /// [onRevert] は task.isCompleted=true のとき「未了に戻す」ボタンから呼ばれる。
 Future<void> showTaskEventDetailSheet({
   required BuildContext context,
@@ -72,7 +66,6 @@ Future<void> showTaskEventDetailSheet({
   TaskSaveEditsCallback? onSaveEdits,
   Future<void> Function()? onTimerStart,
   TaskPauseAndSaveCallback? onPauseAndSave,
-  TaskSaveProgressCallback? onSaveProgress,
   Future<bool> Function()? onRevert,
   VoidCallback? onEdit,
   VoidCallback? onDuplicate,
@@ -93,7 +86,6 @@ Future<void> showTaskEventDetailSheet({
         onSaveEdits: onSaveEdits,
         onTimerStart: onTimerStart,
         onPauseAndSave: onPauseAndSave,
-        onSaveProgress: onSaveProgress,
         onRevert: onRevert,
         onEdit: onEdit,
         onDuplicate: onDuplicate,
@@ -128,7 +120,6 @@ class _TaskEventDetailBody extends StatefulWidget {
     this.onSaveEdits,
     this.onTimerStart,
     this.onPauseAndSave,
-    this.onSaveProgress,
     this.onRevert,
     this.onEdit,
     this.onDuplicate,
@@ -143,7 +134,6 @@ class _TaskEventDetailBody extends StatefulWidget {
   final TaskSaveEditsCallback? onSaveEdits;
   final Future<void> Function()? onTimerStart;
   final TaskPauseAndSaveCallback? onPauseAndSave;
-  final TaskSaveProgressCallback? onSaveProgress;
   final Future<bool> Function()? onRevert;
   final VoidCallback? onEdit;
   final VoidCallback? onDuplicate;
@@ -445,26 +435,31 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
     });
   }
 
-  /// 「変更を保存」ボタン：タイトル・象限・開始/終了を一括保存。
-  Future<void> _onTapSaveEdits() async {
+  /// 編集内容（タイトル・象限・時刻）＋進捗（実績分）を一括保存する中核処理。
+  /// pop も SnackBar も行わず、成功/失敗のみ返す（呼び出し側で出し分け）。
+  Future<bool> _persistEdits() async {
     final cb = widget.onSaveEdits;
-    if (cb == null) return;
-    final title = _titleCtrl.text.trim();
-    if (title.isEmpty) return;
+    if (cb == null) return true;
+    final title =
+        _titleCtrl.text.trim().isEmpty ? widget.task.title : _titleCtrl.text.trim();
+    // 走行中なら停止して経過分を実績フィールドへ転記。
+    if (_stopwatch?.isRunning ?? false) {
+      _stopwatch!.stop();
+      _ticker?.cancel();
+      _ticker = null;
+      _writeElapsedToField();
+    }
+    final actual = int.tryParse(_actualMinutesCtrl.text.trim()) ?? 0;
     setState(() => _isSavingEdits = true);
     try {
-      final ok = await cb(
+      return await cb(
         title: title,
         quadrant: _currentQuadrant,
         start: _currentStart,
         end: _currentEnd,
+        predictedMinutes: _livePredictedMinutes,
+        actualMinutes: actual,
       );
-      if (!mounted) return;
-      if (ok) {
-        showAppSnackBar(context, const SnackBar(content: Text('保存しました')));
-      } else {
-        showAppSnackBar(context, const SnackBar(content: Text('保存に失敗しました')));
-      }
     } finally {
       if (mounted) setState(() => _isSavingEdits = false);
     }
@@ -494,7 +489,12 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
       ),
     );
     if (result == 'save') {
-      await _onTapSaveEdits();
+      final ok = await _persistEdits();
+      if (!mounted) return false;
+      if (!ok) {
+        showAppSnackBar(context, const SnackBar(content: Text('保存に失敗しました')));
+        return false; // 失敗時はシートを開いたまま
+      }
       return true;
     }
     return result == 'discard';
@@ -520,33 +520,19 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
     }
   }
 
-  /// 「保存」ボタン：ステータスは変えずに、現状の進捗（実績時間など）だけを
-  /// コレクションへ保存する。保存後はシートを閉じてホーム画面に戻り、
-  /// 呼び出し側でスナックバーを表示する想定。
+  /// 「保存」ボタン：編集内容（タイトル・象限・時刻）＋進捗（実績分）を一括保存し、
+  /// 成功時のみシートを閉じる。失敗時はシートを開いたまま再操作できる。
   Future<void> _onTapSave() async {
-    final cb = widget.onSaveProgress;
-    if (cb == null) return;
-
-    // 走行中なら停止して現時点の経過分をフィールドへ反映（保存して帰るため）。
-    if (_stopwatch?.isRunning ?? false) {
-      _stopwatch!.stop();
-      _ticker?.cancel();
-      _ticker = null;
-      _writeElapsedToField();
-    }
-
-    final actual = int.tryParse(_actualMinutesCtrl.text.trim()) ?? 0;
-    _ticker?.cancel();
+    if (widget.onSaveEdits == null) return;
+    final ok = await _persistEdits();
     if (!mounted) return;
-    Navigator.of(context).pop();
-    try {
-      await cb(
-        predictedMinutes: _livePredictedMinutes,
-        actualMinutes: actual,
-      );
-    } catch (_) {
-      /* 呼び出し側でメッセージ表示 */
+    if (!ok) {
+      showAppSnackBar(context, const SnackBar(content: Text('保存に失敗しました')));
+      return;
     }
+    showAppSnackBar(context, const SnackBar(content: Text('保存しました')));
+    _ticker?.cancel();
+    Navigator.of(context).pop();
   }
 
   Future<void> _onTapComplete() async {
@@ -703,18 +689,12 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
                 focusNode: _actualMinutesFocus,
               ),
               const SizedBox(height: 16),
-              // 変更を保存ボタン（dirty時のみ活性）
-              if (widget.onSaveEdits != null)
-                FilledButton.tonalIcon(
-                  onPressed: (_isDirty && !_isSavingEdits) ? _onTapSaveEdits : null,
-                  icon: const Icon(Icons.save_outlined),
-                  label: Text(_isDirty ? '変更を保存' : '保存済み'),
-                ),
-              const SizedBox(height: 8),
               _CompleteOrRevertRow(
                 isCompleted: _isCompleted,
                 onComplete: _onTapComplete,
-                onSave: widget.onSaveProgress == null ? null : _onTapSave,
+                onSave: (widget.onSaveEdits == null || _isSavingEdits)
+                    ? null
+                    : _onTapSave,
                 onRevert: widget.onRevert == null ? null : _onTapRevert,
               ),
               _ActionButtonsRow(

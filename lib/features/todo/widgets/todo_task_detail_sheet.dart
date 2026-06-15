@@ -621,30 +621,49 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
                         SizedBox(
                           height: 48,
                           child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
-                              FilledButton.tonalIcon(
-                                onPressed: _toggleTimer,
-                                icon: Icon(
-                                  running ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                                ),
-                                label: Text(running ? '一時停止' : 'スタート'),
-                              ),
-                              const SizedBox(width: AppSpacing.sm),
-                              Text(
-                                _elapsedLabel(),
-                                style: text.titleMedium?.copyWith(
-                                  fontFeatures: const [FontFeature.tabularFigures()],
-                                ),
-                              ),
-                              const SizedBox(width: AppSpacing.xs),
-                              IconButton(
-                                onPressed: canReset ? _resetTimer : null,
-                                icon: const Icon(Icons.refresh_rounded),
-                                tooltip: 'リセット',
-                                visualDensity: VisualDensity.compact,
-                                style: IconButton.styleFrom(
-                                  shape: const CircleBorder(),
-                                  side: BorderSide(color: scheme.outlineVariant),
+                              // 横幅に収めるため FittedBox で縮小（①と同じ崩れ防止）。
+                              Flexible(
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: Alignment.centerLeft,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      FilledButton.tonalIcon(
+                                        onPressed: _toggleTimer,
+                                        icon: Icon(
+                                          running
+                                              ? Icons.pause_rounded
+                                              : Icons.play_arrow_rounded,
+                                        ),
+                                        label: Text(running ? '一時停止' : 'スタート'),
+                                      ),
+                                      const SizedBox(width: AppSpacing.sm),
+                                      Text(
+                                        _elapsedLabel(),
+                                        style: text.titleMedium?.copyWith(
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(width: AppSpacing.xs),
+                                      IconButton(
+                                        onPressed: canReset ? _resetTimer : null,
+                                        icon: const Icon(Icons.refresh_rounded),
+                                        tooltip: 'リセット',
+                                        visualDensity: VisualDensity.compact,
+                                        style: IconButton.styleFrom(
+                                          shape: const CircleBorder(),
+                                          side: BorderSide(
+                                            color: scheme.outlineVariant,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ],
