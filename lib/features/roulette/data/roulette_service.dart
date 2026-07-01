@@ -11,7 +11,7 @@ import 'package:task_manager/features/user_settings/model/user_settings.dart';
 /// [RouletteRepository.issueTicket] を決定的IDで冪等に発行する。小は即時許可（バンクしない）。
 class RouletteService {
   RouletteService(this._repo, {math.Random? random})
-      : _random = random ?? math.Random();
+    : _random = random ?? math.Random();
 
   final RouletteRepository _repo;
   final math.Random _random;
@@ -24,6 +24,7 @@ class RouletteService {
     final invalid = RewardConfig.validateRouletteInput(
       weeklyTaskCount: settings.weeklyTaskCount,
       weeklyJackpotCount: settings.weeklyJackpotCount,
+      weeklyChuCount: settings.weeklyChuCount,
     );
     if (invalid != null) {
       return const RouletteOutcome.invalidConfig();
@@ -32,6 +33,7 @@ class RouletteService {
     final probs = RewardConfig.probabilitiesFor(
       weeklyTaskCount: settings.weeklyTaskCount,
       weeklyJackpotCount: settings.weeklyJackpotCount,
+      weeklyChuCount: settings.weeklyChuCount,
     );
     final drawn = RewardConfig.categoryForRoll(_random.nextDouble(), probs);
 

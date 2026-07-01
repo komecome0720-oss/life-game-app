@@ -270,22 +270,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             urgency: quadrant.urgency,
             importance: quadrant.importance,
           );
-          // Google カレンダー連携は「時刻が実際に変わった時のみ」patch（API浪費回避）。
-          if (task.sourceType == TaskSourceType.googleCalendar &&
-              task.externalCalendarId != null &&
-              start != null &&
-              end != null &&
-              (start != task.start || end != task.end)) {
-            final key = ExternalCalendarKey.tryParse(task.externalCalendarId);
-            if (key != null) {
-              await ref.read(googleCalendarRepositoryProvider).patchEvent(
-                calendarId: key.calendarId,
-                eventId: key.eventId,
-                newStartLocal: start,
-                newEndLocal: end,
-              );
-            }
-          }
+          // 読み取り専用方針のため Google カレンダーへは書き戻さない（ローカルのみ更新）。
           // 進捗（実績分）も同じ保存操作で永続化（完了済みは対象外）。
           if (!task.isCompleted) {
             await ref.read(calendarTaskSyncRepositoryProvider).saveProgress(
@@ -474,19 +459,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   // ── 空スロットタップでの予定追加 ───────────────────────────────
 
   Future<void> _handleEmptyTap(DateTime initialStart) async {
-    final result = await showModalBottomSheet<(String, int)>(
+    final result = await showModalBottomSheet<QuickCreateResult>(
       context: context,
       isScrollControlled: true,
       builder: (ctx) => QuickCreateSheet(initialStart: initialStart),
     );
     if (result == null || !mounted) return;
-    final (title, durationMin) = result;
-    final end = initialStart.add(Duration(minutes: durationMin));
+    final (:title, :durationMinutes, :quadrant) = result;
+    final end = initialStart.add(Duration(minutes: durationMinutes));
     final vm = ref.read(calendarSyncViewModelProvider.notifier);
     final success = await vm.createTask(
       title: title,
       start: initialStart,
       end: end,
+      urgency: quadrant.urgency,
+      importance: quadrant.importance,
     );
     if (!mounted) return;
     if (success) {

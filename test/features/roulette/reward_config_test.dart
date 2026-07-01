@@ -7,34 +7,69 @@ void main() {
   group('配分比率', () {
     test('大以外の3区分の比率は合計1.0', () {
       expect(
-        RewardConfig.hazureRatio + RewardConfig.chuRatio + RewardConfig.shoRatio,
+        RewardConfig.hazureRatio +
+            RewardConfig.chuRatio +
+            RewardConfig.shoRatio,
         closeTo(1.0, 1e-12),
       );
     });
   });
 
   group('probabilitiesFor', () {
-    test('P(大)=J/W、remaining を 15/30/55 に配分し合計1.0（仕様2.3の例）', () {
+    test('P(大)=J/W、P(中)=C/W、残りを小/ハズレへ配分し合計1.0', () {
       final p = RewardConfig.probabilitiesFor(
         weeklyTaskCount: 56,
         weeklyJackpotCount: 1.5,
+        weeklyChuCount: 16.35,
       );
       expect(p.jackpot, closeTo(1.5 / 56, 1e-12));
-      final remaining = 1 - 1.5 / 56;
-      expect(p.miss, closeTo(remaining * 0.15, 1e-12));
-      expect(p.chu, closeTo(remaining * 0.30, 1e-12));
-      expect(p.sho, closeTo(remaining * 0.55, 1e-12));
+      expect(p.chu, closeTo(16.35 / 56, 1e-12));
+      final remaining = 1 - p.jackpot - p.chu;
+      expect(
+        p.miss,
+        closeTo(
+          remaining *
+              (RewardConfig.hazureRatio /
+                  (RewardConfig.hazureRatio + RewardConfig.shoRatio)),
+          1e-12,
+        ),
+      );
+      expect(
+        p.sho,
+        closeTo(
+          remaining *
+              (RewardConfig.shoRatio /
+                  (RewardConfig.hazureRatio + RewardConfig.shoRatio)),
+          1e-12,
+        ),
+      );
       expect(p.total, closeTo(1.0, 1e-12));
       expect(p.jackpotClamped, isFalse);
+      expect(p.chuClamped, isFalse);
     });
 
     test('JACKPOT_CAP を超える J/W はクランプされ clamped=true', () {
       final p = RewardConfig.probabilitiesFor(
         weeklyTaskCount: 10,
         weeklyJackpotCount: 5, // raw=0.5 > 0.10
+        weeklyChuCount: 1,
       );
       expect(p.jackpot, RewardConfig.jackpotCap);
       expect(p.jackpotClamped, isTrue);
+      expect(p.total, closeTo(1.0, 1e-12));
+    });
+
+    test('中当たりが残り確率を超えるとクランプされる', () {
+      final p = RewardConfig.probabilitiesFor(
+        weeklyTaskCount: 10,
+        weeklyJackpotCount: 1,
+        weeklyChuCount: 20,
+      );
+      expect(p.jackpot, 0.10);
+      expect(p.chu, 0.90);
+      expect(p.sho, 0.0);
+      expect(p.miss, 0.0);
+      expect(p.chuClamped, isTrue);
       expect(p.total, closeTo(1.0, 1e-12));
     });
 
@@ -42,6 +77,7 @@ void main() {
       final p = RewardConfig.probabilitiesFor(
         weeklyTaskCount: 30,
         weeklyJackpotCount: 0,
+        weeklyChuCount: 6,
       );
       expect(p.jackpot, 0.0);
       expect(p.total, closeTo(1.0, 1e-12));
@@ -52,6 +88,7 @@ void main() {
         () => RewardConfig.probabilitiesFor(
           weeklyTaskCount: 0,
           weeklyJackpotCount: 1,
+          weeklyChuCount: 0,
         ),
         throwsArgumentError,
       );
@@ -59,6 +96,7 @@ void main() {
         () => RewardConfig.probabilitiesFor(
           weeklyTaskCount: -3,
           weeklyJackpotCount: 1,
+          weeklyChuCount: 0,
         ),
         throwsArgumentError,
       );
@@ -71,6 +109,7 @@ void main() {
         RewardConfig.validateRouletteInput(
           weeklyTaskCount: 56,
           weeklyJackpotCount: 1.5,
+          weeklyChuCount: 16.35,
         ),
         isNull,
       );
@@ -81,6 +120,7 @@ void main() {
         RewardConfig.validateRouletteInput(
           weeklyTaskCount: 0,
           weeklyJackpotCount: 1,
+          weeklyChuCount: 0,
         ),
         isNotNull,
       );
@@ -91,6 +131,18 @@ void main() {
         RewardConfig.validateRouletteInput(
           weeklyTaskCount: 56,
           weeklyJackpotCount: -1,
+          weeklyChuCount: 0,
+        ),
+        isNotNull,
+      );
+    });
+
+    test('C<0 はエラー文言', () {
+      expect(
+        RewardConfig.validateRouletteInput(
+          weeklyTaskCount: 56,
+          weeklyJackpotCount: 1,
+          weeklyChuCount: -1,
         ),
         isNotNull,
       );
@@ -101,6 +153,7 @@ void main() {
     final p = RewardConfig.probabilitiesFor(
       weeklyTaskCount: 56,
       weeklyJackpotCount: 1.5,
+      weeklyChuCount: 16.35,
     );
 
     test('累積境界で大→中→小→ハズレに割り当てる', () {
@@ -124,7 +177,7 @@ void main() {
       expect(RewardConfig.categoryForRoll(0.999999, p), RouletteCategory.miss);
     });
 
-    test('多数サンプルで分布が P(大)=J/W と 15/30/55 に収束する（仕様§5）', () {
+    test('多数サンプルで分布が設定確率に収束する（仕様§5）', () {
       final rng = math.Random(20260613);
       const n = 200000;
       final counts = <RouletteCategory, int>{
@@ -229,6 +282,7 @@ void main() {
       final p = RewardConfig.probabilitiesFor(
         weeklyTaskCount: 56,
         weeklyJackpotCount: 1.5,
+        weeklyChuCount: 16.35,
       );
       final cells = RewardConfig.boardCells(p);
       expect(cells.length, RewardConfig.boardCellCount);
@@ -245,12 +299,36 @@ void main() {
       expect(total, closeTo(1.0, 1e-12));
 
       // 中の各マス = P(中)/2、小の各マス = P(小)/3
-      for (final cell in cells.where((c) => c.category == RouletteCategory.chu)) {
+      for (final cell in cells.where(
+        (c) => c.category == RouletteCategory.chu,
+      )) {
         expect(cell.sweepFraction, closeTo(p.chu / 2, 1e-12));
       }
-      for (final cell in cells.where((c) => c.category == RouletteCategory.sho)) {
+      for (final cell in cells.where(
+        (c) => c.category == RouletteCategory.sho,
+      )) {
         expect(cell.sweepFraction, closeTo(p.sho / 3, 1e-12));
       }
+    });
+  });
+
+  group('legacyWeeklyChuCountFor', () {
+    test('旧ロジックの中当たり率を維持する値を逆算できる', () {
+      final count = RewardConfig.legacyWeeklyChuCountFor(
+        weeklyTaskCount: 56,
+        weeklyJackpotCount: 1.5,
+      );
+      expect(count, closeTo(16.35, 1e-12));
+    });
+
+    test('不正なWは初期値へフォールバックする', () {
+      expect(
+        RewardConfig.legacyWeeklyChuCountFor(
+          weeklyTaskCount: 0,
+          weeklyJackpotCount: 1.5,
+        ),
+        RewardConfig.defaultWeeklyChuCount,
+      );
     });
   });
 

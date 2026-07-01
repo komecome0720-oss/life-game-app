@@ -209,7 +209,9 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
         builder: (ctx) => AlertDialog(
           title: const Text('時間ログなしで完了しますか？'),
           content: Text(
-            '時間実績がありません。\n完了すると ¥$reward が付与されカレンダーに記録されます。',
+            '「実際にかかった時間」の入力がありません。'
+            '入力すると予測精度の計測ができます。\n'
+            '完了すると ¥$reward が付与されカレンダーに記録されます。',
           ),
           actions: [
             TextButton(

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -41,8 +42,9 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
   late final AnimationController _spinCtrl;
   late final Animation<double> _spin;
   late final List<RouletteCell> _cells;
+  Timer? _spinStartTimer;
   double _targetRotation = 0;
-  bool _revealed = false;
+  _RoulettePhase _phase = _RoulettePhase.waiting;
 
   bool get _hasBoard => widget.outcome?.probabilities != null;
 
@@ -51,7 +53,7 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
     super.initState();
     _spinCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1100),
+      duration: const Duration(seconds: 4),
     );
     _spin = CurvedAnimation(parent: _spinCtrl, curve: Curves.easeOutCubic);
 
@@ -62,16 +64,16 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
         widget.outcome!.landedCategory ?? RouletteCategory.miss,
       );
       _spinCtrl.addStatusListener((status) {
-        if (status == AnimationStatus.completed && mounted) {
-          setState(() => _revealed = true);
+        if (status == AnimationStatus.completed &&
+            mounted &&
+            _phase == _RoulettePhase.spinning) {
+          setState(() => _phase = _RoulettePhase.revealed);
         }
       });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _spinCtrl.forward();
-      });
+      _spinStartTimer = Timer(const Duration(milliseconds: 700), _beginSpin);
     } else {
       _cells = const [];
-      _revealed = true;
+      _phase = _RoulettePhase.revealed;
     }
   }
 
@@ -92,14 +94,21 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
   }
 
   void _skip() {
-    if (_revealed) return;
+    if (_phase != _RoulettePhase.spinning) return;
     _spinCtrl.stop();
     _spinCtrl.value = 1.0;
-    setState(() => _revealed = true);
+    setState(() => _phase = _RoulettePhase.revealed);
+  }
+
+  void _beginSpin() {
+    if (!mounted || _phase != _RoulettePhase.waiting) return;
+    setState(() => _phase = _RoulettePhase.spinning);
+    _spinCtrl.forward(from: 0);
   }
 
   @override
   void dispose() {
+    _spinStartTimer?.cancel();
     _spinCtrl.dispose();
     super.dispose();
   }
@@ -174,11 +183,12 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
   }
 
   Widget _buildRoulette(TextTheme text) {
+    final isSpinning = _phase == _RoulettePhase.spinning;
     return Column(
       children: [
         const SizedBox(height: 8),
         GestureDetector(
-          onTap: _skip,
+          onTap: isSpinning ? _skip : null,
           child: AnimatedBuilder(
             animation: _spin,
             builder: (context, _) => RouletteBoard(
@@ -191,13 +201,33 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
         const SizedBox(height: 8),
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 250),
-          child: _revealed
-              ? _buildResultMessage(text)
-              : Text(
-                  'タップでスキップ',
-                  key: const ValueKey('spinning'),
-                  style: text.bodySmall,
-                ),
+          child: switch (_phase) {
+            _RoulettePhase.waiting => Text(
+                'ご褒美ルーレットを抽選します',
+                key: const ValueKey('waiting'),
+                textAlign: TextAlign.center,
+                style: text.bodySmall,
+              ),
+            _RoulettePhase.spinning => Column(
+                key: const ValueKey('spinning'),
+                children: [
+                  Text(
+                    '抽選中...',
+                    textAlign: TextAlign.center,
+                    style: text.bodySmall,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'タップでスキップ',
+                    textAlign: TextAlign.center,
+                    style: text.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
+                  ),
+                ],
+              ),
+            _RoulettePhase.revealed => _buildResultMessage(text),
+          },
         ),
         const SizedBox(height: 8),
         Text(
@@ -231,8 +261,9 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
         }
         break;
       case RouletteOutcomeKind.nearMiss:
-        title = 'もう少し！';
-        subtitle = 'お金はしっかり獲得しています';
+        title = 'ハズレ';
+        subtitle =
+            '今回はご褒美なし。¥${_formatYen(widget.rewardYen)}は獲得済みです';
         color = scheme.onSurfaceVariant;
         break;
       case RouletteOutcomeKind.needsSetup:
@@ -339,3 +370,5 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
     return '￥${fullWidth(before)}→${fullWidth(after)}';
   }
 }
+
+enum _RoulettePhase { waiting, spinning, revealed }

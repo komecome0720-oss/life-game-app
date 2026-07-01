@@ -21,10 +21,10 @@ class RouletteBoard extends StatelessWidget {
 
   static Color colorFor(RouletteCategory category, ColorScheme scheme) {
     return switch (category) {
-      RouletteCategory.jackpot => const Color(0xFFFFB300), // gold（特別感）
-      RouletteCategory.chu => scheme.primary,
-      RouletteCategory.sho => scheme.tertiary,
-      RouletteCategory.miss => scheme.surfaceContainerHighest,
+      RouletteCategory.jackpot => const Color(0xFFE53935), // red
+      RouletteCategory.chu => const Color(0xFFFFC107), // yellow
+      RouletteCategory.sho => const Color(0xFF1E88E5), // blue
+      RouletteCategory.miss => const Color(0xFFA7B0BC),
     };
   }
 
@@ -59,7 +59,7 @@ class _BoardPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = math.min(size.width, size.height) / 2 - 6;
+    final radius = math.min(size.width, size.height) / 2 - 14;
     final rect = Rect.fromCircle(center: center, radius: radius);
 
     // 12時方向を起点に時計回りで描画。盤面全体を rotation で回す。
@@ -76,11 +76,22 @@ class _BoardPainter extends CustomPainter {
       ..strokeWidth = 2;
     for (final cell in cells) {
       final sweep = cell.sweepFraction * 2 * math.pi;
+      final fillColor = RouletteBoard.colorFor(cell.category, scheme);
       final paint = Paint()
-        ..color = RouletteBoard.colorFor(cell.category, scheme)
+        ..color = fillColor
         ..style = PaintingStyle.fill;
       canvas.drawArc(rect, topOffset + start, sweep, true, paint);
       canvas.drawArc(rect, topOffset + start, sweep, true, divider);
+
+      _drawCellLabel(
+        canvas,
+        center: center,
+        radius: radius,
+        angle: topOffset + start + sweep / 2,
+        label: _boardLabelFor(cell.category),
+        fillColor: fillColor,
+        size: size,
+      );
       start += sweep;
     }
 
@@ -93,6 +104,8 @@ class _BoardPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 3,
     );
+
+    _drawOuterLights(canvas, center: center, radius: radius, size: size);
     canvas.restore();
 
     // 中央ハブ（回さない）
@@ -117,6 +130,94 @@ class _BoardPainter extends CustomPainter {
       ..lineTo(center.dx, center.dy - radius + 12)
       ..close();
     canvas.drawPath(pointer, Paint()..color = scheme.onSurface);
+  }
+
+  void _drawOuterLights(
+    Canvas canvas, {
+    required Offset center,
+    required double radius,
+    required Size size,
+  }) {
+    final lightRadius = math.max(2.0, size.shortestSide * 0.012);
+    final orbit = radius + 5;
+    final lightPaint = Paint()..style = PaintingStyle.fill;
+    const count = 14;
+    for (var i = 0; i < count; i++) {
+      final angle = -math.pi / 2 + (2 * math.pi * i / count);
+      final isBright = i.isEven;
+      final x = center.dx + math.cos(angle) * orbit;
+      final y = center.dy + math.sin(angle) * orbit;
+      lightPaint.color = isBright
+          ? const Color(0xFFFFF1A8)
+          : const Color(0xFFFFD36A).withValues(alpha: 0.72);
+      canvas.drawCircle(Offset(x, y), lightRadius, lightPaint);
+    }
+  }
+
+  void _drawCellLabel(
+    Canvas canvas, {
+    required Offset center,
+    required double radius,
+    required double angle,
+    required String label,
+    required Color fillColor,
+    required Size size,
+  }) {
+    final textColor = ThemeData.estimateBrightnessForColor(fillColor) ==
+            Brightness.light
+        ? Colors.black87
+        : Colors.white;
+    final chars = label.runes.map(String.fromCharCode).toList();
+    final baseFontSize = math.max(11.0, size.shortestSide * 0.072);
+    final radialStep = baseFontSize * 1.15;
+    final maxSpan = radius * 0.48;
+    final span = math.max(0, chars.length - 1) * radialStep;
+    final scale = span <= maxSpan || span == 0 ? 1.0 : maxSpan / span;
+    final fontSize = baseFontSize * scale;
+    final glyphStep = fontSize * 1.15;
+    final anchorRadius = radius * 0.54;
+    final startRadius = anchorRadius - (chars.length - 1) * glyphStep / 2;
+    final radialDx = math.cos(angle);
+    final radialDy = math.sin(angle);
+
+    for (var i = 0; i < chars.length; i++) {
+      final charPainter = TextPainter(
+        text: TextSpan(
+          text: chars[i],
+          style: TextStyle(
+            color: textColor,
+            fontSize: fontSize,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0,
+            shadows: const [
+              Shadow(
+                color: Color(0x80000000),
+                blurRadius: 2,
+                offset: Offset(0, 1),
+              ),
+            ],
+          ),
+        ),
+        textAlign: TextAlign.center,
+        textDirection: TextDirection.ltr,
+      )..layout();
+
+      final offsetAlongRadius = startRadius + glyphStep * i;
+      final position = Offset(
+        center.dx + radialDx * offsetAlongRadius - charPainter.width / 2,
+        center.dy + radialDy * offsetAlongRadius - charPainter.height / 2,
+      );
+      charPainter.paint(canvas, position);
+    }
+  }
+
+  String _boardLabelFor(RouletteCategory category) {
+    return switch (category) {
+      RouletteCategory.jackpot => '大',
+      RouletteCategory.chu => '中',
+      RouletteCategory.sho => '小',
+      RouletteCategory.miss => 'ハズレ',
+    };
   }
 
   @override

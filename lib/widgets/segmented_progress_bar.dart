@@ -42,44 +42,35 @@ class SegmentedProgressBar extends StatelessWidget {
   }
 }
 
-/// 合計行用: 最大 [maxTotal] を [segments] 分割して塗りつぶし
+/// 合計行用: 最大 [maxTotal] に対する達成度を無段階（連続）バーで表示
 class TotalSegmentedProgressBar extends StatelessWidget {
   const TotalSegmentedProgressBar({
     super.key,
     required this.totalScore,
     this.maxTotal = 100,
-    this.segments = 10,
     this.height = 8,
   });
 
   final int totalScore;
   final int maxTotal;
-  final int segments;
   final double height;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final clamped = totalScore.clamp(0, maxTotal);
-    final filled = (clamped / maxTotal * segments).floor();
-    final safeFilled = filled.clamp(0, segments);
+    final raw = maxTotal == 0 ? 0.0 : clamped / maxTotal;
+    // 0点は空、1点以上は最低4%の下駄を履かせて視認できるようにする
+    final factor = raw == 0 ? 0.0 : raw.clamp(0.04, 1.0);
 
-    return Row(
-      children: List.generate(segments, (i) {
-        final active = i < safeFilled;
-        return Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 1),
-            child: Container(
-              height: height,
-              decoration: BoxDecoration(
-                color: active ? scheme.tertiary : scheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-        );
-      }),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: LinearProgressIndicator(
+        value: factor,
+        minHeight: height,
+        backgroundColor: scheme.surfaceContainerHighest,
+        color: scheme.tertiary,
+      ),
     );
   }
 }

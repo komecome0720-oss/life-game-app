@@ -22,18 +22,22 @@ class UserStatusPanel extends ConsumerWidget {
         onTap: isFirstLoad
             ? null
             : () => Navigator.of(context).push<void>(
-                  MaterialPageRoute<void>(
-                      builder: (_) => const UserSettingsScreen()),
+                MaterialPageRoute<void>(
+                  builder: (_) => const UserSettingsScreen(),
                 ),
+              ),
         child: Padding(
           padding: const EdgeInsets.all(10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('ステータス',
-                  style: text.labelMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.primary)),
+              Text(
+                'ステータス',
+                style: text.labelMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
               const SizedBox(height: 6),
               if (isFirstLoad)
                 ...List.generate(
@@ -65,18 +69,27 @@ class UserStatusPanel extends ConsumerWidget {
                   ),
                 )
               else ...[
-                _line(Icons.badge_outlined, '名前',
-                    settings.displayName.isEmpty ? '—' : settings.displayName, text),
-                _levelLine(settings, text, scheme),
-                _line(Icons.savings_outlined, '所持金',
-                    '¥${_fmt(settings.totalEarned)}', text),
                 _line(
-                    Icons.schedule,
-                    '時間単価',
-                    settings.hourlyRate > 0
-                        ? '¥${_fmt(settings.hourlyRate.round())}/h'
-                        : '—',
-                    text),
+                  Icons.badge_outlined,
+                  '名前',
+                  settings.displayName.isEmpty ? '—' : settings.displayName,
+                  text,
+                ),
+                UserStatusLevelLine(settings: settings),
+                _line(
+                  Icons.savings_outlined,
+                  '所持金',
+                  '¥${_fmt(settings.totalEarned)}',
+                  text,
+                ),
+                _line(
+                  Icons.schedule,
+                  '時間単価',
+                  settings.hourlyRate > 0
+                      ? '¥${_fmt(settings.hourlyRate.round())}/h'
+                      : '—',
+                  text,
+                ),
               ],
             ],
           ),
@@ -92,50 +105,6 @@ class UserStatusPanel extends ConsumerWidget {
         s.monthlyBudget == 0;
   }
 
-  /// レベル行＝「Lv.X 称号」＋次レベルまでの進捗バー（累計タスク数から導出）。
-  Widget _levelLine(UserSettings settings, TextTheme text, ColorScheme scheme) {
-    final p = settings.levelProgress;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Icon(Icons.trending_up, size: 16),
-              const SizedBox(width: 6),
-              Expanded(
-                flex: 4,
-                child: Text('レベル',
-                    style: text.bodySmall,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis),
-              ),
-              Expanded(
-                flex: 6,
-                child: Text('Lv.${p.level} ${p.title}',
-                    style:
-                        text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-                    textAlign: TextAlign.right,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis),
-              ),
-            ],
-          ),
-          const SizedBox(height: 3),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(3),
-            child: LinearProgressIndicator(value: p.fraction, minHeight: 4),
-          ),
-          const SizedBox(height: 2),
-          Text('次まであと${p.remainingToNext}',
-              style: text.labelSmall?.copyWith(color: scheme.outline)),
-        ],
-      ),
-    );
-  }
-
   Widget _line(IconData icon, String label, String value, TextTheme text) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
@@ -146,11 +115,20 @@ class UserStatusPanel extends ConsumerWidget {
           const SizedBox(width: 6),
           Expanded(
             flex: 4,
-            child: Text(label, style: text.bodySmall, maxLines: 1, overflow: TextOverflow.ellipsis),
+            child: Text(
+              label,
+              style: text.bodySmall,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
           Expanded(
             flex: 6,
-            child: Text(value, style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600), textAlign: TextAlign.right),
+            child: Text(
+              value,
+              style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+              textAlign: TextAlign.right,
+            ),
           ),
         ],
       ),
@@ -158,7 +136,67 @@ class UserStatusPanel extends ConsumerWidget {
   }
 
   String _fmt(int n) => n.toString().replaceAllMapped(
-        RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-        (m) => '${m[1]},',
-      );
+    RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+    (m) => '${m[1]},',
+  );
+}
+
+class UserStatusLevelLine extends StatelessWidget {
+  const UserStatusLevelLine({super.key, required this.settings});
+
+  final UserSettings settings;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
+    final p = settings.levelProgress;
+    final valueStyle = text.bodyMedium?.copyWith(fontWeight: FontWeight.w600);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              const Icon(Icons.trending_up, size: 16),
+              const SizedBox(width: 6),
+              Text(
+                'Lv.${p.level}',
+                style: valueStyle,
+                maxLines: 1,
+                softWrap: false,
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    p.title,
+                    style: valueStyle,
+                    textAlign: TextAlign.right,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: LinearProgressIndicator(value: p.fraction, minHeight: 4),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '次まであと${p.remainingToNext}',
+            style: text.labelSmall?.copyWith(color: scheme.outline),
+          ),
+        ],
+      ),
+    );
+  }
 }

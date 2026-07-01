@@ -96,7 +96,6 @@ class _TaskEditorScreenState extends ConsumerState<TaskEditorScreen> {
   late DateTime _start;
   late DateTime _end;
   bool _isAllDay = false;
-  String? _selectedCalendarId; // null = 手動タスク
   String? _selectedColorId;
   RecurrencePreset _recurrence = RecurrencePreset.none;
   bool _saving = false;
@@ -112,11 +111,6 @@ class _TaskEditorScreenState extends ConsumerState<TaskEditorScreen> {
       _isAllDay = initial.isAllDay;
       _selectedColorId = initial.colorId;
       _recurrence = _parseRrule(initial.recurrence);
-      final ext = initial.externalCalendarId;
-      if (ext != null) {
-        final idx = ext.indexOf(':');
-        _selectedCalendarId = idx > 0 ? ext.substring(0, idx) : null;
-      }
       // 複製時は initialStart が渡され、所要時間は元タスクから引き継ぐ。
       if (widget.initialStart != null && widget.mode == TaskEditorMode.create) {
         final duration = (initial.end != null && initial.start != null)
@@ -219,7 +213,6 @@ class _TaskEditorScreenState extends ConsumerState<TaskEditorScreen> {
         description: description.isEmpty ? null : description,
         location: location.isEmpty ? null : location,
         colorId: _selectedColorId,
-        calendarId: _selectedCalendarId,
         recurrence: recurrence,
       );
     } else {
@@ -289,8 +282,6 @@ class _TaskEditorScreenState extends ConsumerState<TaskEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final calendars = ref.watch(calendarSyncViewModelProvider).calendars;
-    final calendarColors = ref.watch(calendarColorsProvider);
     final dateFmt = DateFormat('M月d日(E)', 'ja_JP');
     final timeFmt = DateFormat('HH:mm');
     final isEdit = widget.mode == TaskEditorMode.edit;
@@ -393,53 +384,6 @@ class _TaskEditorScreenState extends ConsumerState<TaskEditorScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            if (!isEdit && calendars.isNotEmpty) ...[
-              InputDecorator(
-                decoration: const InputDecoration(
-                  labelText: 'カレンダー',
-                  border: OutlineInputBorder(),
-                  contentPadding:
-                      EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String?>(
-                    value: _selectedCalendarId,
-                    isExpanded: true,
-                    items: [
-                      const DropdownMenuItem(
-                          value: null, child: Text('手動タスク（Google非同期）')),
-                      ...calendars.map((c) {
-                        final color = calendarColors[c.id];
-                        return DropdownMenuItem(
-                          value: c.id,
-                          child: Row(
-                            children: [
-                              if (color != null)
-                                Container(
-                                  width: 12,
-                                  height: 12,
-                                  margin: const EdgeInsets.only(right: 8),
-                                  decoration: BoxDecoration(
-                                      color: color, shape: BoxShape.circle),
-                                ),
-                              Flexible(
-                                child: Text(
-                                  c.name,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      }),
-                    ],
-                    onChanged: (v) =>
-                        setState(() => _selectedCalendarId = v),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-            ],
             InputDecorator(
               decoration: const InputDecoration(
                 labelText: '色',

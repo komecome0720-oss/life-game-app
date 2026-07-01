@@ -12,6 +12,7 @@ class UserSettings {
     this.cumulativeTaskCount = 0,
     this.weeklyTaskCount = RewardConfig.defaultWeeklyTaskCount,
     this.weeklyJackpotCount = RewardConfig.defaultWeeklyJackpotCount,
+    this.weeklyChuCount = RewardConfig.defaultWeeklyChuCount,
     this.jackpotRewards = RewardConfig.defaultJackpotRewards,
     this.chuRewards = RewardConfig.defaultChuRewards,
     this.shoRewards = RewardConfig.defaultShoRewards,
@@ -42,6 +43,9 @@ class UserSettings {
 
   /// 週に欲しい大当たり回数 (J)。
   final double weeklyJackpotCount;
+
+  /// 週に欲しい中当たり回数 (C)。
+  final double weeklyChuCount;
 
   /// 大／中／小それぞれのご褒美内容リスト。
   final List<String> jackpotRewards;
@@ -75,11 +79,11 @@ class UserSettings {
 
   /// 区分ごとのご褒美リスト。
   List<String> rewardsFor(RouletteCategory tier) => switch (tier) {
-        RouletteCategory.jackpot => jackpotRewards,
-        RouletteCategory.chu => chuRewards,
-        RouletteCategory.sho => shoRewards,
-        RouletteCategory.miss => const [],
-      };
+    RouletteCategory.jackpot => jackpotRewards,
+    RouletteCategory.chu => chuRewards,
+    RouletteCategory.sho => shoRewards,
+    RouletteCategory.miss => const [],
+  };
 
   UserSettings copyWith({
     String? displayName,
@@ -91,6 +95,7 @@ class UserSettings {
     int? cumulativeTaskCount,
     double? weeklyTaskCount,
     double? weeklyJackpotCount,
+    double? weeklyChuCount,
     List<String>? jackpotRewards,
     List<String>? chuRewards,
     List<String>? shoRewards,
@@ -112,13 +117,15 @@ class UserSettings {
       cumulativeTaskCount: cumulativeTaskCount ?? this.cumulativeTaskCount,
       weeklyTaskCount: weeklyTaskCount ?? this.weeklyTaskCount,
       weeklyJackpotCount: weeklyJackpotCount ?? this.weeklyJackpotCount,
+      weeklyChuCount: weeklyChuCount ?? this.weeklyChuCount,
       jackpotRewards: jackpotRewards ?? this.jackpotRewards,
       chuRewards: chuRewards ?? this.chuRewards,
       shoRewards: shoRewards ?? this.shoRewards,
       mealGoalGrams: mealGoalGrams ?? this.mealGoalGrams,
       exerciseGoalMinutes: exerciseGoalMinutes ?? this.exerciseGoalMinutes,
       sleepGoalHours: sleepGoalHours ?? this.sleepGoalHours,
-      sleepGoalMinutesExtra: sleepGoalMinutesExtra ?? this.sleepGoalMinutesExtra,
+      sleepGoalMinutesExtra:
+          sleepGoalMinutesExtra ?? this.sleepGoalMinutesExtra,
       meditationGoalMinutes:
           meditationGoalMinutes ?? this.meditationGoalMinutes,
       themeMode: themeMode ?? this.themeMode,
@@ -133,6 +140,12 @@ class UserSettings {
 
   factory UserSettings.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
+    final weeklyTaskCount =
+        (data['weeklyTaskCount'] as num?)?.toDouble() ??
+        RewardConfig.defaultWeeklyTaskCount;
+    final weeklyJackpotCount =
+        (data['weeklyJackpotCount'] as num?)?.toDouble() ??
+        RewardConfig.defaultWeeklyJackpotCount;
     return UserSettings(
       displayName: data['displayName'] as String? ?? '',
       avatarUrl: data['avatarUrl'] as String? ?? '',
@@ -141,16 +154,26 @@ class UserSettings {
       dailyQuestMinutes: (data['dailyQuestMinutes'] as num?)?.toInt() ?? 0,
       totalEarned: (data['totalEarned'] as num?)?.toInt() ?? 0,
       cumulativeTaskCount: (data['cumulativeTaskCount'] as num?)?.toInt() ?? 0,
-      weeklyTaskCount: (data['weeklyTaskCount'] as num?)?.toDouble() ??
-          RewardConfig.defaultWeeklyTaskCount,
-      weeklyJackpotCount: (data['weeklyJackpotCount'] as num?)?.toDouble() ??
-          RewardConfig.defaultWeeklyJackpotCount,
+      weeklyTaskCount: weeklyTaskCount,
+      weeklyJackpotCount: weeklyJackpotCount,
+      weeklyChuCount:
+          (data['weeklyChuCount'] as num?)?.toDouble() ??
+          RewardConfig.legacyWeeklyChuCountFor(
+            weeklyTaskCount: weeklyTaskCount,
+            weeklyJackpotCount: weeklyJackpotCount,
+          ),
       jackpotRewards: _rewardsFromData(
-          data['jackpotRewards'], RewardConfig.defaultJackpotRewards),
-      chuRewards:
-          _rewardsFromData(data['chuRewards'], RewardConfig.defaultChuRewards),
-      shoRewards:
-          _rewardsFromData(data['shoRewards'], RewardConfig.defaultShoRewards),
+        data['jackpotRewards'],
+        RewardConfig.defaultJackpotRewards,
+      ),
+      chuRewards: _rewardsFromData(
+        data['chuRewards'],
+        RewardConfig.defaultChuRewards,
+      ),
+      shoRewards: _rewardsFromData(
+        data['shoRewards'],
+        RewardConfig.defaultShoRewards,
+      ),
       mealGoalGrams: (data['mealGoalGrams'] as num?)?.toInt() ?? 0,
       exerciseGoalMinutes: (data['exerciseGoalMinutes'] as num?)?.toInt() ?? 0,
       sleepGoalHours: (data['sleepGoalHours'] as num?)?.toInt() ?? 0,
@@ -175,6 +198,7 @@ class UserSettings {
       'hourlyRate': hourlyRate,
       'weeklyTaskCount': weeklyTaskCount,
       'weeklyJackpotCount': weeklyJackpotCount,
+      'weeklyChuCount': weeklyChuCount,
       'jackpotRewards': jackpotRewards,
       'chuRewards': chuRewards,
       'shoRewards': shoRewards,

@@ -39,28 +39,30 @@ class WishItemCard extends ConsumerWidget {
 
     final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
-    Widget statusBadge;
-    if (balanceYen >= item.price) {
-      statusBadge = Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: scheme.tertiaryContainer,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(
-          '獲得可能',
-          style: text.labelSmall?.copyWith(
-            color: scheme.onTertiaryContainer,
-            fontWeight: FontWeight.bold,
+    Widget? statusBadge;
+    if (!item.isPurchased) {
+      if (balanceYen >= item.price) {
+        statusBadge = Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: scheme.tertiaryContainer,
+            borderRadius: BorderRadius.circular(12),
           ),
-        ),
-      );
-    } else {
-      final remaining = item.price - balanceYen;
-      statusBadge = Text(
-        'あと¥${_formatMoney(remaining)}',
-        style: text.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
-      );
+          child: Text(
+            '獲得可能',
+            style: text.labelSmall?.copyWith(
+              color: scheme.onTertiaryContainer,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        );
+      } else {
+        final remaining = item.price - balanceYen;
+        statusBadge = Text(
+          'あと¥${_formatMoney(remaining)}',
+          style: text.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+        );
+      }
     }
 
     return Card(
@@ -119,8 +121,10 @@ class WishItemCard extends ConsumerWidget {
                         color: colorScheme.onSurfaceVariant,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    statusBadge,
+                    if (statusBadge != null) ...[
+                      const SizedBox(height: 4),
+                      statusBadge,
+                    ],
                   ],
                 ),
               ),
