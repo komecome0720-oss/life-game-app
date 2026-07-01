@@ -70,6 +70,8 @@ class CalendarTaskSyncRepository {
     required String title,
     required DateTime start,
     required DateTime end,
+    bool urgency = true,
+    bool importance = true,
   }) async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) throw Exception('Not authenticated');
@@ -81,6 +83,8 @@ class CalendarTaskSyncRepository {
       'sourceType': 'manual',
       'isAllDay': false,
       'isCompleted': false,
+      'urgency': urgency,
+      'importance': importance,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }

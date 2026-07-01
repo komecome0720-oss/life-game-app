@@ -7,18 +7,16 @@ import 'package:task_manager/features/calendar_sync/model/google_calendar_source
 import 'package:task_manager/models/calendar_task.dart';
 
 class GoogleCalendarRepository {
+  // 読み取り専用。Google カレンダーへ書き戻さない方針のため events スコープは要求しない
+  // （制限付きスコープを外すことで配信時の CASA セキュリティ評価を回避できる）。
   static const _scopes = [
     'https://www.googleapis.com/auth/calendar.readonly',
-    'https://www.googleapis.com/auth/calendar.events',
   ];
-  // GoogleService-Info.plist の CLIENT_ID
-  static const _clientId =
-      '884856585000-837r35nsg428et305esr3uo5chph6h5s.apps.googleusercontent.com';
 
-  final _signIn = GoogleSignIn(
-    clientId: _clientId,
-    scopes: _scopes,
-  );
+  // clientId は明示せず、iOS は Info.plist の GIDClientID を自動採用させる
+  // （ログイン用 AuthRepository と同方式）。明示指定すると macOS 用 ID 等と
+  // 取り違えた際に URL スキーム検証に失敗してクラッシュするため。
+  final _signIn = GoogleSignIn(scopes: _scopes);
 
   /// 認証済み CalendarApi を返す。キャンセル時は null。
   Future<gcal.CalendarApi?> _getApi() async {
@@ -158,117 +156,5 @@ class GoogleCalendarRepository {
     }
 
     return results;
-  }
-
-  /// Googleカレンダーのイベントの開始・終了時刻を書き換える。
-  /// calendar.events スコープが必要。
-  Future<void> patchEvent({
-    required String calendarId,
-    required String eventId,
-    required DateTime newStartLocal,
-    required DateTime newEndLocal,
-  }) async {
-    final api = await _getApi();
-    if (api == null) throw Exception('カレンダーの認証がキャンセルされました');
-
-    final event = gcal.Event()
-      ..start = gcal.EventDateTime(dateTime: newStartLocal.toUtc())
-      ..end = gcal.EventDateTime(dateTime: newEndLocal.toUtc());
-
-    await api.events.patch(event, calendarId, eventId);
-  }
-
-  /// 新規イベントを作成し、`calendarId:eventId` を返す。
-  Future<String?> insertEvent({
-    required String calendarId,
-    required String title,
-    required DateTime startLocal,
-    required DateTime endLocal,
-    bool isAllDay = false,
-    String? description,
-    String? location,
-    String? colorId,
-    List<String>? recurrence,
-  }) async {
-    final api = await _getApi();
-    if (api == null) throw Exception('カレンダーの認証がキャンセルされました');
-
-    final event = gcal.Event()
-      ..summary = title
-      ..description = description
-      ..location = location
-      ..colorId = colorId
-      ..recurrence = recurrence;
-
-    if (isAllDay) {
-      event
-        ..start = gcal.EventDateTime(
-          date: DateTime(startLocal.year, startLocal.month, startLocal.day),
-        )
-        ..end = gcal.EventDateTime(
-          date: DateTime(endLocal.year, endLocal.month, endLocal.day),
-        );
-    } else {
-      event
-        ..start = gcal.EventDateTime(dateTime: startLocal.toUtc())
-        ..end = gcal.EventDateTime(dateTime: endLocal.toUtc());
-    }
-
-    final inserted = await api.events.insert(event, calendarId);
-    final eventId = inserted.id;
-    if (eventId == null) return null;
-    return '$calendarId:$eventId';
-  }
-
-  /// 既存イベントをフル更新。null 指定のフィールドは上書きされない。
-  Future<void> updateEvent({
-    required String calendarId,
-    required String eventId,
-    String? title,
-    DateTime? startLocal,
-    DateTime? endLocal,
-    bool? isAllDay,
-    String? description,
-    String? location,
-    String? colorId,
-    List<String>? recurrence,
-  }) async {
-    final api = await _getApi();
-    if (api == null) throw Exception('カレンダーの認証がキャンセルされました');
-
-    final event = gcal.Event();
-    if (title != null) event.summary = title;
-    if (description != null) event.description = description;
-    if (location != null) event.location = location;
-    if (colorId != null) event.colorId = colorId;
-    if (recurrence != null) event.recurrence = recurrence;
-    if (startLocal != null && endLocal != null) {
-      if (isAllDay == true) {
-        event
-          ..start = gcal.EventDateTime(
-            date: DateTime(startLocal.year, startLocal.month, startLocal.day),
-          )
-          ..end = gcal.EventDateTime(
-            date: DateTime(endLocal.year, endLocal.month, endLocal.day),
-          );
-      } else {
-        event
-          ..start = gcal.EventDateTime(dateTime: startLocal.toUtc())
-          ..end = gcal.EventDateTime(dateTime: endLocal.toUtc());
-      }
-    }
-
-    await api.events.patch(event, calendarId, eventId);
-  }
-
-  /// イベント削除。Google の繰り返しインスタンス eventId を渡すと該当インスタンスのみ削除。
-  /// masterEventId を渡すと繰り返し全体を削除。
-  Future<void> deleteEvent({
-    required String calendarId,
-    required String eventId,
-  }) async {
-    final api = await _getApi();
-    if (api == null) throw Exception('カレンダーの認証がキャンセルされました');
-    await api.events.delete(calendarId, eventId);
   }
 }

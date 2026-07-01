@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:task_manager/features/calendar_sync/model/google_account_info.dart';
 import 'package:task_manager/features/calendar_sync/model/google_calendar_source.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
@@ -121,12 +120,16 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
     required String title,
     required DateTime start,
     required DateTime end,
+    bool urgency = true,
+    bool importance = true,
   }) async {
     try {
       await ref.read(calendarTaskSyncRepositoryProvider).createTask(
             title: title,
             start: start,
             end: end,
+            urgency: urgency,
+            importance: importance,
           );
       return true;
     } catch (e) {
@@ -136,7 +139,7 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
   }
 
   /// タスクの開始時刻を [newStart] に変更する。所要時間は維持。
-  /// Google由来ならカレンダー側も更新。失敗時は Firestore をロールバック。
+  /// 読み取り専用方針のため Google カレンダーへは書き戻さず、Firestore のみ更新する。
   ///
   /// 引数の [task] が isTodo=true の場合は「ToDo → カレンダー予定化」として扱い、
   /// estimatedMinutes を duration として新規に start/end を書き込む。
@@ -168,30 +171,8 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
     final newEnd = newStart.add(duration);
 
     try {
-      // 1. Firestore 即時更新（Streamを通じUIに反映）
+      // Firestore のみ更新（Streamを通じUIに反映）。Google 側は変更しない。
       await syncRepo.moveTask(task, newStart, newEnd);
-
-      // 2. Google イベントなら calendar 側も patch
-      if (task.sourceType == TaskSourceType.googleCalendar &&
-          task.externalCalendarId != null) {
-        try {
-          final key = ExternalCalendarKey.tryParse(task.externalCalendarId);
-          if (key != null) {
-            await ref.read(googleCalendarRepositoryProvider).patchEvent(
-                  calendarId: key.calendarId,
-                  eventId: key.eventId,
-                  newStartLocal: newStart,
-                  newEndLocal: newEnd,
-                );
-          }
-        } catch (e) {
-          // Google失敗時は Firestore ロールバック
-          try {
-            await syncRepo.moveTask(task, prevStart, prevEnd);
-          } catch (_) {/* rollback失敗は無視 */}
-          rethrow;
-        }
-      }
       return true;
     } catch (e) {
       state = state.copyWith(errorMessage: _toMessage(e));
@@ -199,8 +180,8 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
     }
   }
 
-  /// 詳細付きで新規タスクを作成。[calendarId] が指定されていれば Google Calendar にも insert。
-  /// 戻り値は成功可否。
+  /// 詳細付きで新規タスクを作成する。
+  /// 読み取り専用方針のため Google カレンダーへは作成せず、常にローカル（手動）タスクとして保存する。
   Future<bool> saveNewTask({
     required String title,
     required DateTime start,
@@ -209,28 +190,10 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
     String? description,
     String? location,
     String? colorId,
-    String? calendarId,
     List<String>? recurrence,
   }) async {
     final syncRepo = ref.read(calendarTaskSyncRepositoryProvider);
-    final gcalRepo = ref.read(googleCalendarRepositoryProvider);
     try {
-      String? externalId;
-      var sourceType = TaskSourceType.manual;
-      if (calendarId != null) {
-        externalId = await gcalRepo.insertEvent(
-          calendarId: calendarId,
-          title: title,
-          startLocal: start,
-          endLocal: end,
-          isAllDay: isAllDay,
-          description: description,
-          location: location,
-          colorId: colorId,
-          recurrence: recurrence,
-        );
-        sourceType = TaskSourceType.googleCalendar;
-      }
       await syncRepo.createTaskFull(
         title: title,
         start: start,
@@ -239,9 +202,9 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
         description: description,
         location: location,
         colorId: colorId,
-        externalCalendarId: externalId,
+        externalCalendarId: null,
         recurrence: recurrence,
-        sourceType: sourceType,
+        sourceType: TaskSourceType.manual,
       );
       return true;
     } catch (e) {
@@ -250,7 +213,9 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
     }
   }
 
-  /// 既存タスクを更新。Google 由来なら events.patch も呼ぶ。
+  /// 既存タスクを更新する。
+  /// 読み取り専用方針のため、取り込み済み（Google 由来）タスクでも Firestore のみ更新し、
+  /// Google カレンダーへは書き戻さない（取り込み後は断絶＝ローカルの独立コピー）。
   Future<bool> updateExistingTask({
     required CalendarTask original,
     required String title,
@@ -263,7 +228,6 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
     List<String>? recurrence,
   }) async {
     final syncRepo = ref.read(calendarTaskSyncRepositoryProvider);
-    final gcalRepo = ref.read(googleCalendarRepositoryProvider);
     try {
       await syncRepo.updateTask(
         taskId: original.id,
@@ -276,24 +240,6 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
         colorId: colorId ?? '',
         recurrence: recurrence ?? const [],
       );
-      if (original.sourceType == TaskSourceType.googleCalendar &&
-          original.externalCalendarId != null) {
-        final key = ExternalCalendarKey.tryParse(original.externalCalendarId);
-        if (key != null) {
-          await gcalRepo.updateEvent(
-            calendarId: key.calendarId,
-            eventId: key.eventId,
-            title: title,
-            startLocal: start,
-            endLocal: end,
-            isAllDay: isAllDay,
-            description: description,
-            location: location,
-            colorId: colorId,
-            recurrence: recurrence,
-          );
-        }
-      }
       return true;
     } catch (e) {
       state = state.copyWith(errorMessage: _toMessage(e));
@@ -301,21 +247,11 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
     }
   }
 
-  /// タスクを削除。Google 由来なら events.delete も呼ぶ（このインスタンスのみ）。
+  /// タスクを削除する。
+  /// 読み取り専用方針のため Firestore のみ削除し、Google カレンダーの予定は残す。
   Future<bool> deleteTask(CalendarTask task) async {
     final syncRepo = ref.read(calendarTaskSyncRepositoryProvider);
-    final gcalRepo = ref.read(googleCalendarRepositoryProvider);
     try {
-      if (task.sourceType == TaskSourceType.googleCalendar &&
-          task.externalCalendarId != null) {
-        final key = ExternalCalendarKey.tryParse(task.externalCalendarId);
-        if (key != null) {
-          await gcalRepo.deleteEvent(
-            calendarId: key.calendarId,
-            eventId: key.eventId,
-          );
-        }
-      }
       await syncRepo.deleteTask(task.id);
       return true;
     } catch (e) {
