@@ -120,6 +120,7 @@ class _RouletteSettingsScreenState
         content: Text(success ? '保存しました' : (errorMsg ?? '保存に失敗しました')),
         backgroundColor: success ? null : Theme.of(context).colorScheme.error,
       ),
+      blocking: !success,
     );
     if (success) Navigator.of(context).pop();
   }

@@ -218,7 +218,11 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
     final success = await vm.save();
     if (!mounted) return;
     if (success) {
-      showAppSnackBar(context, const SnackBar(content: Text('目標を保存しました')));
+      showAppSnackBar(
+        context,
+        const SnackBar(content: Text('目標を保存しました')),
+        blocking: false,
+      );
     } else {
       final err = ref.read(userSettingsProvider).errorMessage;
       showAppSnackBar(

@@ -542,7 +542,11 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
       showAppSnackBar(context, const SnackBar(content: Text('保存に失敗しました')));
       return;
     }
-    showAppSnackBar(context, const SnackBar(content: Text('保存しました')));
+    showAppSnackBar(
+      context,
+      const SnackBar(content: Text('保存しました')),
+      blocking: false,
+    );
     _ticker?.cancel();
     Navigator.of(context).pop();
   }
