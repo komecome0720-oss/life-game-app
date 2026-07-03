@@ -157,6 +157,30 @@ class UserSettingsViewModel extends Notifier<UserSettingsState> {
       return false;
     }
   }
+
+  /// 表示設定（テーマ・週の始まり）だけを部分的に永続化する。
+  /// 全体 [save] と違い `totalEarned` などを書き戻さないため、
+  /// 設定画面の自動保存で残高等を stale 値に上書きしない。
+  Future<bool> saveDisplaySettings({String? themeMode, int? weekStartDay}) async {
+    final uid = _uid;
+    if (uid == null) return false;
+    state = state.copyWith(isSaving: true);
+    try {
+      final data = <String, dynamic>{'updatedAt': FieldValue.serverTimestamp()};
+      if (themeMode != null) data['themeMode'] = themeMode;
+      if (weekStartDay != null) data['weekStartDay'] = weekStartDay;
+      await _db
+          .collection('users')
+          .doc(uid)
+          .set(data, SetOptions(merge: true))
+          .timeout(const Duration(seconds: 15));
+      state = state.copyWith(isSaving: false);
+      return true;
+    } catch (e) {
+      state = state.copyWith(isSaving: false, errorMessage: '保存に失敗しました: $e');
+      return false;
+    }
+  }
 }
 
 final userSettingsProvider =

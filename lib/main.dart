@@ -31,7 +31,7 @@ class TaskManagerApp extends ConsumerWidget {
       userSettingsProvider.select((s) => s.settings.themeMode),
     );
     return MaterialApp(
-      title: 'ライフゲーム',
+      title: '人生ゲーム化',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: _seedColor),
         useMaterial3: true,
@@ -89,6 +89,8 @@ class _MainShell extends ConsumerWidget {
     return Scaffold(
       body: IndexedStack(index: index, children: _pages),
       bottomNavigationBar: NavigationBar(
+        height: 50,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
         selectedIndex: index,
         onDestinationSelected: (i) =>
             ref.read(mainTabIndexProvider.notifier).set(i),

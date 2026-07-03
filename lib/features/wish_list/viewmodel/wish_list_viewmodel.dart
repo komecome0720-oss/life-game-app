@@ -43,14 +43,11 @@ class WishListViewModel extends Notifier<AsyncValue<List<WishItem>>> {
         .collection('wishlist')
         .orderBy('createdAt', descending: true)
         .snapshots()
-        .listen(
-      (snapshot) {
-        state = AsyncValue.data(
-          snapshot.docs.map(WishItem.fromFirestore).toList(),
-        );
-      },
-      onError: (e) => state = AsyncValue.error(e, StackTrace.current),
-    );
+        .listen((snapshot) {
+          state = AsyncValue.data(
+            snapshot.docs.map(WishItem.fromFirestore).toList(),
+          );
+        }, onError: (e) => state = AsyncValue.error(e, StackTrace.current));
   }
 
   Future<String?> uploadWishImage(File file) async {
@@ -83,6 +80,28 @@ class WishListViewModel extends Notifier<AsyncValue<List<WishItem>>> {
         .doc(uid)
         .collection('wishlist')
         .add(item.toFirestore());
+  }
+
+  Future<void> updateItem({
+    required String itemId,
+    required String name,
+    required int price,
+    String shopUrl = '',
+    String imageUrl = '',
+  }) async {
+    final uid = _uid;
+    if (uid == null) return;
+    await _db
+        .collection('users')
+        .doc(uid)
+        .collection('wishlist')
+        .doc(itemId)
+        .update({
+          'name': name,
+          'price': price,
+          'shopUrl': shopUrl,
+          'imageUrl': imageUrl,
+        });
   }
 
   /// 戻り値: transaction の適用結果。残高不足などは result flags で返す。
@@ -119,5 +138,5 @@ class WishListViewModel extends Notifier<AsyncValue<List<WishItem>>> {
 
 final wishListProvider =
     NotifierProvider<WishListViewModel, AsyncValue<List<WishItem>>>(
-  WishListViewModel.new,
-);
+      WishListViewModel.new,
+    );

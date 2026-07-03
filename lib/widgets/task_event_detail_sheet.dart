@@ -7,10 +7,12 @@ import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart'
 import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/theme/app_tokens.dart';
 import 'package:task_manager/utils/app_messenger.dart';
+import 'package:task_manager/utils/center_flash.dart';
+import 'package:task_manager/widgets/draggable_detail_sheet.dart';
 import 'package:task_manager/widgets/task_detail/quadrant_selector.dart';
 
-/// タイマー列と実績分列のラベル行を同じ高さにそろえる（ヘルプアイコン行とテキストのみ行のズレ防止）。
-const double _kTimerSectionLabelRowHeight = 48;
+/// 大型一体型タイマーボタンの高さ。「現状」列もこの高さ内に収める。
+const double _kTimerButtonHeight = 112;
 
 /// 完了処理コールバック。
 /// [predictedMinutes] はカレンダー枠（ToDoなら estimatedMinutes）から計算した見込時間。
@@ -71,26 +73,22 @@ Future<void> showTaskEventDetailSheet({
   VoidCallback? onDuplicate,
   VoidCallback? onDelete,
 }) {
-  return showModalBottomSheet<void>(
+  return showDraggableDetailSheet<void>(
     context: context,
-    isScrollControlled: true,
-    showDragHandle: true,
-    builder: (context) => Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
-      child: _TaskEventDetailBody(
-        task: task,
-        predictedMinutes: predictedMinutes,
-        expectedRewardYen: expectedRewardYen,
-        onComplete: onComplete,
-        calcReward: calcReward,
-        onSaveEdits: onSaveEdits,
-        onTimerStart: onTimerStart,
-        onPauseAndSave: onPauseAndSave,
-        onRevert: onRevert,
-        onEdit: onEdit,
-        onDuplicate: onDuplicate,
-        onDelete: onDelete,
-      ),
+    builder: (context, scrollController) => _TaskEventDetailBody(
+      task: task,
+      predictedMinutes: predictedMinutes,
+      expectedRewardYen: expectedRewardYen,
+      onComplete: onComplete,
+      calcReward: calcReward,
+      onSaveEdits: onSaveEdits,
+      onTimerStart: onTimerStart,
+      onPauseAndSave: onPauseAndSave,
+      onRevert: onRevert,
+      onEdit: onEdit,
+      onDuplicate: onDuplicate,
+      onDelete: onDelete,
+      scrollController: scrollController,
     ),
   );
 }
@@ -124,6 +122,7 @@ class _TaskEventDetailBody extends StatefulWidget {
     this.onEdit,
     this.onDuplicate,
     this.onDelete,
+    this.scrollController,
   });
 
   final CalendarTask task;
@@ -138,6 +137,7 @@ class _TaskEventDetailBody extends StatefulWidget {
   final VoidCallback? onEdit;
   final VoidCallback? onDuplicate;
   final VoidCallback? onDelete;
+  final ScrollController? scrollController;
 
   @override
   State<_TaskEventDetailBody> createState() => _TaskEventDetailBodyState();
@@ -229,26 +229,30 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
     super.dispose();
   }
 
+  /// 一時停止：停止 + フィールドへ転記（baseline + 経過分・秒切り捨て）＋進捗保存。
+  /// 一時停止ボタンのほか、タイマー走行中にシートを閉じるときにも呼ばれる。
+  Future<void> _pauseTimerAndSave() async {
+    _stopwatch?.stop();
+    _ticker?.cancel();
+    _ticker = null;
+    _writeElapsedToField();
+    final pauseSave = widget.onPauseAndSave;
+    if (pauseSave != null) {
+      final actual = int.tryParse(_actualMinutesCtrl.text.trim()) ?? 0;
+      try {
+        await pauseSave(
+          predictedMinutes: _livePredictedMinutes,
+          actualMinutes: actual,
+        );
+      } catch (_) {
+        /* 呼び出し側でメッセージ表示 */
+      }
+    }
+  }
+
   Future<void> _toggleTimer() async {
     if (_stopwatch?.isRunning ?? false) {
-      // 一時停止：停止 + フィールドへ転記（baseline + 経過分・秒切り捨て）
-      _stopwatch!.stop();
-      _ticker?.cancel();
-      _ticker = null;
-      _writeElapsedToField();
-      final pauseSave = widget.onPauseAndSave;
-      if (pauseSave != null) {
-        final actual =
-            int.tryParse(_actualMinutesCtrl.text.trim()) ?? 0;
-        try {
-          await pauseSave(
-            predictedMinutes: _livePredictedMinutes,
-            actualMinutes: actual,
-          );
-        } catch (_) {
-          /* 呼び出し側でメッセージ表示 */
-        }
-      }
+      await _pauseTimerAndSave();
     } else {
       // 開始：DB未保存（リモート表示中）なら、この時点でアプリタスクとして保存する。
       // 既にDB保存済みなら onTimerStart 側の findTaskIdByExternalId で no-op。
@@ -270,6 +274,8 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
       _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
         if (mounted) setState(() {});
       });
+      // スタート押下時に画面中央へ「スタート！」を一瞬表示してやる気を高める。
+      if (mounted) showCenterFlash(context, 'スタート！');
     }
     if (mounted) setState(() {});
   }
@@ -288,12 +294,12 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
         title: const Text('タイマーの使い方'),
         content: const SingleChildScrollView(
           child: Text(
-            '・一時停止すると、計測した時間が右の「実際にかかった時間」へ自動で追加されます。\n'
-            '・「実際にかかった時間」の値は手動で書き換えられます。\n'
-            '・「リセット」ボタンを押しても、「実際にかかった時間」の値は保持されます。\n'
-            '・リセット後に再スタートして一時停止すると、その時点の「実際にかかった時間」に '
+            '・一時停止すると、計測した時間が右の「現状」へ自動で追加されます。\n'
+            '・「現状」の値は手動で書き換えられます。\n'
+            '・「リセット」ボタンを押しても、「現状」の値は保持されます。\n'
+            '・リセット後に再スタートして一時停止すると、その時点の「現状」に '
             '新しい計測分が加算されます。\n'
-            '　例）「実際にかかった時間」が 25 分の状態で、リセット → スタート → 3:22 で一時停止 → 28 分。\n'
+            '　例）「現状」が 25 分の状態で、リセット → スタート → 3:22 で一時停止 → 28 分。\n'
             '・タイマーを動かしたまま「完了」を押した場合は、自動で一時停止と転記をしてから完了します。',
           ),
         ),
@@ -308,7 +314,7 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
   }
 
   /// リセット：タイマー表示を 0 に戻し、次回 start で baseline を再取得させる。
-  /// 「実際にかかった時間」フィールドの値は保持する。
+  /// 「現状」フィールドの値は保持する。
   void _resetTimer() {
     _ticker?.cancel();
     _ticker = null;
@@ -466,7 +472,13 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
   }
 
   Future<bool> _onWillPop() async {
-    if (!_isDirty) return true;
+    if (!_isDirty) {
+      // タイマー走行中に閉じた場合は自動で一時停止＋進捗保存してから閉じる。
+      if (_stopwatch?.isRunning ?? false) {
+        await _pauseTimerAndSave();
+      }
+      return true;
+    }
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -599,6 +611,7 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
       },
       child: SafeArea(
         child: SingleChildScrollView(
+          controller: widget.scrollController,
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -877,105 +890,99 @@ class _TimerAndActualRow extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
+              // 大型の一体型タイマーボタン：中に経過時間を大きく表示。
+              // タップで開始/一時停止をトグル。状態は ▶/⏸ アイコンと背景色で表す。
+              // ヘルプ（左上）とリセット（右上）はボタンの隅に重ねて縦空間を節約。
+              child: Stack(
                 children: [
                   SizedBox(
-                    height: _kTimerSectionLabelRowHeight,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Text('タイマー', style: text.labelLarge),
-                        IconButton(
-                          onPressed: onShowHelp,
-                          icon: const Icon(Icons.help_outline),
-                          tooltip: 'タイマーの使い方',
-                          iconSize: 18,
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.all(AppSpacing.xs),
-                          constraints: const BoxConstraints(),
-                          color: scheme.onSurfaceVariant,
+                    width: double.infinity,
+                    height: _kTimerButtonHeight,
+                    child: FilledButton(
+                      onPressed: onToggle,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: running
+                            ? scheme.primaryContainer
+                            : scheme.secondaryContainer,
+                        foregroundColor: running
+                            ? scheme.onPrimaryContainer
+                            : scheme.onSecondaryContainer,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
                         ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  SizedBox(
-                    height: 48,
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Flexible(
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            alignment: Alignment.centerLeft,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                FilledButton.tonalIcon(
-                                  onPressed: onToggle,
-                                  icon: Icon(
-                                    running
-                                        ? Icons.pause_rounded
-                                        : Icons.play_arrow_rounded,
-                                  ),
-                                  label: Text(running ? '一時停止' : 'スタート'),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            running
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
+                            size: 32,
+                          ),
+                          const SizedBox(width: AppSpacing.md),
+                          Flexible(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                elapsedLabel,
+                                style: text.displayMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
                                 ),
-                                const SizedBox(width: AppSpacing.sm),
-                                Text(
-                                  elapsedLabel,
-                                  style: text.titleMedium?.copyWith(
-                                    fontFeatures: const [
-                                      FontFeature.tabularFigures(),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: AppSpacing.xs),
-                                // 一時停止中（経過 > 0）のみ有効
-                                IconButton(
-                                  onPressed: canResetTimer ? onReset : null,
-                                  icon: const Icon(Icons.refresh_rounded),
-                                  tooltip: 'リセット',
-                                  visualDensity: VisualDensity.compact,
-                                  style: IconButton.styleFrom(
-                                    shape: const CircleBorder(),
-                                    side: BorderSide(
-                                      color: scheme.outlineVariant,
-                                    ),
-                                  ),
-                                ),
-                              ],
+                              ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
+                    ),
+                  ),
+                  // ヘルプ（隅に小さく）
+                  Positioned(
+                    top: 4,
+                    left: 4,
+                    child: IconButton(
+                      onPressed: onShowHelp,
+                      icon: const Icon(Icons.help_outline),
+                      tooltip: 'タイマーの使い方',
+                      iconSize: 18,
+                      visualDensity: VisualDensity.compact,
+                      color: running
+                          ? scheme.onPrimaryContainer
+                          : scheme.onSecondaryContainer,
+                    ),
+                  ),
+                  // リセット（隅に小さく）：一時停止中かつ経過 > 0 のみ有効。
+                  Positioned(
+                    top: 4,
+                    right: 4,
+                    child: IconButton(
+                      onPressed: canResetTimer ? onReset : null,
+                      icon: const Icon(Icons.refresh_rounded),
+                      tooltip: 'リセット',
+                      iconSize: 20,
+                      visualDensity: VisualDensity.compact,
+                      color: running
+                          ? scheme.onPrimaryContainer
+                          : scheme.onSecondaryContainer,
                     ),
                   ),
                 ],
               ),
             ),
             const SizedBox(width: AppSpacing.lg),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  height: _kTimerSectionLabelRowHeight,
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      '実際にかかった時間',
-                      style: text.labelLarge,
-                      softWrap: true,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                SizedBox(
-                  height: 48,
-                  child: Row(
+            // 「現状」ラベル＋入力欄をタイマーの高さ内に2行で収める
+            // （ラベル上端はタイマー上端に揃う）。
+            SizedBox(
+              height: _kTimerButtonHeight,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('現状', style: text.labelLarge),
+                  const SizedBox(height: AppSpacing.sm),
+                  Row(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
@@ -1008,8 +1015,8 @@ class _TimerAndActualRow extends StatelessWidget {
                       Text('分', style: text.bodyMedium),
                     ],
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ],
         ),

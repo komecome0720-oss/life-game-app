@@ -9,11 +9,39 @@ import 'package:task_manager/features/user_settings/viewmodel/user_settings_view
 import 'package:task_manager/utils/app_messenger.dart';
 import 'package:task_manager/widgets/message_guard.dart';
 
-class HealthDetailScreen extends ConsumerWidget {
+class HealthDetailScreen extends ConsumerStatefulWidget {
   const HealthDetailScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HealthDetailScreen> createState() => _HealthDetailScreenState();
+}
+
+class _HealthDetailScreenState extends ConsumerState<HealthDetailScreen>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // バックグラウンド移行／終了時に、この滞在中の正味差分を1件だけ確定する。
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      ref.read(healthDetailViewModelProvider.notifier).settlePendingLedger();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(healthDetailViewModelProvider);
     final settings = ref.watch(userSettingsProvider).settings;
 
@@ -32,9 +60,21 @@ class HealthDetailScreen extends ConsumerWidget {
 
     final editable = state.isEditableNow && !state.log.isFinalized;
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('健康管理')),
-      body: MessageGuard(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final nav = Navigator.of(context);
+        // 「戻る」時に、この滞在中の正味差分を冒険の記録へ1件だけ確定してから離脱。
+        await ref
+            .read(healthDetailViewModelProvider.notifier)
+            .settlePendingLedger();
+        if (!mounted) return;
+        nav.pop();
+      },
+      child: Scaffold(
+        appBar: AppBar(title: const Text('健康管理')),
+        body: MessageGuard(
         child: state.isLoading
             ? const Center(child: CircularProgressIndicator())
             : SingleChildScrollView(
@@ -80,6 +120,7 @@ class HealthDetailScreen extends ConsumerWidget {
                   ],
                 ),
               ),
+        ),
       ),
     );
   }

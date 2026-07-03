@@ -13,29 +13,43 @@ import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/screens/task_completion_screen.dart';
 import 'package:task_manager/theme/app_tokens.dart';
 import 'package:task_manager/utils/app_messenger.dart';
+import 'package:task_manager/utils/center_flash.dart';
+import 'package:task_manager/widgets/draggable_detail_sheet.dart';
 import 'package:task_manager/widgets/task_detail/quadrant_selector.dart';
 
-/// タイマー列と実績分列のラベル行を同じ高さにそろえる。
-const double _kLabelRowHeight = 48;
+/// 大型一体型タイマーボタンの高さ。「現状」列もこの高さ内に収める。
+const double _kTimerButtonHeight = 112;
+
+/// 実績「分」入力欄の幅（半角数字4桁＋内側パディング・枠線ぶん）。
+double _fourDigitMinutesFieldWidth(BuildContext context) {
+  final style = Theme.of(context).textTheme.bodyLarge ?? const TextStyle();
+  final painter = TextPainter(
+    text: TextSpan(
+      text: '0000',
+      style: style.copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  const horizontalContentPadding = 8.0 * 2;
+  const decorationSlack = 20.0;
+  return painter.width + horizontalContentPadding + decorationSlack;
+}
 
 Future<void> showTodoTaskDetailSheet({
   required BuildContext context,
   required CalendarTask task,
 }) {
-  return showModalBottomSheet<void>(
+  return showDraggableDetailSheet<void>(
     context: context,
-    isScrollControlled: true,
-    showDragHandle: true,
-    builder: (ctx) => Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
-      child: _TodoDetailBody(task: task),
-    ),
+    builder: (context, scrollController) =>
+        _TodoDetailBody(task: task, scrollController: scrollController),
   );
 }
 
 class _TodoDetailBody extends ConsumerStatefulWidget {
-  const _TodoDetailBody({required this.task});
+  const _TodoDetailBody({required this.task, this.scrollController});
   final CalendarTask task;
+  final ScrollController? scrollController;
 
   @override
   ConsumerState<_TodoDetailBody> createState() => _TodoDetailBodyState();
@@ -127,6 +141,8 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
       _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
         if (mounted) setState(() {});
       });
+      // スタート押下時に画面中央へ「スタート！」を一瞬表示してやる気を高める。
+      if (mounted) showCenterFlash(context, 'スタート！');
     }
     if (mounted) setState(() {});
   }
@@ -147,9 +163,9 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
         title: const Text('タイマーの使い方'),
         content: const SingleChildScrollView(
           child: Text(
-            '・一時停止すると、計測した時間が「実際にかかった時間」へ自動で追加されます。\n'
-            '・「実際にかかった時間」の値は手動で書き換えられます。\n'
-            '・リセットしても「実際にかかった時間」の値は保持されます。',
+            '・一時停止すると、計測した時間が「現状」へ自動で追加されます。\n'
+            '・「現状」の値は手動で書き換えられます。\n'
+            '・リセットしても「現状」の値は保持されます。',
           ),
         ),
         actions: [
@@ -209,7 +225,7 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
         builder: (ctx) => AlertDialog(
           title: const Text('時間ログなしで完了しますか？'),
           content: Text(
-            '「実際にかかった時間」の入力がありません。'
+            '「現状」の入力がありません。'
             '入力すると予測精度の計測ができます。\n'
             '完了すると ¥$reward が付与されカレンダーに記録されます。',
           ),
@@ -462,6 +478,7 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
       },
       child: SafeArea(
         child: SingleChildScrollView(
+          controller: widget.scrollController,
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -598,102 +615,104 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    // 大型の一体型タイマーボタン：中に経過時間を大きく表示。
+                    // タップで開始/一時停止をトグル。状態は ▶/⏸ アイコンと背景色で表す。
+                    // ヘルプ（左上）とリセット（右上）はボタンの隅に重ねて縦空間を節約。
+                    child: Stack(
                       children: [
                         SizedBox(
-                          height: _kLabelRowHeight,
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Text('タイマー', style: text.labelLarge),
-                              IconButton(
-                                onPressed: _showTimerHelp,
-                                icon: const Icon(Icons.help_outline),
-                                iconSize: 18,
-                                visualDensity: VisualDensity.compact,
-                                padding: const EdgeInsets.all(AppSpacing.xs),
-                                constraints: const BoxConstraints(),
-                                color: scheme.onSurfaceVariant,
+                          width: double.infinity,
+                          height: _kTimerButtonHeight,
+                          child: FilledButton(
+                            onPressed: _toggleTimer,
+                            style: FilledButton.styleFrom(
+                              backgroundColor: running
+                                  ? scheme.primaryContainer
+                                  : scheme.secondaryContainer,
+                              foregroundColor: running
+                                  ? scheme.onPrimaryContainer
+                                  : scheme.onSecondaryContainer,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
                               ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: AppSpacing.sm),
-                        SizedBox(
-                          height: 48,
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              // 横幅に収めるため FittedBox で縮小（①と同じ崩れ防止）。
-                              Flexible(
-                                child: FittedBox(
-                                  fit: BoxFit.scaleDown,
-                                  alignment: Alignment.centerLeft,
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      FilledButton.tonalIcon(
-                                        onPressed: _toggleTimer,
-                                        icon: Icon(
-                                          running
-                                              ? Icons.pause_rounded
-                                              : Icons.play_arrow_rounded,
-                                        ),
-                                        label: Text(running ? '一時停止' : 'スタート'),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  running
+                                      ? Icons.pause_rounded
+                                      : Icons.play_arrow_rounded,
+                                  size: 32,
+                                ),
+                                const SizedBox(width: AppSpacing.md),
+                                Flexible(
+                                  child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Text(
+                                      _elapsedLabel(),
+                                      style: text.displayMedium?.copyWith(
+                                        fontWeight: FontWeight.w700,
+                                        fontFeatures: const [
+                                          FontFeature.tabularFigures(),
+                                        ],
                                       ),
-                                      const SizedBox(width: AppSpacing.sm),
-                                      Text(
-                                        _elapsedLabel(),
-                                        style: text.titleMedium?.copyWith(
-                                          fontFeatures: const [
-                                            FontFeature.tabularFigures(),
-                                          ],
-                                        ),
-                                      ),
-                                      const SizedBox(width: AppSpacing.xs),
-                                      IconButton(
-                                        onPressed: canReset ? _resetTimer : null,
-                                        icon: const Icon(Icons.refresh_rounded),
-                                        tooltip: 'リセット',
-                                        visualDensity: VisualDensity.compact,
-                                        style: IconButton.styleFrom(
-                                          shape: const CircleBorder(),
-                                          side: BorderSide(
-                                            color: scheme.outlineVariant,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
+                          ),
+                        ),
+                        // ヘルプ（隅に小さく）
+                        Positioned(
+                          top: 4,
+                          left: 4,
+                          child: IconButton(
+                            onPressed: _showTimerHelp,
+                            icon: const Icon(Icons.help_outline),
+                            tooltip: 'タイマーの使い方',
+                            iconSize: 18,
+                            visualDensity: VisualDensity.compact,
+                            color: running
+                                ? scheme.onPrimaryContainer
+                                : scheme.onSecondaryContainer,
+                          ),
+                        ),
+                        // リセット（隅に小さく）：一時停止中かつ経過 > 0 のみ有効。
+                        Positioned(
+                          top: 4,
+                          right: 4,
+                          child: IconButton(
+                            onPressed: canReset ? _resetTimer : null,
+                            icon: const Icon(Icons.refresh_rounded),
+                            tooltip: 'リセット',
+                            iconSize: 20,
+                            visualDensity: VisualDensity.compact,
+                            color: running
+                                ? scheme.onPrimaryContainer
+                                : scheme.onSecondaryContainer,
                           ),
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(width: AppSpacing.lg),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SizedBox(
-                        height: _kLabelRowHeight,
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text('実際にかかった時間', style: text.labelLarge),
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                      SizedBox(
-                        height: 48,
-                        child: Row(
+                  // 「現状」ラベル＋入力欄をタイマーの高さ内に2行で収める
+                  // （ラベル上端はタイマー上端に揃う）。
+                  SizedBox(
+                    height: _kTimerButtonHeight,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('現状', style: text.labelLarge),
+                        const SizedBox(height: AppSpacing.sm),
+                        Row(
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             SizedBox(
-                              width: 80,
+                              width: _fourDigitMinutesFieldWidth(context),
                               child: TextField(
                                 controller: _actualMinutesCtrl,
                                 focusNode: _actualMinutesFocus,
@@ -715,8 +734,8 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
                             Text('分', style: text.bodyMedium),
                           ],
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ],
               ),

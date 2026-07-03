@@ -99,7 +99,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               children: [
                 Icon(Icons.videogame_asset, size: 64, color: color.primary),
                 const SizedBox(height: 8),
-                Text('ライフゲーム', style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold, color: color.primary)),
+                Text('人生ゲーム化', style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold, color: color.primary)),
                 const SizedBox(height: 40),
 
                 // Appleでログイン

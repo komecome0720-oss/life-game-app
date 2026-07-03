@@ -620,12 +620,15 @@ class _DayColumn extends ConsumerWidget {
                       ),
                     );
 
+                    // 完了済みブロックはドラッグ禁止（長押ししても持ち上がらない）。
+                    final isDraggable = isTask && !completed;
+
                     return Positioned(
                       top: top,
                       left: lane * laneW + 1,
                       width: cardWidth,
                       height: height,
-                      child: isTask
+                      child: isDraggable
                           ? LongPressDraggable<CalendarTask>(
                               data: task,
                               delay: const Duration(milliseconds: 300),
@@ -677,10 +680,12 @@ class _DayColumn extends ConsumerWidget {
                               child: taskCard,
                             )
                           // 表示専用（未ダウンロード）の Google イベントは
-                          // ドラッグ不可。長押し（＝移動操作）のときだけ案内を出す。
+                          // 長押し（＝移動操作）のときだけ案内を出す。
+                          // 完了済みブロック（isTask かつ completed）は
+                          // ドラッグ禁止のみで案内は出さない。
                           : GestureDetector(
                               behavior: HitTestBehavior.opaque,
-                              onLongPress: onReadOnlyMoveAttempt == null
+                              onLongPress: (isTask || onReadOnlyMoveAttempt == null)
                                   ? null
                                   : () => onReadOnlyMoveAttempt!(task),
                               child: taskCard,

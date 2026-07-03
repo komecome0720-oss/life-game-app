@@ -16,6 +16,9 @@ import 'package:task_manager/features/health/viewmodel/health_detail_viewmodel.d
 import 'package:task_manager/features/roulette/model/roulette_outcome.dart';
 import 'package:task_manager/features/roulette/providers/roulette_providers.dart';
 import 'package:task_manager/features/roulette/view/roulette_settings_screen.dart';
+import 'package:task_manager/features/todo/providers/todo_providers.dart';
+import 'package:task_manager/features/todo/widgets/todo_drop_bar.dart';
+import 'package:task_manager/features/user_settings/view/settings_screen.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/models/health_scores.dart';
@@ -807,7 +810,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       builder: (ctx) => AlertDialog(
         title: const Text('取り込みを解除しますか？'),
         content: Text(
-          '「${calendar.name}」の今週ぶんの取り込み済みタスクを削除します。完了状態などのタスク管理データも失われます。続行しますか？',
+          '「${calendar.name}」の未着手の取り込みタスクを削除します'
+          '（完了済み・実績入力済み・ToDo化済みは残ります）。続行しますか？',
         ),
         actions: [
           TextButton(
@@ -885,13 +889,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Widget build(BuildContext context) {
     final user = ref.watch(authStateProvider).asData?.value;
     final syncState = ref.watch(calendarSyncViewModelProvider);
-    final syncCalendars = syncState.calendars;
-    final calendarColors = ref.watch(calendarColorsProvider);
-    final currentAccountId = ref.watch(currentGoogleAccountProvider)?.id;
-    final visibilityMap = ref.watch(calendarVisibilityMapProvider);
-    final visibleCalendarIds = currentAccountId == null
-        ? const <String>{}
-        : (visibilityMap[currentAccountId] ?? const <String>{});
 
     // 週の始まり設定の変更を追従
     ref.listen<int>(
@@ -931,7 +928,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             onPressed: () => Scaffold.of(ctx).openDrawer(),
           ),
         ),
-        title: const Text('ライフゲーム'),
+        title: const Text('人生ゲーム化'),
       ),
       floatingActionButton: FloatingActionButton(
         heroTag: 'home_fab',
@@ -970,54 +967,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 color: Theme.of(context).colorScheme.primary,
               ),
             ),
-            if (syncCalendars.isNotEmpty) ...[
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                child: Text(
-                  'カレンダー',
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              ...syncCalendars.map((cal) {
-                final isVisible = visibleCalendarIds.contains(cal.id);
-                final color = calendarColors[cal.id];
-                return CheckboxListTile(
-                  dense: true,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  value: isVisible,
-                  onChanged: currentAccountId == null
-                      ? null
-                      : (on) {
-                          ref
-                              .read(calendarVisibilityProvider.notifier)
-                              .setVisible(
-                                accountId: currentAccountId,
-                                calendarId: cal.id,
-                                visible: on == true,
-                              );
-                        },
-                  title: Text(
-                    cal.name,
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
-                  ),
-                  secondary: color == null
-                      ? null
-                      : Container(
-                          width: 14,
-                          height: 14,
-                          decoration: BoxDecoration(
-                            color: color,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                );
-              }),
-              const Divider(),
-            ],
             ListTile(
               leading: const Icon(Icons.auto_stories_outlined),
               title: const Text('冒険の記録'),
@@ -1050,109 +999,135 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 await _signOut();
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.settings_outlined),
+              title: const Text('設定'),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const SettingsScreen(),
+                  ),
+                );
+              },
+            ),
           ],
         ),
       ),
       body: MessageGuard(
         child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Column(
-              children: [
-                IntrinsicHeight(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Expanded(child: UserStatusPanel()),
-                      const SizedBox(width: 10),
-                      const Expanded(child: _HealthPanelConnector()),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Expanded(
-                  child: Card(
-                    margin: EdgeInsets.zero,
-                    clipBehavior: Clip.antiAlias,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        ScheduleHeaderBar(
-                          viewMode: _viewMode,
-                          isOnToday: _isOnToday,
-                          onViewModeChanged: _handleViewModeChange,
-                          onJumpToToday: _jumpToToday,
-                          onImportFromCalendar: () =>
-                              _handleImport(_currentWeekStart),
-                          isImporting: syncState.isLoading,
-                        ),
-                        const Divider(height: 1),
-                        Expanded(
-                          child: IndexedStack(
-                            index: _viewMode == CalendarViewMode.week ? 0 : 1,
-                            children: [
-                              PageView.builder(
-                                controller: _weekPageController,
-                                onPageChanged: (p) {
-                                  final prevWs = _weekStartForPage(
-                                    _currentWeekPage,
-                                  );
-                                  final newWs = _weekStartForPage(p);
-                                  setState(() => _currentWeekPage = p);
-                                  if (prevWs != newWs) {
-                                    _scheduleAutoImport(newWs);
-                                  }
-                                },
-                                itemBuilder: (context, index) {
-                                  final ws = _weekStartForPage(index);
-                                  final visibleDays = List.generate(
-                                    7,
-                                    (i) => ws.add(Duration(days: i)),
-                                  );
-                                  return _SchedulePage(
-                                    visibleDays: visibleDays,
-                                    onTaskTap: _openTask,
-                                    onEmptyTap: _handleEmptyTap,
-                                  );
-                                },
-                              ),
-                              Listener(
-                                onPointerMove: _handleDayDragPointerMove,
-                                child: PageView.builder(
-                                  controller: _dayPageController,
-                                  onPageChanged: (p) {
-                                    final prevWs = startOfWeek(
-                                      _dayForPage(_currentDayPage),
-                                      _weekStartDay,
-                                    );
-                                    final newWs = startOfWeek(
-                                      _dayForPage(p),
-                                      _weekStartDay,
-                                    );
-                                    setState(() => _currentDayPage = p);
-                                    if (prevWs != newWs) {
-                                      _scheduleAutoImport(newWs);
-                                    }
-                                  },
-                                  itemBuilder: (context, index) {
-                                    final day = _dayForPage(index);
-                                    return _SchedulePage(
-                                      visibleDays: [day],
-                                      onTaskTap: _openTask,
-                                      onEmptyTap: _handleEmptyTap,
-                                    );
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+          child: Stack(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 2, 10, 6),
+                child: Column(
+                  children: [
+                    IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const Expanded(child: UserStatusPanel()),
+                          const SizedBox(width: 10),
+                          const Expanded(child: _HealthPanelConnector()),
+                        ],
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 6),
+                    Expanded(
+                      child: Card(
+                        margin: EdgeInsets.zero,
+                        clipBehavior: Clip.antiAlias,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            ScheduleHeaderBar(
+                              viewMode: _viewMode,
+                              isOnToday: _isOnToday,
+                              onViewModeChanged: _handleViewModeChange,
+                              onJumpToToday: _jumpToToday,
+                              onImportFromCalendar: () =>
+                                  _handleImport(_currentWeekStart),
+                              isImporting: syncState.isLoading,
+                            ),
+                            const Divider(height: 1),
+                            Expanded(
+                              child: IndexedStack(
+                                index: _viewMode == CalendarViewMode.week ? 0 : 1,
+                                children: [
+                                  PageView.builder(
+                                    controller: _weekPageController,
+                                    onPageChanged: (p) {
+                                      final prevWs = _weekStartForPage(
+                                        _currentWeekPage,
+                                      );
+                                      final newWs = _weekStartForPage(p);
+                                      setState(() => _currentWeekPage = p);
+                                      if (prevWs != newWs) {
+                                        _scheduleAutoImport(newWs);
+                                      }
+                                    },
+                                    itemBuilder: (context, index) {
+                                      final ws = _weekStartForPage(index);
+                                      final visibleDays = List.generate(
+                                        7,
+                                        (i) => ws.add(Duration(days: i)),
+                                      );
+                                      return _SchedulePage(
+                                        visibleDays: visibleDays,
+                                        onTaskTap: _openTask,
+                                        onEmptyTap: _handleEmptyTap,
+                                      );
+                                    },
+                                  ),
+                                  Listener(
+                                    onPointerMove: _handleDayDragPointerMove,
+                                    child: PageView.builder(
+                                      controller: _dayPageController,
+                                      onPageChanged: (p) {
+                                        final prevWs = startOfWeek(
+                                          _dayForPage(_currentDayPage),
+                                          _weekStartDay,
+                                        );
+                                        final newWs = startOfWeek(
+                                          _dayForPage(p),
+                                          _weekStartDay,
+                                        );
+                                        setState(() => _currentDayPage = p);
+                                        if (prevWs != newWs) {
+                                          _scheduleAutoImport(newWs);
+                                        }
+                                      },
+                                      itemBuilder: (context, index) {
+                                        final day = _dayForPage(index);
+                                        return _SchedulePage(
+                                          visibleDays: [day],
+                                          onTaskTap: _openTask,
+                                          onEmptyTap: _handleEmptyTap,
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                top: 0,
+                child: TodoDropBar(
+                  onSwitchToTodo: () {
+                    ref.read(mainTabIndexProvider.notifier).set(1);
+                  },
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1361,7 +1336,10 @@ class _CalendarRow extends StatelessWidget {
                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 visualDensity: VisualDensity.compact,
                 value: isVisible,
-                onChanged: (v) => onVisibilityChanged(v == true),
+                // ダウンロードON中は表示ON固定・ロック（先に取り込み解除が必要）
+                onChanged: isDownloaded
+                    ? null
+                    : (v) => onVisibilityChanged(v == true),
               ),
             ),
           ),

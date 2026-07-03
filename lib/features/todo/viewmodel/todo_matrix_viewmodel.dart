@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
 import 'package:task_manager/features/todo/providers/todo_providers.dart';
 import 'package:task_manager/models/calendar_task.dart';
 
@@ -104,6 +105,8 @@ class TodoMatrixViewModel {
   final Ref ref;
 
   /// 新規 ToDo を作成。[quadrant] 省略時は領域1（×緊急・重要）。
+  /// 象限の先頭に出すため、既存タスクの最小 orderIndex - 1 を採番する
+  /// （0 固定だと手動並び替え後の既存タスクとタイになり順序が不安定になるため）。
   Future<void> createTodo(
     String title, {
     Quadrant quadrant = Quadrant.notUrgentImportant,
@@ -111,12 +114,16 @@ class TodoMatrixViewModel {
     final titleTrim = title.trim();
     if (titleTrim.isEmpty) return;
     final repo = ref.read(todoRepositoryProvider);
-    // 先頭に出したいので orderIndex=0、既存は自然に後ろへ
+    final all = ref.read(todosStreamProvider).asData?.value ?? const [];
+    final quadrantTasks = filterByQuadrant(all, quadrant);
+    final minIndex = quadrantTasks.isEmpty
+        ? 0
+        : quadrantTasks.map((t) => t.orderIndex).reduce((a, b) => a < b ? a : b) - 1;
     await repo.createTodo(
       title: titleTrim,
       urgency: quadrant.urgency,
       importance: quadrant.importance,
-      orderIndex: 0,
+      orderIndex: minIndex,
     );
   }
 
@@ -124,17 +131,49 @@ class TodoMatrixViewModel {
     await ref.read(todoRepositoryProvider).upsert(task);
   }
 
-  Future<void> moveToQuadrant(CalendarTask task, Quadrant q) async {
-    await ref.read(todoRepositoryProvider).updateQuadrant(
-          task.id,
-          urgency: q.urgency,
-          importance: q.importance,
-          orderIndex: task.orderIndex,
+  /// [dragged] を [quadrant] の [quadrantTasks]（画面表示中の並び）における
+  /// [insertIndex] 位置に挿入する。並びも象限も変わらなければ何もしない。
+  Future<void> reorderTask({
+    required CalendarTask dragged,
+    required Quadrant quadrant,
+    required List<CalendarTask> quadrantTasks,
+    required int insertIndex,
+  }) async {
+    final reordered = computeReorderedList(
+      quadrantTasks: quadrantTasks,
+      dragged: dragged,
+      insertIndex: insertIndex,
+    );
+    if (reordered == null) return;
+    await ref.read(todoRepositoryProvider).applyQuadrantOrder(
+          orderedTasks: reordered,
+          movedTaskId: dragged.id,
+          urgency: quadrant.urgency,
+          importance: quadrant.importance,
         );
   }
 
   Future<void> delete(String id) async {
     await ref.read(todoRepositoryProvider).delete(id);
+  }
+
+  /// カレンダー予定（[dragged]、isTodo=false）を ToDo 化して [quadrant] の末尾に追加する。
+  /// 所要時間は元の start/end の分数（欠損・終日等は既存デフォルト30分）。
+  Future<void> convertCalendarTaskToTodo({
+    required CalendarTask dragged,
+    required Quadrant quadrant,
+    required List<CalendarTask> quadrantTasks,
+  }) async {
+    final orderIndex = quadrantTasks.isEmpty
+        ? 0
+        : quadrantTasks.map((t) => t.orderIndex).reduce((a, b) => a > b ? a : b) + 1;
+    await ref.read(calendarTaskSyncRepositoryProvider).convertToTodo(
+          taskId: dragged.id,
+          urgency: quadrant.urgency,
+          importance: quadrant.importance,
+          orderIndex: orderIndex,
+          estimatedMinutes: estimatedMinutesFromRange(dragged),
+        );
   }
 
   /// 指定象限に属するタスクのみ抽出（orderIndex 昇順）。
@@ -145,6 +184,37 @@ class TodoMatrixViewModel {
         .toList()
       ..sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
   }
+}
+
+/// [quadrantTasks]（移動先象限の現在の並び。[dragged] が他象限からの移動なら
+/// 含まれない）から [dragged] を [insertIndex] の位置に挿入した新しい並びを返す。
+/// 挿入結果が変化なし（同じ位置への同象限内ドロップ等）の場合は null を返す。
+List<CalendarTask>? computeReorderedList({
+  required List<CalendarTask> quadrantTasks,
+  required CalendarTask dragged,
+  required int insertIndex,
+}) {
+  final working = List<CalendarTask>.of(quadrantTasks);
+  final oldIndex = working.indexWhere((t) => t.id == dragged.id);
+  var target = insertIndex;
+  if (oldIndex != -1) {
+    working.removeAt(oldIndex);
+    if (oldIndex < target) target -= 1;
+  }
+  target = target.clamp(0, working.length);
+  if (oldIndex == target) return null;
+  working.insert(target, dragged);
+  return working;
+}
+
+/// カレンダー予定の start/end から ToDo 化時の estimatedMinutes を算出する。
+/// start/end 欠損・終日・0分以下等の異常値は既存デフォルトの30分とする。
+int estimatedMinutesFromRange(CalendarTask task) {
+  final start = task.start;
+  final end = task.end;
+  if (task.isAllDay || start == null || end == null) return 30;
+  final minutes = end.difference(start).inMinutes;
+  return minutes > 0 ? minutes : 30;
 }
 
 final todoMatrixViewModelProvider =

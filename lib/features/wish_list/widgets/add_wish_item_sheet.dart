@@ -4,11 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:task_manager/features/wish_list/model/wish_item.dart';
 import 'package:task_manager/features/wish_list/viewmodel/wish_list_viewmodel.dart';
 import 'package:task_manager/utils/app_messenger.dart';
 
 class AddWishItemSheet extends ConsumerStatefulWidget {
-  const AddWishItemSheet({super.key});
+  const AddWishItemSheet({super.key, this.item});
+
+  /// 編集対象。null なら新規追加モード。
+  final WishItem? item;
 
   @override
   ConsumerState<AddWishItemSheet> createState() => _AddWishItemSheetState();
@@ -20,7 +24,22 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
   final _priceCtrl = TextEditingController();
   final _shopUrlCtrl = TextEditingController();
   File? _selectedImage;
+  String _existingImageUrl = '';
   bool _isSaving = false;
+
+  bool get _isEditing => widget.item != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final item = widget.item;
+    if (item != null) {
+      _nameCtrl.text = item.name;
+      _priceCtrl.text = item.price.toString();
+      _shopUrlCtrl.text = item.shopUrl;
+      _existingImageUrl = item.imageUrl;
+    }
+  }
 
   @override
   void dispose() {
@@ -71,7 +90,7 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSaving = true);
     try {
-      String imageUrl = '';
+      String imageUrl = _existingImageUrl;
       if (_selectedImage != null) {
         final url = await ref
             .read(wishListProvider.notifier)
@@ -79,12 +98,26 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
         imageUrl = url ?? '';
       }
 
-      await ref.read(wishListProvider.notifier).addItem(
-            name: _nameCtrl.text.trim(),
-            price: int.parse(_priceCtrl.text),
-            shopUrl: _shopUrlCtrl.text.trim(),
-            imageUrl: imageUrl,
-          );
+      if (_isEditing) {
+        await ref
+            .read(wishListProvider.notifier)
+            .updateItem(
+              itemId: widget.item!.id,
+              name: _nameCtrl.text.trim(),
+              price: int.parse(_priceCtrl.text),
+              shopUrl: _shopUrlCtrl.text.trim(),
+              imageUrl: imageUrl,
+            );
+      } else {
+        await ref
+            .read(wishListProvider.notifier)
+            .addItem(
+              name: _nameCtrl.text.trim(),
+              price: int.parse(_priceCtrl.text),
+              shopUrl: _shopUrlCtrl.text.trim(),
+              imageUrl: imageUrl,
+            );
+      }
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       if (mounted) {
@@ -104,7 +137,9 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
 
     return Padding(
       padding: EdgeInsets.only(
-        left: 16, right: 16, top: 16,
+        left: 16,
+        right: 16,
+        top: 16,
         bottom: MediaQuery.of(context).viewInsets.bottom + 16,
       ),
       child: Form(
@@ -113,19 +148,32 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('欲しいものを追加', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+            Text(
+              _isEditing ? '欲しいものを編集' : '欲しいものを追加',
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 16),
             TextFormField(
               controller: _nameCtrl,
-              decoration: const InputDecoration(labelText: '商品名 *', border: OutlineInputBorder()),
-              validator: (v) => (v == null || v.trim().isEmpty) ? '商品名を入力してください' : null,
+              decoration: const InputDecoration(
+                labelText: '商品名 *',
+                border: OutlineInputBorder(),
+              ),
+              validator: (v) =>
+                  (v == null || v.trim().isEmpty) ? '商品名を入力してください' : null,
             ),
             const SizedBox(height: 12),
             TextFormField(
               controller: _priceCtrl,
               keyboardType: TextInputType.number,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: const InputDecoration(labelText: '価格 *', suffixText: '円', border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                labelText: '価格 *',
+                suffixText: '円',
+                border: OutlineInputBorder(),
+              ),
               validator: (v) {
                 final n = int.tryParse(v ?? '');
                 if (n == null || n <= 0) return '価格を入力してください';
@@ -136,35 +184,60 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
             TextFormField(
               controller: _shopUrlCtrl,
               keyboardType: TextInputType.url,
-              decoration: const InputDecoration(labelText: 'ショップURL（任意）', border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                labelText: 'ショップURL（任意）',
+                border: OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 12),
             GestureDetector(
               onTap: _isSaving ? null : _showImagePickerSheet,
-              child: _selectedImage != null
+              child: _selectedImage != null || _existingImageUrl.isNotEmpty
                   ? Stack(
                       children: [
                         ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: Image.file(
-                            _selectedImage!,
-                            height: 120,
-                            width: double.infinity,
-                            fit: BoxFit.cover,
-                          ),
+                          child: _selectedImage != null
+                              ? Image.file(
+                                  _selectedImage!,
+                                  height: 120,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover,
+                                )
+                              : Image.network(
+                                  _existingImageUrl,
+                                  height: 120,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, _, _) => Container(
+                                    height: 120,
+                                    color: colorScheme.surfaceContainerHighest,
+                                    child: Icon(
+                                      Icons.broken_image,
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ),
                         ),
                         Positioned(
                           top: 4,
                           right: 4,
                           child: GestureDetector(
-                            onTap: () => setState(() => _selectedImage = null),
+                            onTap: () => setState(() {
+                              _selectedImage = null;
+                              _existingImageUrl = '';
+                            }),
                             child: Container(
                               decoration: const BoxDecoration(
                                 color: Colors.black54,
                                 shape: BoxShape.circle,
                               ),
                               padding: const EdgeInsets.all(4),
-                              child: const Icon(Icons.close, size: 18, color: Colors.white),
+                              child: const Icon(
+                                Icons.close,
+                                size: 18,
+                                color: Colors.white,
+                              ),
                             ),
                           ),
                         ),
@@ -182,11 +255,17 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.add_a_photo, color: colorScheme.onSurfaceVariant),
+                          Icon(
+                            Icons.add_a_photo,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
                           const SizedBox(height: 4),
                           Text(
                             '画像を追加（任意）',
-                            style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant),
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
                           ),
                         ],
                       ),
@@ -196,8 +275,15 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
             FilledButton(
               onPressed: _isSaving ? null : _submit,
               child: _isSaving
-                  ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Text('追加'),
+                  ? const SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(_isEditing ? '保存' : '追加'),
             ),
           ],
         ),

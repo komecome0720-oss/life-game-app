@@ -26,13 +26,19 @@ class WishListScreen extends ConsumerWidget {
         title: const Text('削除確認'),
         content: Text('「${item.name}」を削除しますか？'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('キャンセル')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('キャンセル'),
+          ),
           TextButton(
             onPressed: () {
               ref.read(wishListProvider.notifier).deleteItem(item.id);
               Navigator.pop(ctx);
             },
-            child: Text('削除', style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
+            child: Text(
+              '削除',
+              style: TextStyle(color: Theme.of(ctx).colorScheme.error),
+            ),
           ),
         ],
       ),
@@ -81,9 +87,17 @@ class WishListScreen extends ConsumerWidget {
               final active = items.where((i) => !i.isPurchased).toList();
               final purchased = items.where((i) => i.isPurchased).toList();
               return TabBarView(
+                // カード左スワイプ削除と競合するため、タブの左右スワイプ切替は無効化。
+                physics: const NeverScrollableScrollPhysics(),
                 children: [
-                  _ItemList(items: active, onDelete: (item) => _confirmDelete(context, ref, item)),
-                  _ItemList(items: purchased, onDelete: (item) => _confirmDelete(context, ref, item)),
+                  _ItemList(
+                    items: active,
+                    onDelete: (item) => _confirmDelete(context, ref, item),
+                  ),
+                  _ItemList(
+                    items: purchased,
+                    onDelete: (item) => _confirmDelete(context, ref, item),
+                  ),
                   const RewardTicketsTab(),
                 ],
               );
@@ -114,10 +128,8 @@ class _ItemList extends StatelessWidget {
     return ListView.builder(
       padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: items.length,
-      itemBuilder: (_, i) => WishItemCard(
-        item: items[i],
-        onDelete: () => onDelete(items[i]),
-      ),
+      itemBuilder: (_, i) =>
+          WishItemCard(item: items[i], onDelete: () => onDelete(items[i])),
     );
   }
 }

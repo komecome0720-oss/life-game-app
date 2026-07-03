@@ -23,6 +23,7 @@ class CalendarTaskSyncRepository {
 
     // whereIn の上限(30)に合わせてバッチ検索
     final existingRefs = <String, DocumentReference>{};
+    final existingIsTodo = <String, bool>{};
     for (var i = 0; i < externalIds.length; i += 30) {
       final chunk = externalIds.sublist(
         i,
@@ -33,7 +34,10 @@ class CalendarTaskSyncRepository {
           .get();
       for (final doc in snapshot.docs) {
         final extId = doc.data()['externalCalendarId'] as String?;
-        if (extId != null) existingRefs[extId] = doc.reference;
+        if (extId != null) {
+          existingRefs[extId] = doc.reference;
+          existingIsTodo[extId] = doc.data()['isTodo'] as bool? ?? false;
+        }
       }
     }
 
@@ -46,6 +50,8 @@ class CalendarTaskSyncRepository {
       if (extId == null) continue;
 
       if (existingRefs.containsKey(extId)) {
+        // ToDo化済みは Google 側データによる isTodo/start/end の巻き戻しを防ぐためスキップ
+        if (existingIsTodo[extId] == true) continue;
         // 更新: 完了状態とログはユーザー操作値を保持するため除外
         final updateData = task.toMap()
           ..remove('isCompleted')
@@ -289,6 +295,12 @@ class CalendarTaskSyncRepository {
   /// externalCalendarId のフォーマットは "calendarId:eventId" または
   /// "accountId:calendarId:eventId" の双方を想定し、parts[0] か parts[1] が
   /// [calendarId] と一致するものを対象にする。
+  ///
+  /// 「取り込んだだけで何もしていない」予定のみ削除する。以下は保護され残る：
+  /// - isCompleted == true（完了済み・報酬付与済み）
+  /// - actualMinutes != null（タイマー/実績入力済みだが未完了）
+  /// - isTodo == true（ToDo化済み。start=null のため startAtUtc 範囲クエリで
+  ///   そもそもヒットしないが、仕様として明記）
   Future<void> deleteTasksByCalendarInWeek({
     required String calendarId,
     required DateTime weekStartLocal,
@@ -308,8 +320,11 @@ class CalendarTaskSyncRepository {
 
     final targets = <DocumentReference>[];
     for (final doc in snapshot.docs) {
-      final ext = doc.data()['externalCalendarId'] as String?;
+      final data = doc.data();
+      final ext = data['externalCalendarId'] as String?;
       if (ext == null) continue;
+      if (data['isCompleted'] == true) continue;
+      if (data['actualMinutes'] != null) continue;
       final parts = ext.split(':');
       // 旧形式: calendarId:eventId / 新形式: accountId:calendarId:eventId
       final extCalId = parts.length == 2
@@ -345,6 +360,35 @@ class CalendarTaskSyncRepository {
           'isTodo': false,
           'startAtUtc': Timestamp.fromDate(start.toUtc()),
           'endAtUtc': Timestamp.fromDate(end.toUtc()),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+  }
+
+  /// カレンダー予定（アプリ内タスク or ダウンロード済み Google 予定）を ToDo に変換する
+  /// （isTodo=true にして start/end を消去）。
+  /// externalCalendarId・isCompleted・actualMinutes・predictedMinutes は変更しない。
+  Future<void> convertToTodo({
+    required String taskId,
+    required bool urgency,
+    required bool importance,
+    required int orderIndex,
+    required int estimatedMinutes,
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) throw Exception('Not authenticated');
+    await _db
+        .collection('users')
+        .doc(uid)
+        .collection('tasks')
+        .doc(taskId)
+        .update({
+          'isTodo': true,
+          'startAtUtc': FieldValue.delete(),
+          'endAtUtc': FieldValue.delete(),
+          'urgency': urgency,
+          'importance': importance,
+          'orderIndex': orderIndex,
+          'estimatedMinutes': estimatedMinutes,
           'updatedAt': FieldValue.serverTimestamp(),
         });
   }

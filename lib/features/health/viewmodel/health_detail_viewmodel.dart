@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/auth/providers/auth_providers.dart';
+import 'package:task_manager/features/economy/data/economy_repository.dart';
 import 'package:task_manager/features/economy/providers/economy_providers.dart';
 import 'package:task_manager/features/health/model/health_category.dart';
 import 'package:task_manager/features/health/model/health_log.dart';
@@ -85,10 +86,18 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
   bool _isRefreshingForToday = false;
   int _stateGeneration = 0;
 
+  /// build 時にキャプチャした repo。onDispose 内では ref.read が使えないため、
+  /// settle をどの経路からでも同じ参照で呼べるよう保持する。
+  late EconomyRepository _economyRepo;
+
   @override
   HealthDetailState build() {
+    _economyRepo = ref.read(economyRepositoryProvider);
     ref.onDispose(() {
       _midnightTimer?.cancel();
+      // PopScope／ライフサイクル監視を経由せず破棄された場合の保険。
+      // await できないため fire-and-forget（破棄済み state の参照は settle 内で握り潰す）。
+      unawaited(settlePendingLedger());
     });
     // ログイン状態（uid）の変化を購読し、サインイン直後に再ビルド→再ロードする。
     final uid = ref.watch(
@@ -141,24 +150,17 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
         recomputed.provisionalEarnedYen == state.log.provisionalEarnedYen) {
       return;
     }
-    final lastSaved = state.lastSavedProvisionalYen;
-    final delta = recomputed.provisionalEarnedYen - lastSaved;
+    // 台帳・残高は退出時 settlePendingLedger() でまとめて確定する。
+    // ここでは healthLog の値だけを保存し、baseline は据え置く。
     state = state.copyWith(log: recomputed);
     try {
       await _trackActiveSave(
-        ref
-            .read(economyRepositoryProvider)
-            .saveHealthLogAndAdjust(
-              dateKey: recomputed.dateKey,
-              healthLogData: recomputed.toFirestore(),
-              deltaYen: delta,
-            ),
+        _economyRepo.saveHealthLogAndAdjust(
+          dateKey: recomputed.dateKey,
+          healthLogData: recomputed.toFirestore(),
+          deltaYen: 0,
+        ),
       );
-      if (_shouldApplySaveResult(uid, saveDateKey, saveGeneration)) {
-        state = state.copyWith(
-          lastSavedProvisionalYen: recomputed.provisionalEarnedYen,
-        );
-      }
     } catch (e) {
       if (_shouldApplySaveResult(uid, saveDateKey, saveGeneration)) {
         state = state.copyWith(errorMessage: '保存に失敗しました: $e');
@@ -203,7 +205,9 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
         isLoading: false,
         isEditableNow: true,
         errorMessage: pastResult.error,
-        lastSavedProvisionalYen: log.provisionalEarnedYen,
+        // baseline は totalEarned に反映済みの額＝ディスクから読んだ値（sync前）。
+        // sync で値が変わっても totalEarned は動いていないため recomputed 値は使わない。
+        lastSavedProvisionalYen: loadedLog.provisionalEarnedYen,
         historyLogs: pastResult.logs.take(14).toList(growable: false),
         isHistoryLoading: false,
         historyErrorMessage: null,
@@ -285,6 +289,9 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       while (_activeSaves.isNotEmpty) {
         await Future.wait(_activeSaves.toList());
       }
+      // finalize の前に未確定の差分を totalEarned＋台帳へ確定させる。
+      // これを飛ばすと finalizedEarnedYen(=provisional) と totalEarned が食い違う。
+      await settlePendingLedger();
       final todayKey = HealthRollover.dateKey(DateTime.now());
       final col = _db.collection('users').doc(uid).collection('healthLogs');
       final currentDateKey = state.log.dateKey;
@@ -309,7 +316,8 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
         isLoading: false,
         isEditableNow: true,
         errorMessage: pastResult.error,
-        lastSavedProvisionalYen: todayLog.provisionalEarnedYen,
+        // baseline はロードした値（sync前）＝totalEarned 反映済みの額。
+        lastSavedProvisionalYen: loadedLog.provisionalEarnedYen,
         historyLogs: pastResult.logs.take(14).toList(growable: false),
         isHistoryLoading: false,
         historyErrorMessage: null,
@@ -341,7 +349,8 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     state = state.copyWith(log: recomputed);
   }
 
-  /// 確定保存（スライダーのドラッグ終了時）。Firestore 書き込み＋totalEarned 差分更新。
+  /// 確定保存（スライダーのドラッグ終了時）。healthLog の値だけを永続化し、
+  /// 台帳・totalEarned は触らない。正味差分は退出時 [settlePendingLedger] で1件に集約。
   Future<void> commitValue(HealthCategory category, num value) async {
     if (_isRefreshingForToday || !state.isEditableNow) return;
     final uid = _uid;
@@ -356,32 +365,69 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       category.clampValue(value, settings),
     );
     final recomputed = _recompute(base, settings);
-    final lastSaved = state.lastSavedProvisionalYen;
-    final delta = recomputed.provisionalEarnedYen - lastSaved;
 
     // 先に UI を更新
     state = state.copyWith(log: recomputed);
 
+    // 値だけ保存（deltaYen: 0 → 台帳・残高はスキップ）。baseline も据え置く。
     try {
       await _trackActiveSave(
-        ref
-            .read(economyRepositoryProvider)
-            .saveHealthLogAndAdjust(
-              dateKey: recomputed.dateKey,
-              healthLogData: recomputed.toFirestore(),
-              deltaYen: delta,
-            ),
+        _economyRepo.saveHealthLogAndAdjust(
+          dateKey: recomputed.dateKey,
+          healthLogData: recomputed.toFirestore(),
+          deltaYen: 0,
+        ),
       );
-      if (_shouldApplySaveResult(uid, saveDateKey, saveGeneration)) {
-        state = state.copyWith(
-          lastSavedProvisionalYen: recomputed.provisionalEarnedYen,
-        );
-      }
     } catch (e) {
       if (_shouldApplySaveResult(uid, saveDateKey, saveGeneration)) {
         state = state.copyWith(errorMessage: '保存に失敗しました: $e');
       }
     }
+  }
+
+  /// 退出（戻る／バックグラウンド／日付切替／破棄）時に呼ぶ。
+  /// この滞在中に生じた provisional の正味差分を totalEarned に反映し、
+  /// 冒険の記録（adventure_entries）へ**1件だけ**書き込む。差分が無ければ何もしない。
+  Future<void> settlePendingLedger() async {
+    final uid = _uid;
+    if (uid == null) return;
+    // 破棄済みで state 参照不可なら安全に打ち切る。
+    final HealthDetailState current;
+    try {
+      current = state;
+    } catch (_) {
+      return;
+    }
+    if (current.log.isFinalized) return;
+    final delta =
+        current.log.provisionalEarnedYen - current.lastSavedProvisionalYen;
+    if (delta == 0) return;
+    final saveDateKey = current.log.dateKey;
+    final saveGeneration = _stateGeneration;
+    final logData = current.log.toFirestore();
+    final settledProvisional = current.log.provisionalEarnedYen;
+    try {
+      await _trackActiveSave(
+        _economyRepo.saveHealthLogAndAdjust(
+          dateKey: saveDateKey,
+          healthLogData: logData,
+          deltaYen: delta,
+        ),
+      );
+    } catch (e) {
+      // 破棄後の state 書き込みは握り潰す（fire-and-forget 経路対策）。
+      try {
+        if (_shouldApplySaveResult(uid, saveDateKey, saveGeneration)) {
+          state = state.copyWith(errorMessage: '保存に失敗しました: $e');
+        }
+      } catch (_) {}
+      return;
+    }
+    try {
+      if (_shouldApplySaveResult(uid, saveDateKey, saveGeneration)) {
+        state = state.copyWith(lastSavedProvisionalYen: settledProvisional);
+      }
+    } catch (_) {}
   }
 
   // ── helpers ───────────────────────────────────────────────
@@ -394,15 +440,15 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     final recomputed = _recompute(log, settings);
     if (!_computedFieldsDiffer(log, recomputed)) return log;
 
-    final delta = recomputed.provisionalEarnedYen - log.provisionalEarnedYen;
+    // 目標変更等での再計算は値だけ保存（deltaYen: 0）。差分は退出時に集約する。
+    // baseline は呼び出し元（_load / refreshForToday）がロード値に設定するため、
+    // この再計算差分も退出時 settle で正しく1件に含まれる。
     await _trackActiveSave(
-      ref
-          .read(economyRepositoryProvider)
-          .saveHealthLogAndAdjust(
-            dateKey: recomputed.dateKey,
-            healthLogData: recomputed.toFirestore(),
-            deltaYen: delta,
-          ),
+      _economyRepo.saveHealthLogAndAdjust(
+        dateKey: recomputed.dateKey,
+        healthLogData: recomputed.toFirestore(),
+        deltaYen: 0,
+      ),
     );
     if (_uid != uid) return log;
     return recomputed;

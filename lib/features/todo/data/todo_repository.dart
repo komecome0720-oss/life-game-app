@@ -96,6 +96,36 @@ class TodoRepository {
     });
   }
 
+  /// 象限内の並び順を一括更新する（同一象限内の並び替え／象限間移動の両方に使用）。
+  /// orderIndex が実際に変わるドキュメントのみ書き込む。movedTaskId には
+  /// urgency/importance/updatedAt も書き込む。
+  Future<void> applyQuadrantOrder({
+    required List<CalendarTask> orderedTasks,
+    required String movedTaskId,
+    required bool urgency,
+    required bool importance,
+  }) async {
+    final uid = _uid;
+    if (uid == null) throw Exception('Not authenticated');
+    final batch = _db.batch();
+    var hasWrite = false;
+    for (var i = 0; i < orderedTasks.length; i++) {
+      final task = orderedTasks[i];
+      final isMoved = task.id == movedTaskId;
+      if (task.orderIndex == i && !isMoved) continue;
+      hasWrite = true;
+      final data = <String, dynamic>{'orderIndex': i};
+      if (isMoved) {
+        data['urgency'] = urgency;
+        data['importance'] = importance;
+        data['updatedAt'] = FieldValue.serverTimestamp();
+      }
+      batch.update(_col(uid).doc(task.id), data);
+    }
+    if (!hasWrite) return;
+    await batch.commit();
+  }
+
   /// ToDo → カレンダー予定へ変換。isTodo=false + start/end を書き込む。
   Future<void> convertToCalendarEvent({
     required String taskId,

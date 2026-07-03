@@ -83,6 +83,8 @@ class AdventureTimelineTile extends StatelessWidget {
                     if (entry.note != null)
                       Text(
                         entry.note!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: scheme.onSurfaceVariant,
                             ),

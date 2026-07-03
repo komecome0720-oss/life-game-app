@@ -34,8 +34,9 @@ class WishItemCompletionScreen extends StatelessWidget {
               Text(
                 'おめでとう、$userNameは\n${_formatMoney(itemPrice)}円をゲットした！',
                 textAlign: TextAlign.center,
-                style: text.headlineSmall
-                    ?.copyWith(fontWeight: FontWeight.w900),
+                style: text.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
               ),
               const SizedBox(height: 24),
               Text(

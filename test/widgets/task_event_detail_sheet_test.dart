@@ -27,6 +27,7 @@ Future<void> _pumpSheet(
   required int expectedRewardYen,
   required TaskCompleteCallback onComplete,
   TaskSaveEditsCallback? onSaveEdits,
+  TaskPauseAndSaveCallback? onPauseAndSave,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -40,6 +41,7 @@ Future<void> _pumpSheet(
               expectedRewardYen: expectedRewardYen,
               onComplete: onComplete,
               onSaveEdits: onSaveEdits,
+              onPauseAndSave: onPauseAndSave,
             ),
             child: const Text('OPEN'),
           ),
@@ -64,7 +66,7 @@ void main() {
 
       expect(find.text('見込時間：60分'), findsOneWidget);
       expect(find.text('¥1,500'), findsOneWidget);
-      expect(find.text('実際にかかった時間'), findsOneWidget);
+      expect(find.text('現状'), findsOneWidget);
     });
 
     testWidgets('見込時間 0 かつ start/end なしのとき "—" を表示', (tester) async {
@@ -241,6 +243,95 @@ void main() {
 
       // 失敗時はシートが開いたまま（保存ボタンが残る）
       expect(find.text('保存'), findsOneWidget);
+    });
+
+    testWidgets('未編集なら本文の下フリックでシートが閉じる', (tester) async {
+      await _pumpSheet(
+        tester,
+        task: _sampleTask(),
+        predictedMinutes: 60,
+        expectedRewardYen: 1500,
+        onComplete: ({required predictedMinutes, required actualMinutes}) async {},
+      );
+      expect(find.text('見込時間：60分'), findsOneWidget);
+
+      // スクロール最上部の状態で本文を下方向へフリック → シートごと閉じる
+      await tester.fling(
+        find.text('見込時間：60分'),
+        const Offset(0, 600),
+        2000,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('見込時間：60分'), findsNothing);
+    });
+
+    testWidgets('編集中に下フリックすると確認ダイアログが出て「破棄」で閉じる', (tester) async {
+      await _pumpSheet(
+        tester,
+        task: _sampleTask(),
+        predictedMinutes: 60,
+        expectedRewardYen: 1500,
+        onComplete: ({required predictedMinutes, required actualMinutes}) async {},
+      );
+
+      // タイトルを書き換えてダーティにする
+      await tester.enterText(
+        find.widgetWithText(TextField, 'テストタスク'),
+        '編集後タイトル',
+      );
+      await tester.pump();
+
+      await tester.fling(
+        find.text('見込時間：60分'),
+        const Offset(0, 600),
+        2000,
+      );
+      await tester.pumpAndSettle();
+
+      // 未保存ガードのダイアログが出て、シートは閉じない
+      expect(find.text('変更を保存しますか？'), findsOneWidget);
+      expect(find.text('見込時間：60分'), findsOneWidget);
+
+      await tester.tap(find.text('破棄'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('見込時間：60分'), findsNothing);
+    });
+
+    testWidgets('タイマー走行中に下フリックで閉じると onPauseAndSave が呼ばれる',
+        (tester) async {
+      bool pauseCalled = false;
+      await _pumpSheet(
+        tester,
+        task: _sampleTask(),
+        predictedMinutes: 60,
+        expectedRewardYen: 1500,
+        onComplete: ({required predictedMinutes, required actualMinutes}) async {},
+        onPauseAndSave:
+            ({required predictedMinutes, required actualMinutes}) async {
+          pauseCalled = true;
+        },
+      );
+
+      // タイマー開始（センターフラッシュ演出と1秒ティッカーが動き出す）
+      await tester.ensureVisible(find.byIcon(Icons.play_arrow_rounded));
+      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      await tester.pump();
+      // センターフラッシュ（約900ms）を消化
+      await tester.pump(const Duration(milliseconds: 1000));
+
+      await tester.fling(
+        find.text('見込時間：60分'),
+        const Offset(0, 600),
+        2000,
+      );
+      // 閉じる処理内でティッカーが止まるので、その後は settle できる
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+
+      expect(pauseCalled, isTrue);
+      expect(find.text('見込時間：60分'), findsNothing);
     });
   });
 }

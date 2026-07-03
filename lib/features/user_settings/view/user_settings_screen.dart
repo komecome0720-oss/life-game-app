@@ -78,61 +78,17 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
     );
   }
 
-  void _showBalanceAdjustDialog() {
-    final ctrl = TextEditingController();
-    bool isAdding = true;
-
-    showDialog<void>(
+  Future<void> _showBalanceAdjustDialog() async {
+    final result = await showDialog<_BalanceAdjustResult>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('所持金を増減'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ToggleButtons(
-                isSelected: [isAdding, !isAdding],
-                onPressed: (i) => setDialogState(() => isAdding = i == 0),
-                borderRadius: BorderRadius.circular(8),
-                children: const [
-                  Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text('受け取る (+)')),
-                  Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text('使う (−)')),
-                ],
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: ctrl,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                  labelText: '金額',
-                  prefixText: '¥',
-                  border: OutlineInputBorder(),
-                ),
-                autofocus: true,
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('キャンセル')),
-            TextButton(
-              onPressed: () async {
-                final amount = int.tryParse(ctrl.text) ?? 0;
-                Navigator.pop(ctx);
-                if (amount > 0) {
-                  final delta = isAdding ? amount : -amount;
-                  await ref.read(userSettingsProvider.notifier).adjustBalance(
-                        delta,
-                        title: isAdding ? '手動で受け取り' : '手動で使用',
-                      );
-                }
-              },
-              child: const Text('確定'),
-            ),
-          ],
-        ),
-      ),
+      builder: (ctx) => const _BalanceAdjustDialog(),
     );
+    if (result == null || result.delta == 0) return;
+    await ref.read(userSettingsProvider.notifier).adjustBalance(
+          result.delta,
+          title: result.delta > 0 ? '手動で受け取り' : '手動で使用',
+          note: result.note,
+        );
   }
 
   Future<void> _save() async {
@@ -262,14 +218,6 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
                       validator: (v) => _validatePositive(v, '時間')),
                   const SizedBox(height: 12),
                   HourlyRateDisplay(hourlyRate: _localHourlyRate),
-                  const SizedBox(height: 24),
-                  _SectionHeader('表示設定'),
-                  const SizedBox(height: 12),
-                  _DisplaySettings(
-                    settings: state.settings,
-                    onChanged: (updated) =>
-                        ref.read(userSettingsProvider.notifier).update(updated),
-                  ),
                   const SizedBox(height: 32),
                 ],
               ),
@@ -356,62 +304,96 @@ class _BalanceRow extends StatelessWidget {
   }
 }
 
-/// 表示設定（テーマ・週の始まり）。選択即時反映、保存ボタンで Firestore に永続化。
-class _DisplaySettings extends StatelessWidget {
-  const _DisplaySettings({required this.settings, required this.onChanged});
+/// 「所持金を増減」ダイアログの結果（増減額＋メモ）。
+class _BalanceAdjustResult {
+  const _BalanceAdjustResult({required this.delta, required this.note});
 
-  final UserSettings settings;
-  final ValueChanged<UserSettings> onChanged;
+  final int delta;
+  final String note;
+}
+
+/// 所持金を手動で増減するダイアログ。
+///
+/// TextEditingController を State で保持し `dispose()` で破棄する（フレームワークが
+/// 退場アニメーション完了後に破棄するため、コントローラーの use-after-dispose を防ぐ）。
+class _BalanceAdjustDialog extends StatefulWidget {
+  const _BalanceAdjustDialog();
+
+  @override
+  State<_BalanceAdjustDialog> createState() => _BalanceAdjustDialogState();
+}
+
+class _BalanceAdjustDialogState extends State<_BalanceAdjustDialog> {
+  final _amountCtrl = TextEditingController();
+  final _memoCtrl = TextEditingController();
+  bool _isAdding = true;
+
+  @override
+  void dispose() {
+    _amountCtrl.dispose();
+    _memoCtrl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final amount = int.tryParse(_amountCtrl.text) ?? 0;
+    if (amount <= 0) {
+      Navigator.pop(context);
+      return;
+    }
+    Navigator.pop(
+      context,
+      _BalanceAdjustResult(
+        delta: _isAdding ? amount : -amount,
+        note: _memoCtrl.text.trim(),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        InputDecorator(
-          decoration: const InputDecoration(
-            labelText: 'テーマ',
-            border: OutlineInputBorder(),
-            contentPadding:
-                EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          ),
-          child: SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'system', label: Text('自動')),
-              ButtonSegment(value: 'light', label: Text('ライト')),
-              ButtonSegment(value: 'dark', label: Text('ダーク')),
+    return AlertDialog(
+      title: const Text('所持金を増減'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ToggleButtons(
+            isSelected: [_isAdding, !_isAdding],
+            onPressed: (i) => setState(() => _isAdding = i == 0),
+            borderRadius: BorderRadius.circular(8),
+            children: const [
+              Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text('受け取る (+)')),
+              Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text('使う (−)')),
             ],
-            selected: {settings.themeMode},
-            showSelectedIcon: false,
-            onSelectionChanged: (set) =>
-                onChanged(settings.copyWith(themeMode: set.first)),
           ),
-        ),
-        const SizedBox(height: 12),
-        InputDecorator(
-          decoration: const InputDecoration(
-            labelText: '週の始まり',
-            border: OutlineInputBorder(),
-            contentPadding:
-                EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _amountCtrl,
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            decoration: const InputDecoration(
+              labelText: '金額',
+              prefixText: '¥',
+              border: OutlineInputBorder(),
+            ),
+            autofocus: true,
           ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<int>(
-              value: settings.weekStartDay,
-              isExpanded: true,
-              items: const [
-                DropdownMenuItem(value: DateTime.monday, child: Text('月曜日')),
-                DropdownMenuItem(value: DateTime.sunday, child: Text('日曜日')),
-                DropdownMenuItem(
-                    value: DateTime.saturday, child: Text('土曜日')),
-              ],
-              onChanged: (v) {
-                if (v == null) return;
-                onChanged(settings.copyWith(weekStartDay: v));
-              },
+          const SizedBox(height: 12),
+          TextField(
+            controller: _memoCtrl,
+            textInputAction: TextInputAction.done,
+            maxLines: 1,
+            maxLength: 50,
+            decoration: const InputDecoration(
+              labelText: 'メモ（任意）',
+              border: OutlineInputBorder(),
             ),
           ),
-        ),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('キャンセル')),
+        TextButton(onPressed: _submit, child: const Text('確定')),
       ],
     );
   }
