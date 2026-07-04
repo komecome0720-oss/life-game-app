@@ -165,30 +165,6 @@ class CalendarTaskSyncRepository {
         .update(data);
   }
 
-  /// タスクを完了状態に遷移し、予測時間・実績時間を記録する。
-  /// [actualMinutes] が null の場合は実績ログなしで完了（確認ダイアログで「はい」を選んだケース）。
-  Future<void> completeTask({
-    required String taskId,
-    required int predictedMinutes,
-    required int? actualMinutes,
-  }) async {
-    final uid = _auth.currentUser?.uid;
-    if (uid == null) throw Exception('Not authenticated');
-    final data = <String, dynamic>{
-      'isCompleted': true,
-      'completedAtUtc': FieldValue.serverTimestamp(),
-      'predictedMinutes': predictedMinutes,
-      'updatedAt': FieldValue.serverTimestamp(),
-    };
-    if (actualMinutes != null) data['actualMinutes'] = actualMinutes;
-    await _db
-        .collection('users')
-        .doc(uid)
-        .collection('tasks')
-        .doc(taskId)
-        .update(data);
-  }
-
   /// 未了のまま、入力中の予測時間・実績時間だけを保存する（「保存して中断」）。
   /// isCompleted は変更しない。
   Future<void> saveProgress({
