@@ -15,6 +15,16 @@ import 'package:task_manager/features/calendar_sync/model/google_account_info.da
 import 'package:task_manager/features/calendar_sync/viewmodel/calendar_sync_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
 
+/// テストで FakeFirebaseFirestore に差し替えるためのオーバーライドポイント。
+final firebaseFirestoreProvider = Provider<FirebaseFirestore>(
+  (_) => FirebaseFirestore.instance,
+);
+
+/// テストでモックに差し替えるためのオーバーライドポイント。
+final firebaseAuthProvider = Provider<FirebaseAuth>(
+  (_) => FirebaseAuth.instance,
+);
+
 final googleCalendarRepositoryProvider = Provider<GoogleCalendarRepository>(
   (_) => GoogleCalendarRepository(),
 );
@@ -50,9 +60,10 @@ final calendarColorsProvider = Provider<Map<String, Color>>((ref) {
 class CalendarVisibilityNotifier
     extends AsyncNotifier<Map<String, Set<String>>> {
   DocumentReference<Map<String, dynamic>>? _docRef() {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final uid = ref.read(firebaseAuthProvider).currentUser?.uid;
     if (uid == null) return null;
-    return FirebaseFirestore.instance
+    return ref
+        .read(firebaseFirestoreProvider)
         .collection('users')
         .doc(uid)
         .collection('settings')
@@ -85,13 +96,14 @@ class CalendarVisibilityNotifier
   }
 
   /// 指定アカウント×カレンダーの可視を設定。Firestore も更新。
-  Future<void> setVisible({
+  /// 書き込みに失敗した場合は state を更新前の値に戻し `false` を返す。
+  Future<bool> setVisible({
     required String accountId,
     required String calendarId,
     required bool visible,
   }) async {
-    final current = state.asData?.value ?? const <String, Set<String>>{};
-    final currentForAccount = current[accountId] ?? const <String>{};
+    final previous = state.asData?.value ?? const <String, Set<String>>{};
+    final currentForAccount = previous[accountId] ?? const <String>{};
     final nextForAccount = <String>{...currentForAccount};
     if (visible) {
       nextForAccount.add(calendarId);
@@ -99,11 +111,11 @@ class CalendarVisibilityNotifier
       nextForAccount.remove(calendarId);
     }
     state = AsyncValue.data({
-      ...current,
+      ...previous,
       accountId: nextForAccount,
     });
     final ref = _docRef();
-    if (ref == null) return;
+    if (ref == null) return true;
     try {
       await ref.set({
         'visible': {
@@ -111,8 +123,11 @@ class CalendarVisibilityNotifier
         },
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      return true;
     } catch (e) {
       debugPrint('CalendarVisibilityNotifier.setVisible error: $e');
+      state = AsyncValue.data(previous);
+      return false;
     }
   }
 
@@ -138,9 +153,10 @@ final calendarVisibilityMapProvider = Provider<Map<String, Set<String>>>((ref) {
 class CalendarDownloadNotifier
     extends AsyncNotifier<Map<String, Set<String>>> {
   DocumentReference<Map<String, dynamic>>? _docRef() {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final uid = ref.read(firebaseAuthProvider).currentUser?.uid;
     if (uid == null) return null;
-    return FirebaseFirestore.instance
+    return ref
+        .read(firebaseFirestoreProvider)
         .collection('users')
         .doc(uid)
         .collection('settings')
@@ -173,13 +189,14 @@ class CalendarDownloadNotifier
   }
 
   /// 指定アカウント×カレンダーのDLフラグを設定。Firestore も更新。
-  Future<void> setDownloaded({
+  /// 書き込みに失敗した場合は state を更新前の値に戻し `false` を返す。
+  Future<bool> setDownloaded({
     required String accountId,
     required String calendarId,
     required bool downloaded,
   }) async {
-    final current = state.asData?.value ?? const <String, Set<String>>{};
-    final currentForAccount = current[accountId] ?? const <String>{};
+    final previous = state.asData?.value ?? const <String, Set<String>>{};
+    final currentForAccount = previous[accountId] ?? const <String>{};
     final nextForAccount = <String>{...currentForAccount};
     if (downloaded) {
       nextForAccount.add(calendarId);
@@ -187,11 +204,11 @@ class CalendarDownloadNotifier
       nextForAccount.remove(calendarId);
     }
     state = AsyncValue.data({
-      ...current,
+      ...previous,
       accountId: nextForAccount,
     });
     final ref = _docRef();
-    if (ref == null) return;
+    if (ref == null) return true;
     try {
       await ref.set({
         'downloaded': {
@@ -199,8 +216,11 @@ class CalendarDownloadNotifier
         },
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      return true;
     } catch (e) {
       debugPrint('CalendarDownloadNotifier.setDownloaded error: $e');
+      state = AsyncValue.data(previous);
+      return false;
     }
   }
 
@@ -226,9 +246,10 @@ final calendarDownloadMapProvider = Provider<Map<String, Set<String>>>((ref) {
 class CalendarQuadrantNotifier
     extends AsyncNotifier<Map<String, Map<String, int>>> {
   DocumentReference<Map<String, dynamic>>? _docRef() {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final uid = ref.read(firebaseAuthProvider).currentUser?.uid;
     if (uid == null) return null;
-    return FirebaseFirestore.instance
+    return ref
+        .read(firebaseFirestoreProvider)
         .collection('users')
         .doc(uid)
         .collection('settings')
@@ -260,20 +281,21 @@ class CalendarQuadrantNotifier
     }
   }
 
-  Future<void> setQuadrant({
+  /// 書き込みに失敗した場合は state を更新前の値に戻し `false` を返す。
+  Future<bool> setQuadrant({
     required String accountId,
     required String calendarId,
     required int quadrantNumber,
   }) async {
-    final current = state.asData?.value ?? const <String, Map<String, int>>{};
+    final previous = state.asData?.value ?? const <String, Map<String, int>>{};
     final currentForAccount =
-        current[accountId] ?? const <String, int>{};
+        previous[accountId] ?? const <String, int>{};
     state = AsyncValue.data({
-      ...current,
+      ...previous,
       accountId: {...currentForAccount, calendarId: quadrantNumber},
     });
     final ref = _docRef();
-    if (ref == null) return;
+    if (ref == null) return true;
     try {
       await ref.set({
         'quadrants': {
@@ -281,8 +303,11 @@ class CalendarQuadrantNotifier
         },
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      return true;
     } catch (e) {
       debugPrint('CalendarQuadrantNotifier.setQuadrant error: $e');
+      state = AsyncValue.data(previous);
+      return false;
     }
   }
 

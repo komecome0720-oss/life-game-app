@@ -666,13 +666,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                             isDownloaded: isDownloaded,
                             quadrantNumber: qNum,
                             onVisibilityChanged: (on) async {
-                              await ref
+                              final ok = await ref
                                   .read(calendarVisibilityProvider.notifier)
                                   .setVisible(
                                     accountId: account.id,
                                     calendarId: cal.id,
                                     visible: on,
                                   );
+                              if (!ok && mounted) {
+                                _showErrorSnackBar('表示設定の保存に失敗しました');
+                              }
                             },
                             onDownloadChanged: (on) async {
                               await _handleDownloadToggle(
@@ -733,13 +736,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                                 }),
                               );
                               if (selected == null || selected == qNum) return;
-                              await ref
+                              final ok = await ref
                                   .read(calendarQuadrantProvider.notifier)
                                   .setQuadrant(
                                     accountId: account.id,
                                     calendarId: cal.id,
                                     quadrantNumber: selected,
                                   );
+                              if (!ok && mounted) {
+                                _showErrorSnackBar('象限設定の保存に失敗しました');
+                              }
                             },
                           );
                         },
@@ -795,22 +801,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         if (mounted) _showErrorSnackBar(msg);
         return;
       }
-      await ref
+      final dlOk = await ref
           .read(calendarDownloadProvider.notifier)
           .setDownloaded(
             accountId: accountId,
             calendarId: calendar.id,
             downloaded: true,
           );
+      if (!dlOk && mounted) _showErrorSnackBar('取り込み設定の保存に失敗しました');
       // タスクが見えないと不便なため、表示も自動でON
       if (!wasVisible) {
-        await ref
+        final visOk = await ref
             .read(calendarVisibilityProvider.notifier)
             .setVisible(
               accountId: accountId,
               calendarId: calendar.id,
               visible: true,
             );
+        if (!visOk && mounted) _showErrorSnackBar('表示設定の保存に失敗しました');
       }
       return;
     }
@@ -843,13 +851,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             calendarId: calendar.id,
             weekStartLocal: weekStart,
           );
-      await ref
+      final dlOk = await ref
           .read(calendarDownloadProvider.notifier)
           .setDownloaded(
             accountId: accountId,
             calendarId: calendar.id,
             downloaded: false,
           );
+      if (!dlOk && mounted) _showErrorSnackBar('取り込み設定の保存に失敗しました');
     } catch (e) {
       if (mounted) _showErrorSnackBar('削除に失敗しました: $e');
     }
@@ -1292,13 +1301,19 @@ class _SchedulePage extends ConsumerWidget {
                         defaultQuadrant: defaultQ,
                       );
                   if (!ok) return;
-                  await ref
+                  final dlOk = await ref
                       .read(calendarDownloadProvider.notifier)
                       .setDownloaded(
                         accountId: accountId,
                         calendarId: key.calendarId,
                         downloaded: true,
                       );
+                  if (!dlOk && context.mounted) {
+                    showAppSnackBar(
+                      context,
+                      const SnackBar(content: Text('取り込み設定の保存に失敗しました')),
+                    );
+                  }
                 },
               ),
       ),
