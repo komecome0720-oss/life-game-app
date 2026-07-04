@@ -79,7 +79,11 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
     if (_descCtrl.text.trim() != (widget.task.description ?? '')) return true;
     if (_urgency != widget.task.urgency) return true;
     if (_importance != widget.task.importance) return true;
-    if (_estimatedMinutes != (widget.task.estimatedMinutes ?? 30)) return true;
+    final defaultMinutes =
+        ref.read(userSettingsProvider).settings.defaultTodoEstimatedMinutes;
+    if (_estimatedMinutes != (widget.task.estimatedMinutes ?? defaultMinutes)) {
+      return true;
+    }
     return false;
   }
 
@@ -95,7 +99,8 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
     }
     _urgency = widget.task.urgency;
     _importance = widget.task.importance;
-    _estimatedMinutes = widget.task.estimatedMinutes ?? 30;
+    _estimatedMinutes = widget.task.estimatedMinutes ??
+        ref.read(userSettingsProvider).settings.defaultTodoEstimatedMinutes;
     _quadrant = QuadrantX.from(urgency: _urgency, importance: _importance);
   }
 
@@ -344,6 +349,8 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
             outcome: outcome,
             cumulativeTaskCountBefore: result.cumulativeTaskCountBefore,
             cumulativeTaskCountAfter: result.cumulativeTaskCountAfter,
+            predictedMinutes: _estimatedMinutes,
+            actualMinutes: actual,
           ),
         ),
       );

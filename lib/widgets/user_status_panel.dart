@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:task_manager/features/prediction_accuracy/providers/prediction_accuracy_providers.dart';
 import 'package:task_manager/features/user_settings/model/user_settings.dart';
 import 'package:task_manager/features/user_settings/view/user_settings_screen.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
@@ -69,27 +70,20 @@ class UserStatusPanel extends ConsumerWidget {
                   ),
                 )
               else ...[
-                _line(
+                statusLine(
                   Icons.badge_outlined,
                   '名前',
                   settings.displayName.isEmpty ? '—' : settings.displayName,
                   text,
                 ),
                 UserStatusLevelLine(settings: settings),
-                _line(
+                statusLine(
                   Icons.savings_outlined,
                   '所持金',
                   '¥${_fmt(settings.totalEarned)}',
                   text,
                 ),
-                _line(
-                  Icons.schedule,
-                  '時間単価',
-                  settings.hourlyRate > 0
-                      ? '¥${_fmt(settings.hourlyRate.round())}/h'
-                      : '—',
-                  text,
-                ),
+                const _PredictionAccuracyLine(),
               ],
             ],
           ),
@@ -105,39 +99,41 @@ class UserStatusPanel extends ConsumerWidget {
         s.monthlyBudget == 0;
   }
 
-  Widget _line(IconData icon, String label, String value, TextTheme text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 16),
-          const SizedBox(width: 6),
-          Expanded(
-            flex: 4,
-            child: Text(
-              label,
-              style: text.bodySmall,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          Expanded(
-            flex: 6,
-            child: Text(
-              value,
-              style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-              textAlign: TextAlign.right,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   String _fmt(int n) => n.toString().replaceAllMapped(
     RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
     (m) => '${m[1]},',
+  );
+}
+
+/// ステータスパネル内の1行（アイコン＋ラベル＋値）。[UserStatusPanel] と
+/// [_PredictionAccuracyLine] で共有する。
+Widget statusLine(IconData icon, String label, String value, TextTheme text) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 4),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 16),
+        const SizedBox(width: 6),
+        Expanded(
+          flex: 4,
+          child: Text(
+            label,
+            style: text.bodySmall,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        Expanded(
+          flex: 6,
+          child: Text(
+            value,
+            style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+            textAlign: TextAlign.right,
+          ),
+        ),
+      ],
+    ),
   );
 }
 
@@ -198,5 +194,21 @@ class UserStatusLevelLine extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _PredictionAccuracyLine extends ConsumerWidget {
+  const _PredictionAccuracyLine();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final text = Theme.of(context).textTheme;
+    final stats = ref.watch(predictionAccuracyStatsProvider).asData?.value;
+    final percent = stats?.percentRounded;
+    final title = stats?.title;
+    final value = percent == null
+        ? '—'
+        : '${percent >= 0 ? '+' : ''}$percent%　$title';
+    return statusLine(Icons.schedule, '時間予測精度', value, text);
   }
 }

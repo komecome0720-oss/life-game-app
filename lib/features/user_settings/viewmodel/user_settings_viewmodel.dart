@@ -158,10 +158,15 @@ class UserSettingsViewModel extends Notifier<UserSettingsState> {
     }
   }
 
-  /// 表示設定（テーマ・週の始まり）だけを部分的に永続化する。
+  /// 一般・ToDo・カレンダーの環境設定を部分的に永続化する。
   /// 全体 [save] と違い `totalEarned` などを書き戻さないため、
   /// 設定画面の自動保存で残高等を stale 値に上書きしない。
-  Future<bool> saveDisplaySettings({String? themeMode, int? weekStartDay}) async {
+  Future<bool> savePreferences({
+    String? themeMode,
+    int? weekStartDay,
+    int? defaultTodoEstimatedMinutes,
+    int? defaultCalendarDurationMinutes,
+  }) async {
     final uid = _uid;
     if (uid == null) return false;
     state = state.copyWith(isSaving: true);
@@ -169,6 +174,12 @@ class UserSettingsViewModel extends Notifier<UserSettingsState> {
       final data = <String, dynamic>{'updatedAt': FieldValue.serverTimestamp()};
       if (themeMode != null) data['themeMode'] = themeMode;
       if (weekStartDay != null) data['weekStartDay'] = weekStartDay;
+      if (defaultTodoEstimatedMinutes != null) {
+        data['defaultTodoEstimatedMinutes'] = defaultTodoEstimatedMinutes;
+      }
+      if (defaultCalendarDurationMinutes != null) {
+        data['defaultCalendarDurationMinutes'] = defaultCalendarDurationMinutes;
+      }
       await _db
           .collection('users')
           .doc(uid)

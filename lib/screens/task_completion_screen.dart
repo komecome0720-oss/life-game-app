@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:task_manager/features/prediction_accuracy/model/prediction_accuracy_config.dart';
 import 'package:task_manager/features/roulette/model/reward_config.dart';
 import 'package:task_manager/features/roulette/model/roulette_outcome.dart';
 import 'package:task_manager/features/roulette/widgets/roulette_board.dart';
@@ -17,6 +18,8 @@ class TaskCompletionScreen extends StatefulWidget {
     this.outcome,
     this.cumulativeTaskCountBefore,
     this.cumulativeTaskCountAfter,
+    this.predictedMinutes,
+    this.actualMinutes,
   });
 
   final String taskTitle;
@@ -33,6 +36,10 @@ class TaskCompletionScreen extends StatefulWidget {
   final int? cumulativeTaskCountBefore;
   final int? cumulativeTaskCountAfter;
 
+  /// 今回のタスクの予測・実績時間（分）。両方揃っている場合のみ今回の精度を表示する。
+  final int? predictedMinutes;
+  final int? actualMinutes;
+
   @override
   State<TaskCompletionScreen> createState() => _TaskCompletionScreenState();
 }
@@ -47,6 +54,17 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
   _RoulettePhase _phase = _RoulettePhase.waiting;
 
   bool get _hasBoard => widget.outcome?.probabilities != null;
+
+  int? get _thisTaskErrorPercent {
+    final predicted = widget.predictedMinutes;
+    final actual = widget.actualMinutes;
+    if (predicted == null || predicted <= 0 || actual == null) return null;
+    final error = PredictionAccuracyConfig.errorFor(
+      predictedMinutes: predicted,
+      actualMinutes: actual,
+    );
+    return (error * 100).round();
+  }
 
   @override
   void initState() {
@@ -158,6 +176,15 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
                   textAlign: TextAlign.center,
                   style: text.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700, color: scheme.primary),
+                ),
+              ],
+              if (_thisTaskErrorPercent != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '今回の予測精度：${_thisTaskErrorPercent! >= 0 ? '+' : ''}$_thisTaskErrorPercent%'
+                  '（予測${widget.predictedMinutes}分→実績${widget.actualMinutes}分）',
+                  textAlign: TextAlign.center,
+                  style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                 ),
               ],
               const SizedBox(height: 8),

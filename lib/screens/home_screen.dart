@@ -237,6 +237,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       task: task,
       predictedMinutes: predictedMinutes,
       expectedRewardYen: expectedReward,
+      defaultDurationMinutes: settings.defaultCalendarDurationMinutes,
       calcReward: (minutes) {
         final s = ref.read(userSettingsProvider).settings;
         return _calcReward(
@@ -390,6 +391,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 outcome: outcome,
                 cumulativeTaskCountBefore: result.cumulativeTaskCountBefore,
                 cumulativeTaskCountAfter: result.cumulativeTaskCountAfter,
+                predictedMinutes: predictedMinutes,
+                actualMinutes: actualMinutes,
               ),
             ),
           );
@@ -462,10 +465,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   // ── 空スロットタップでの予定追加 ───────────────────────────────
 
   Future<void> _handleEmptyTap(DateTime initialStart) async {
+    final defaultDuration = ref
+        .read(userSettingsProvider)
+        .settings
+        .defaultCalendarDurationMinutes;
     final result = await showModalBottomSheet<QuickCreateResult>(
       context: context,
       isScrollControlled: true,
-      builder: (ctx) => QuickCreateSheet(initialStart: initialStart),
+      builder: (ctx) => QuickCreateSheet(
+        initialStart: initialStart,
+        initialDurationMinutes: defaultDuration,
+      ),
     );
     if (result == null || !mounted) return;
     final (:title, :durationMinutes, :quadrant) = result;

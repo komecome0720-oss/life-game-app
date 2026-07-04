@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
+import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/utils/app_messenger.dart';
 import 'package:task_manager/widgets/message_guard.dart';
@@ -100,6 +101,11 @@ class _TaskEditorScreenState extends ConsumerState<TaskEditorScreen> {
   RecurrencePreset _recurrence = RecurrencePreset.none;
   bool _saving = false;
 
+  Duration get _defaultDuration => Duration(
+        minutes:
+            ref.read(userSettingsProvider).settings.defaultCalendarDurationMinutes,
+      );
+
   @override
   void initState() {
     super.initState();
@@ -115,17 +121,17 @@ class _TaskEditorScreenState extends ConsumerState<TaskEditorScreen> {
       if (widget.initialStart != null && widget.mode == TaskEditorMode.create) {
         final duration = (initial.end != null && initial.start != null)
             ? initial.end!.difference(initial.start!)
-            : const Duration(hours: 1);
+            : _defaultDuration;
         _start = widget.initialStart!;
         _end = _start.add(duration);
       } else {
         _start = initial.start ?? DateTime.now();
-        _end = initial.end ?? _start.add(const Duration(hours: 1));
+        _end = initial.end ?? _start.add(_defaultDuration);
       }
     } else {
       final base = widget.initialStart ?? _roundedNextHour(DateTime.now());
       _start = base;
-      _end = base.add(const Duration(hours: 1));
+      _end = base.add(_defaultDuration);
     }
   }
 
@@ -158,16 +164,16 @@ class _TaskEditorScreenState extends ConsumerState<TaskEditorScreen> {
         final shift = merged.difference(_start);
         _start = merged;
         if (_end.isBefore(_start)) {
-          _end = _start.add(const Duration(hours: 1));
+          _end = _start.add(_defaultDuration);
         } else {
           final shifted = _end.add(shift);
           _end = shifted.isBefore(_start)
-              ? _start.add(const Duration(hours: 1))
+              ? _start.add(_defaultDuration)
               : shifted;
         }
       } else {
         _end = merged;
-        if (_end.isBefore(_start)) _end = _start.add(const Duration(hours: 1));
+        if (_end.isBefore(_start)) _end = _start.add(_defaultDuration);
       }
     });
   }
@@ -184,10 +190,10 @@ class _TaskEditorScreenState extends ConsumerState<TaskEditorScreen> {
           base.year, base.month, base.day, picked.hour, picked.minute);
       if (isStart) {
         _start = merged;
-        if (_end.isBefore(_start)) _end = _start.add(const Duration(hours: 1));
+        if (_end.isBefore(_start)) _end = _start.add(_defaultDuration);
       } else {
         _end = merged;
-        if (_end.isBefore(_start)) _end = _start.add(const Duration(hours: 1));
+        if (_end.isBefore(_start)) _end = _start.add(_defaultDuration);
       }
     });
   }

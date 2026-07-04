@@ -23,6 +23,8 @@ class UserSettings {
     this.meditationGoalMinutes = 0,
     this.themeMode = 'system',
     this.weekStartDay = DateTime.monday,
+    this.defaultTodoEstimatedMinutes = 30,
+    this.defaultCalendarDurationMinutes = 60,
   });
 
   final String displayName;
@@ -63,6 +65,12 @@ class UserSettings {
 
   /// DateTime.monday(1) | DateTime.sunday(7) | DateTime.saturday(6)
   final int weekStartDay;
+
+  /// ToDo新規作成時の見込時間デフォルト（分）。
+  final int defaultTodoEstimatedMinutes;
+
+  /// カレンダー新規タスク作成時の所要時間デフォルト（分）。
+  final int defaultCalendarDurationMinutes;
 
   double get hourlyRate {
     final totalMinutes = monthlyQuestDays * dailyQuestMinutes;
@@ -106,6 +114,8 @@ class UserSettings {
     int? meditationGoalMinutes,
     String? themeMode,
     int? weekStartDay,
+    int? defaultTodoEstimatedMinutes,
+    int? defaultCalendarDurationMinutes,
   }) {
     return UserSettings(
       displayName: displayName ?? this.displayName,
@@ -130,6 +140,10 @@ class UserSettings {
           meditationGoalMinutes ?? this.meditationGoalMinutes,
       themeMode: themeMode ?? this.themeMode,
       weekStartDay: weekStartDay ?? this.weekStartDay,
+      defaultTodoEstimatedMinutes:
+          defaultTodoEstimatedMinutes ?? this.defaultTodoEstimatedMinutes,
+      defaultCalendarDurationMinutes:
+          defaultCalendarDurationMinutes ?? this.defaultCalendarDurationMinutes,
     );
   }
 
@@ -183,6 +197,10 @@ class UserSettings {
           (data['meditationGoalMinutes'] as num?)?.toInt() ?? 0,
       themeMode: data['themeMode'] as String? ?? 'system',
       weekStartDay: (data['weekStartDay'] as num?)?.toInt() ?? DateTime.monday,
+      defaultTodoEstimatedMinutes:
+          (data['defaultTodoEstimatedMinutes'] as num?)?.toInt() ?? 30,
+      defaultCalendarDurationMinutes:
+          (data['defaultCalendarDurationMinutes'] as num?)?.toInt() ?? 60,
     );
   }
 
@@ -209,6 +227,8 @@ class UserSettings {
       'meditationGoalMinutes': meditationGoalMinutes,
       'themeMode': themeMode,
       'weekStartDay': weekStartDay,
+      'defaultTodoEstimatedMinutes': defaultTodoEstimatedMinutes,
+      'defaultCalendarDurationMinutes': defaultCalendarDurationMinutes,
       'updatedAt': FieldValue.serverTimestamp(),
     };
   }

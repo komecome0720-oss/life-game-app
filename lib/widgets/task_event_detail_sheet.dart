@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:task_manager/features/prediction_accuracy/model/prediction_accuracy_config.dart';
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/theme/app_tokens.dart';
@@ -64,6 +65,7 @@ Future<void> showTaskEventDetailSheet({
   required int predictedMinutes,
   required int expectedRewardYen,
   required TaskCompleteCallback onComplete,
+  int defaultDurationMinutes = 60,
   int Function(int minutes)? calcReward,
   TaskSaveEditsCallback? onSaveEdits,
   Future<void> Function()? onTimerStart,
@@ -80,6 +82,7 @@ Future<void> showTaskEventDetailSheet({
       predictedMinutes: predictedMinutes,
       expectedRewardYen: expectedRewardYen,
       onComplete: onComplete,
+      defaultDurationMinutes: defaultDurationMinutes,
       calcReward: calcReward,
       onSaveEdits: onSaveEdits,
       onTimerStart: onTimerStart,
@@ -114,6 +117,7 @@ class _TaskEventDetailBody extends StatefulWidget {
     required this.predictedMinutes,
     required this.expectedRewardYen,
     required this.onComplete,
+    this.defaultDurationMinutes = 60,
     this.calcReward,
     this.onSaveEdits,
     this.onTimerStart,
@@ -129,6 +133,7 @@ class _TaskEventDetailBody extends StatefulWidget {
   final int predictedMinutes;
   final int expectedRewardYen;
   final TaskCompleteCallback onComplete;
+  final int defaultDurationMinutes;
   final int Function(int minutes)? calcReward;
   final TaskSaveEditsCallback? onSaveEdits;
   final Future<void> Function()? onTimerStart;
@@ -403,7 +408,8 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
     if (cur == null) return;
     final picked = await _pickTime(cur);
     if (picked == null) return;
-    final newEnd = _currentEnd ?? picked.add(const Duration(minutes: 30));
+    final newEnd = _currentEnd ??
+        picked.add(Duration(minutes: widget.defaultDurationMinutes));
     if (!picked.isBefore(newEnd)) {
       _showInvalidRangeMessage();
       return;
@@ -416,7 +422,8 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
     if (cur == null) return;
     final picked = await _pickTime(cur);
     if (picked == null) return;
-    final newStart = _currentStart ?? picked.subtract(const Duration(minutes: 30));
+    final newStart = _currentStart ??
+        picked.subtract(Duration(minutes: widget.defaultDurationMinutes));
     if (!newStart.isBefore(picked)) {
       _showInvalidRangeMessage();
       return;
@@ -687,12 +694,14 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
                 onSelect: (q) => setState(() => _currentQuadrant = q),
                 enabled: !_isCompleted,
               ),
-              // 報酬カード（ライブ更新）
+              // 報酬カード（完了済みは実績、未完了はライブ更新の見込み）
               const SizedBox(height: 12),
-              _RewardCard(
-                predictedLabel: predictedLabel,
-                expectedRewardYen: _liveRewardYen,
-              ),
+              _isCompleted
+                  ? _CompletedSummaryCard(task: widget.task)
+                  : _RewardCard(
+                      predictedLabel: predictedLabel,
+                      expectedRewardYen: _liveRewardYen,
+                    ),
               const SizedBox(height: 16),
               _TimerAndActualRow(
                 isCompleted: _isCompleted,
@@ -799,6 +808,82 @@ class _RewardCard extends StatelessWidget {
               ),
             ],
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 完了済みタスクの実績カード：実際に加算された金額と、このタスクの予測精度を表示する。
+class _CompletedSummaryCard extends StatelessWidget {
+  const _CompletedSummaryCard({required this.task});
+
+  final CalendarTask task;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    final rewardYen = task.completedRewardYen ?? task.rewardYen;
+    final predicted = task.predictedMinutes;
+    final actual = task.actualMinutes;
+    String? accuracyLabel;
+    if (predicted != null && predicted > 0 && actual != null) {
+      final percent = (PredictionAccuracyConfig.errorFor(
+                predictedMinutes: predicted,
+                actualMinutes: actual,
+              ) *
+              100)
+          .round();
+      accuracyLabel =
+          '予測$predicted分 → 実績$actual分（${percent >= 0 ? '+' : ''}$percent%）';
+    }
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer.withValues(alpha: 0.55),
+        borderRadius: AppRadius.card,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.paid_outlined, color: scheme.primary),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  '獲得済み金額',
+                  style: text.bodySmall?.copyWith(color: scheme.onPrimaryContainer),
+                ),
+              ),
+              Text(
+                '¥${_formatYen(rewardYen)}',
+                style: text.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w900,
+                  color: scheme.primary,
+                ),
+              ),
+            ],
+          ),
+          if (accuracyLabel != null) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              children: [
+                Icon(Icons.schedule, size: 18, color: scheme.primary),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    accuracyLabel,
+                    style: text.bodyMedium?.copyWith(
+                      color: scheme.onPrimaryContainer,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );

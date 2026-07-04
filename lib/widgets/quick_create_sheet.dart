@@ -12,9 +12,14 @@ typedef QuickCreateResult = ({
 /// 空スロットタップから呼び出される予定作成シート。
 /// 結果は [QuickCreateResult]。キャンセル時は null。
 class QuickCreateSheet extends StatefulWidget {
-  const QuickCreateSheet({super.key, required this.initialStart});
+  const QuickCreateSheet({
+    super.key,
+    required this.initialStart,
+    this.initialDurationMinutes = 60,
+  });
 
   final DateTime initialStart;
+  final int initialDurationMinutes;
 
   @override
   State<QuickCreateSheet> createState() => _QuickCreateSheetState();
@@ -22,10 +27,16 @@ class QuickCreateSheet extends StatefulWidget {
 
 class _QuickCreateSheetState extends State<QuickCreateSheet> {
   final _controller = TextEditingController();
-  int _durationMinutes = 60;
+  late int _durationMinutes = widget.initialDurationMinutes;
   Quadrant _selectedQuadrant = Quadrant.urgentImportant;
 
-  static const _durations = [15, 30, 45, 60, 90, 120, 180];
+  static const _presetDurations = [15, 30, 45, 60, 90, 120, 180];
+
+  List<int> get _durations => {
+        ..._presetDurations,
+        widget.initialDurationMinutes,
+      }.toList()
+        ..sort();
 
   @override
   void dispose() {

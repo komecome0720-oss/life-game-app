@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
 import 'package:task_manager/features/todo/providers/todo_providers.dart';
+import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
 
 /// ToDo マトリクスの4象限。urgency×importance の組合せをキーにする。
@@ -124,6 +125,8 @@ class TodoMatrixViewModel {
       urgency: quadrant.urgency,
       importance: quadrant.importance,
       orderIndex: minIndex,
+      estimatedMinutes:
+          ref.read(userSettingsProvider).settings.defaultTodoEstimatedMinutes,
     );
   }
 
