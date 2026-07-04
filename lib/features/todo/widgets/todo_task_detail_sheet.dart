@@ -268,6 +268,7 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
       if (ok != true) return;
     }
 
+    if (!mounted) return;
     setState(() => _isCompleting = true);
 
     // 1. 編集内容を先に保存（タイトル・description・象限・所要時間）
