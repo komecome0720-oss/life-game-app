@@ -8,6 +8,7 @@ import 'package:task_manager/features/auth/providers/auth_providers.dart';
 import 'package:task_manager/features/calendar_sync/model/google_account_info.dart';
 import 'package:task_manager/features/calendar_sync/model/google_calendar_source.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
+import 'package:task_manager/features/economy/model/reward_calculator.dart';
 import 'package:task_manager/features/economy/providers/economy_providers.dart';
 import 'package:task_manager/features/health/model/health_category.dart';
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
@@ -218,7 +219,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     required int fallbackYen,
   }) {
     if (hourlyRate > 0 && minutes > 0) {
-      return (hourlyRate * minutes / 60).round();
+      return rewardYenFor(hourlyRate: hourlyRate, minutes: minutes);
     }
     return fallbackYen;
   }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:task_manager/features/economy/model/reward_calculator.dart';
 import 'package:task_manager/features/economy/providers/economy_providers.dart';
 import 'package:task_manager/features/roulette/model/roulette_outcome.dart';
 import 'package:task_manager/features/roulette/providers/roulette_providers.dart';
@@ -221,7 +222,7 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
     final settings = ref.read(userSettingsProvider).settings;
     final minutesForReward = hasActual ? fieldMinutes : _estimatedMinutes;
     final reward = settings.hourlyRate > 0
-        ? (settings.hourlyRate * minutesForReward / 60).round()
+        ? rewardYenFor(hourlyRate: settings.hourlyRate, minutes: minutesForReward)
         : widget.task.rewardYen;
 
     if (!hasActual) {
@@ -473,7 +474,7 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
     // 報酬プレビュー
     final settings = ref.read(userSettingsProvider).settings;
     final rewardYen = settings.hourlyRate > 0
-        ? (settings.hourlyRate * _estimatedMinutes / 60).round()
+        ? rewardYenFor(hourlyRate: settings.hourlyRate, minutes: _estimatedMinutes)
         : widget.task.rewardYen;
 
     return PopScope(
