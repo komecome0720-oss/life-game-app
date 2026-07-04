@@ -106,8 +106,11 @@ class TodoMatrixViewModel {
   final Ref ref;
 
   /// 新規 ToDo を作成。[quadrant] 省略時は領域1（×緊急・重要）。
-  /// 象限の先頭に出すため、既存タスクの最小 orderIndex - 1 を採番する
+  /// 象限の先頭に出すため、現在時刻ベースの負の値を orderIndex に採番する
   /// （0 固定だと手動並び替え後の既存タスクとタイになり順序が不安定になるため）。
+  /// 「既存最大/最小 ± 1」方式は、ストリームが未更新のまま連続作成すると
+  /// 同じ orderIndex を採番してしまう（トランザクション不要で回避するため
+  /// millisecondsSinceEpoch ベースにしている）。
   Future<void> createTodo(
     String title, {
     Quadrant quadrant = Quadrant.notUrgentImportant,
@@ -115,16 +118,12 @@ class TodoMatrixViewModel {
     final titleTrim = title.trim();
     if (titleTrim.isEmpty) return;
     final repo = ref.read(todoRepositoryProvider);
-    final all = ref.read(todosStreamProvider).asData?.value ?? const [];
-    final quadrantTasks = filterByQuadrant(all, quadrant);
-    final minIndex = quadrantTasks.isEmpty
-        ? 0
-        : quadrantTasks.map((t) => t.orderIndex).reduce((a, b) => a < b ? a : b) - 1;
+    final orderIndex = -DateTime.now().millisecondsSinceEpoch;
     await repo.createTodo(
       title: titleTrim,
       urgency: quadrant.urgency,
       importance: quadrant.importance,
-      orderIndex: minIndex,
+      orderIndex: orderIndex,
       estimatedMinutes:
           ref.read(userSettingsProvider).settings.defaultTodoEstimatedMinutes,
     );
