@@ -45,10 +45,6 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
     _budgetCtrl = TextEditingController();
     _daysCtrl = TextEditingController();
     _minutesCtrl = TextEditingController();
-
-    for (final ctrl in [_budgetCtrl, _daysCtrl, _minutesCtrl]) {
-      ctrl.addListener(() => setState(() {}));
-    }
   }
 
   @override
@@ -218,7 +214,15 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
                   SettingsNumberField(controller: _minutesCtrl, label: '③ 1日の想定クエスト時間', suffix: '分',
                       validator: (v) => _validatePositive(v, '時間')),
                   const SizedBox(height: 12),
-                  HourlyRateDisplay(hourlyRate: _localHourlyRate),
+                  // 時間単価プレビューは3フィールドの入力ごとに再計算が必要なため、
+                  // 画面全体ではなくここだけを部分再ビルドする。
+                  ListenableBuilder(
+                    listenable: Listenable.merge(
+                      [_budgetCtrl, _daysCtrl, _minutesCtrl],
+                    ),
+                    builder: (context, _) =>
+                        HourlyRateDisplay(hourlyRate: _localHourlyRate),
+                  ),
                   const SizedBox(height: 32),
                 ],
               ),
