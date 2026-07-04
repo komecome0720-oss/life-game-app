@@ -48,12 +48,19 @@ class RouletteRepository {
     });
   }
 
+  /// 未使用チケット在庫の現実的な上限。
+  static const _unusedTicketsLimit = 100;
+
   /// 未使用チケットの在庫ストリーム（新しい順）。
   /// where(used) + orderBy(wonAt) の複合インデックスを避けるためソートはクライアント側で行う。
   Stream<List<RewardTicket>> watchUnusedTickets() {
     final uid = _auth.currentUser?.uid;
     if (uid == null) return Stream.value(const []);
-    return _ticketsCol(uid).where('used', isEqualTo: false).snapshots().map(
+    return _ticketsCol(uid)
+        .where('used', isEqualTo: false)
+        .limit(_unusedTicketsLimit)
+        .snapshots()
+        .map(
           (snap) => snap.docs.map(RewardTicket.fromFirestore).toList()
             ..sort((a, b) => b.wonAt.compareTo(a.wonAt)),
         );

@@ -17,12 +17,16 @@ class TodoRepository {
   CollectionReference<Map<String, dynamic>> _col(String uid) =>
       _db.collection('users').doc(uid).collection('tasks');
 
+  /// ToDoマトリクスの現実的な上限（象限4つ合計）。
+  static const _todoLimit = 200;
+
   /// isTodo=true の全タスクを監視する。orderIndex 昇順。
   Stream<List<CalendarTask>> watchTodos() {
     final uid = _uid;
     if (uid == null) return Stream.value(const []);
     return _col(uid)
         .where('isTodo', isEqualTo: true)
+        .limit(_todoLimit)
         .snapshots()
         .map((snap) {
       final list = snap.docs

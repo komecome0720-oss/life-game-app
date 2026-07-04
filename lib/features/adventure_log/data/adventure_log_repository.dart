@@ -14,6 +14,9 @@ class AdventureLogRepository {
 
   static const _backfillMarkerKey = 'adventureEntriesBackfillV1CompletedAtUtc';
 
+  /// 一覧表示の現実的な上限（ページネーションは未実装のため先行してlimitのみ導入）。
+  static const _entriesLimit = 100;
+
   final FirebaseFirestore _db;
   final FirebaseAuth _auth;
   Future<void>? _backfillFuture;
@@ -269,6 +272,7 @@ class AdventureLogRepository {
       userRef
           .collection('adventure_entries')
           .orderBy('occurredAtUtc', descending: true)
+          .limit(_entriesLimit)
           .snapshots()
           .listen((snapshot) {
             ledgerEntries = snapshot.docs
