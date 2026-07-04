@@ -13,7 +13,7 @@ void main() {
     );
     expect(
       RouletteBoard.colorFor(RouletteCategory.chu, scheme),
-      const Color(0xFFFFC107),
+      const Color(0xFFF0A72B),
     );
     expect(
       RouletteBoard.colorFor(RouletteCategory.sho, scheme),

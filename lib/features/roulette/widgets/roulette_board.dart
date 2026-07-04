@@ -22,7 +22,7 @@ class RouletteBoard extends StatelessWidget {
   static Color colorFor(RouletteCategory category, ColorScheme scheme) {
     return switch (category) {
       RouletteCategory.jackpot => const Color(0xFFE53935), // red
-      RouletteCategory.chu => const Color(0xFFFFC107), // yellow
+      RouletteCategory.chu => const Color(0xFFF0A72B), // amber
       RouletteCategory.sho => const Color(0xFF1E88E5), // blue
       RouletteCategory.miss => const Color(0xFFA7B0BC),
     };
