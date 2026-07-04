@@ -353,8 +353,33 @@ Color? _parseHexColor(String hex) {
   return value == null ? null : Color(value);
 }
 
+typedef _CalendarWeekKey = ({
+  String accountId,
+  String calendarId,
+  DateTime weekStart,
+});
+
+/// カレンダー単位・週単位の生イベント取得（可視設定には依存しない）。
+/// 一定時間キャッシュすることで、画面遷移や可視設定トグルのたびに
+/// 同じ週を再フェッチしないようにする。
+final _calendarWeekEventsProvider = FutureProvider.autoDispose
+    .family<List<CalendarTask>, _CalendarWeekKey>((ref, key) async {
+  final link = ref.keepAlive();
+  final timer = Timer(const Duration(minutes: 15), link.close);
+  ref.onDispose(timer.cancel);
+
+  final repo = ref.read(googleCalendarRepositoryProvider);
+  return repo.fetchWeekEvents(
+    calendarId: key.calendarId,
+    weekStartLocal: key.weekStart,
+    accountId: key.accountId,
+  );
+});
+
 /// 指定週のリモート（Google Calendar）イベントを取得するプロバイダ。
 /// 仕様に従い Firestore には保存しない。currentGoogleAccount と可視カレンダー設定に連動。
+/// 実際のフェッチ（ネットワークI/O）は [_calendarWeekEventsProvider] でキャッシュされるため、
+/// 可視設定のトグルはここでの再フィルタのみで完結し、表示中の他カレンダーの再フェッチは発生しない。
 final remoteWeekEventsProvider = FutureProvider.autoDispose
     .family<List<CalendarTask>, DateTime>((ref, weekStart) async {
   final account = ref.watch(currentGoogleAccountProvider);
@@ -363,14 +388,15 @@ final remoteWeekEventsProvider = FutureProvider.autoDispose
   final visibleCalIds = visibilityMap[account.id] ?? const <String>{};
   if (visibleCalIds.isEmpty) return const [];
 
-  final repo = ref.read(googleCalendarRepositoryProvider);
   final collected = <CalendarTask>[];
   for (final calId in visibleCalIds) {
     try {
-      final events = await repo.fetchWeekEvents(
-        calendarId: calId,
-        weekStartLocal: weekStart,
-        accountId: account.id,
+      final events = await ref.watch(
+        _calendarWeekEventsProvider((
+          accountId: account.id,
+          calendarId: calId,
+          weekStart: weekStart,
+        )).future,
       );
       collected.addAll(events);
     } catch (e) {
