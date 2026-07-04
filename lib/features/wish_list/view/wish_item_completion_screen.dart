@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:task_manager/theme/app_tokens.dart';
 import 'package:task_manager/widgets/message_guard.dart';
 
 class WishItemCompletionScreen extends StatelessWidget {
@@ -17,7 +18,6 @@ class WishItemCompletionScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
 
     return Scaffold(
@@ -29,7 +29,7 @@ class WishItemCompletionScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 24),
-              Icon(Icons.celebration, size: 72, color: scheme.primary),
+              Icon(Icons.celebration, size: 72, color: AppColors.reward(context)),
               const SizedBox(height: 16),
               Text(
                 'おめでとう、$userNameは\n${_formatMoney(itemPrice)}円をゲットした！',
@@ -44,7 +44,7 @@ class WishItemCompletionScreen extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: text.titleLarge?.copyWith(
                   fontWeight: FontWeight.w800,
-                  color: scheme.primary,
+                  color: AppColors.reward(context),
                 ),
               ),
               const Spacer(),
