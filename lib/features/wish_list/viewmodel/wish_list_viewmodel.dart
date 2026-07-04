@@ -2,21 +2,20 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:task_manager/core/providers/firebase_providers.dart';
 import 'package:task_manager/features/auth/providers/auth_providers.dart';
 import 'package:task_manager/features/economy/data/economy_repository.dart';
 import 'package:task_manager/features/economy/providers/economy_providers.dart';
 import 'package:task_manager/features/wish_list/model/wish_item.dart';
 
 class WishListViewModel extends Notifier<AsyncValue<List<WishItem>>> {
-  final _db = FirebaseFirestore.instance;
-  final _auth = FirebaseAuth.instance;
-  final _storage = FirebaseStorage.instance;
+  FirebaseStorage get _storage => FirebaseStorage.instance;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _sub;
 
-  String? get _uid => _auth.currentUser?.uid;
+  FirebaseFirestore get _db => ref.read(firebaseFirestoreProvider);
+  String? get _uid => ref.read(firebaseAuthProvider).currentUser?.uid;
 
   @override
   AsyncValue<List<WishItem>> build() {
@@ -44,10 +43,16 @@ class WishListViewModel extends Notifier<AsyncValue<List<WishItem>>> {
         .orderBy('createdAt', descending: true)
         .snapshots()
         .listen((snapshot) {
+          // 別ユーザーへの切り替え中に旧購読のイベントが遅れて届いた場合、
+          // 前ユーザーのデータで上書きしないよう現在の uid と照合する。
+          if (_uid != uid) return;
           state = AsyncValue.data(
             snapshot.docs.map(WishItem.fromFirestore).toList(),
           );
-        }, onError: (e) => state = AsyncValue.error(e, StackTrace.current));
+        }, onError: (e) {
+          if (_uid != uid) return;
+          state = AsyncValue.error(e, StackTrace.current);
+        });
   }
 
   Future<String?> uploadWishImage(File file) async {

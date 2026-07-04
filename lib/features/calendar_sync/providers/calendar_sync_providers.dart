@@ -9,21 +9,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:task_manager/core/providers/firebase_providers.dart';
 import 'package:task_manager/features/calendar_sync/data/calendar_task_sync_repository.dart';
 import 'package:task_manager/features/calendar_sync/data/google_calendar_repository.dart';
 import 'package:task_manager/features/calendar_sync/model/google_account_info.dart';
 import 'package:task_manager/features/calendar_sync/viewmodel/calendar_sync_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
-
-/// テストで FakeFirebaseFirestore に差し替えるためのオーバーライドポイント。
-final firebaseFirestoreProvider = Provider<FirebaseFirestore>(
-  (_) => FirebaseFirestore.instance,
-);
-
-/// テストでモックに差し替えるためのオーバーライドポイント。
-final firebaseAuthProvider = Provider<FirebaseAuth>(
-  (_) => FirebaseAuth.instance,
-);
 
 final googleCalendarRepositoryProvider = Provider<GoogleCalendarRepository>(
   (_) => GoogleCalendarRepository(),

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mock_exceptions/mock_exceptions.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:task_manager/core/providers/firebase_providers.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
 
 class _MockFirebaseAuth extends Mock implements FirebaseAuth {}
