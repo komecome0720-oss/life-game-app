@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:task_manager/theme/app_tokens.dart';
 import 'package:task_manager/widgets/message_guard.dart';
+import 'package:task_manager/widgets/reward_burst.dart';
 
 class WishItemCompletionScreen extends StatelessWidget {
   const WishItemCompletionScreen({
@@ -29,7 +30,14 @@ class WishItemCompletionScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 24),
-              Icon(Icons.celebration, size: 72, color: AppColors.reward(context)),
+              IgnorePointer(
+                child: RewardBurst(
+                  assetName: 'gift',
+                  size: 160,
+                  fallback: Icon(Icons.celebration,
+                      size: 72, color: AppColors.reward(context)),
+                ),
+              ),
               const SizedBox(height: 16),
               Text(
                 'おめでとう、$userNameは\n${_formatMoney(itemPrice)}円をゲットした！',
