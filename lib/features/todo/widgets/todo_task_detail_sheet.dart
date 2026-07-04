@@ -339,7 +339,7 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
 
       if (!mounted) return;
       Navigator.of(context).pop();
-      Navigator.of(context).push<void>(
+      unawaited(Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (_) => TaskCompletionScreen(
             taskTitle: title,
@@ -353,7 +353,7 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
             actualMinutes: actual,
           ),
         ),
-      );
+      ));
     } catch (e) {
       if (mounted) {
         setState(() => _isCompleting = false);

@@ -23,6 +23,12 @@ linter:
   rules:
     # avoid_print: false  # Uncomment to disable the `avoid_print` rule
     # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
+    unawaited_futures: true
+    # discarded_futures: true  # 指摘50件超のため一旦見送り（大半がonPressed等の意図的なfire-and-forget）。段階導入予定。
+    avoid_slow_async_io: true
+    prefer_final_locals: true
+    cancel_subscriptions: true
+    close_sinks: true
 
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options

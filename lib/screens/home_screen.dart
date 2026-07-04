@@ -381,7 +381,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             outcome = null;
           }
           if (!mounted) return;
-          Navigator.of(context).push<void>(
+          unawaited(Navigator.of(context).push<void>(
             MaterialPageRoute<void>(
               builder: (_) => TaskCompletionScreen(
                 taskTitle: task.title,
@@ -395,7 +395,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 actualMinutes: actualMinutes,
               ),
             ),
-          );
+          ));
         } catch (e) {
           if (mounted) _showErrorSnackBar('完了状態の保存に失敗しました: $e');
           return;

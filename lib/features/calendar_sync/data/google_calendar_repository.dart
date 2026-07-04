@@ -48,7 +48,7 @@ class GoogleCalendarRepository {
 
   /// 現在サインイン済みの Google アカウント情報（無ければ silent 試行）。
   Future<GoogleAccountInfo?> getCurrentAccount() async {
-    var account = _signIn.currentUser ?? await _signIn.signInSilently();
+    final account = _signIn.currentUser ?? await _signIn.signInSilently();
     if (account == null) return null;
     return _toInfo(account);
   }

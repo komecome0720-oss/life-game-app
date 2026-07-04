@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
@@ -240,7 +242,7 @@ class WishItemCard extends ConsumerWidget {
                 return;
               }
               if (!ok.applied) return;
-              navigator.push(
+              unawaited(navigator.push(
                 MaterialPageRoute<void>(
                   builder: (_) => WishItemCompletionScreen(
                     userName: settings.displayName,
@@ -249,7 +251,7 @@ class WishItemCard extends ConsumerWidget {
                     balanceAfterYen: ok.balanceAfterYen,
                   ),
                 ),
-              );
+              ));
             },
             child: const Text('獲得'),
           ),
