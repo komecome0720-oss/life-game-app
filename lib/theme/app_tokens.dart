@@ -26,4 +26,21 @@ abstract final class AppColors {
       Theme.of(context).brightness == Brightness.dark
           ? Colors.deepOrange.shade300
           : Colors.deepOrange.shade700;
+
+  /// 報酬アクセント（アンバー）。獲得金額・レベルアップ・ウィッシュ獲得の演出専用。
+  /// 通常画面の装飾には使わない（「報酬の瞬間だけ遊び」の設計判断）。
+  static Color reward(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+          ? const Color(0xFFF5C563)
+          : const Color(0xFFB47207);
+
+  static Color rewardContainer(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+          ? const Color(0xFF4A3208)
+          : const Color(0xFFFDF3DC);
+
+  static Color onRewardContainer(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+          ? const Color(0xFFF5C563)
+          : const Color(0xFF8A5A06);
 }
