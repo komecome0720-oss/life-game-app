@@ -3,8 +3,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:task_manager/models/calendar_task.dart';
 
 class CalendarTaskSyncRepository {
-  final _db = FirebaseFirestore.instance;
-  final _auth = FirebaseAuth.instance;
+  CalendarTaskSyncRepository({FirebaseFirestore? db, FirebaseAuth? auth})
+      : _db = db ?? FirebaseFirestore.instance,
+        _auth = auth ?? FirebaseAuth.instance;
+
+  final FirebaseFirestore _db;
+  final FirebaseAuth _auth;
 
   /// [tasks] を Firestore へ upsert する。
   /// - externalCalendarId が同じ既存ドキュメントがあれば更新（isCompleted は保持）。
