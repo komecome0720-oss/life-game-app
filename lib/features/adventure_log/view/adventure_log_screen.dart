@@ -15,7 +15,9 @@ class AdventureLogScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final entriesAsync = ref.watch(adventureLogEntriesProvider);
-    final currentBalance = ref.watch(userSettingsProvider).settings.totalEarned;
+    final currentBalance = ref.watch(
+      userSettingsProvider.select((s) => s.settings.totalEarned),
+    );
 
     return Scaffold(
       appBar: AppBar(title: const Text('冒険の記録')),

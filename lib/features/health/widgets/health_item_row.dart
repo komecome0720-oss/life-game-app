@@ -249,7 +249,7 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final scheme = Theme.of(context).colorScheme;
-    final settings = ref.watch(userSettingsProvider).settings;
+    final settings = widget.settings;
 
     final current = widget.category.currentValue(widget.log);
     final level = widget.category.level(widget.log, settings);

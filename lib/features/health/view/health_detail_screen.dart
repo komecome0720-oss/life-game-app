@@ -43,7 +43,7 @@ class _HealthDetailScreenState extends ConsumerState<HealthDetailScreen>
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(healthDetailViewModelProvider);
-    final settings = ref.watch(userSettingsProvider).settings;
+    final settings = ref.watch(userSettingsProvider.select((s) => s.settings));
 
     ref.listen<HealthDetailState>(healthDetailViewModelProvider, (prev, next) {
       final msg = next.errorMessage;

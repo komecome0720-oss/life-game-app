@@ -33,7 +33,9 @@ final calendarSyncViewModelProvider =
 /// 再起動後は空。次回 "取得" 時に再ロードされるまで Google イベントは
 /// フォールバック色で表示される（MVP仕様：Firestore永続化は別途）。
 final calendarColorsProvider = Provider<Map<String, Color>>((ref) {
-  final calendars = ref.watch(calendarSyncViewModelProvider).calendars;
+  final calendars = ref.watch(
+    calendarSyncViewModelProvider.select((vm) => vm.calendars),
+  );
   final map = <String, Color>{};
   for (final c in calendars) {
     final hex = c.colorHex;
