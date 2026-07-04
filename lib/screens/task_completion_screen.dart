@@ -162,12 +162,17 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
               ),
               const SizedBox(height: 12),
               // お金は先に・確実に見せる（努力がゼロに見えないように）。
-              Text(
-                '獲得金額：¥${_formatYen(widget.rewardYen)}',
-                textAlign: TextAlign.center,
-                style: text.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.reward(context)),
+              TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: widget.rewardYen.toDouble()),
+                duration: const Duration(milliseconds: 800),
+                curve: Curves.easeOutCubic,
+                builder: (context, value, child) => Text(
+                  '獲得金額：¥${_formatYen(value.round())}',
+                  textAlign: TextAlign.center,
+                  style: text.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.reward(context)),
+                ),
               ),
               if (widget.balanceBeforeYen != null &&
                   widget.balanceAfterYen != null) ...[

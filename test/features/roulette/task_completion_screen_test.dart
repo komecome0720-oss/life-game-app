@@ -27,6 +27,7 @@ void main() {
         ),
       );
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
       expect(find.text('獲得金額：¥1,200'), findsOneWidget);
     });
 
