@@ -2,6 +2,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:task_manager/features/roulette/model/reward_config.dart';
 
 class UserSettings {
+  /// ToDo新規作成時の見込時間デフォルト（分）。
+  static const int defaultTodoEstimatedMinutesFallback = 30;
+
+  /// カレンダー新規タスク作成時の所要時間デフォルト（分）。
+  static const int defaultCalendarDurationMinutesFallback = 60;
+
   const UserSettings({
     this.displayName = '',
     this.avatarUrl = '',
@@ -23,8 +29,8 @@ class UserSettings {
     this.meditationGoalMinutes = 0,
     this.themeMode = 'system',
     this.weekStartDay = DateTime.monday,
-    this.defaultTodoEstimatedMinutes = 30,
-    this.defaultCalendarDurationMinutes = 60,
+    this.defaultTodoEstimatedMinutes = defaultTodoEstimatedMinutesFallback,
+    this.defaultCalendarDurationMinutes = defaultCalendarDurationMinutesFallback,
   });
 
   final String displayName;
@@ -198,9 +204,11 @@ class UserSettings {
       themeMode: data['themeMode'] as String? ?? 'system',
       weekStartDay: (data['weekStartDay'] as num?)?.toInt() ?? DateTime.monday,
       defaultTodoEstimatedMinutes:
-          (data['defaultTodoEstimatedMinutes'] as num?)?.toInt() ?? 30,
+          (data['defaultTodoEstimatedMinutes'] as num?)?.toInt() ??
+              defaultTodoEstimatedMinutesFallback,
       defaultCalendarDurationMinutes:
-          (data['defaultCalendarDurationMinutes'] as num?)?.toInt() ?? 60,
+          (data['defaultCalendarDurationMinutes'] as num?)?.toInt() ??
+              defaultCalendarDurationMinutesFallback,
     );
   }
 
