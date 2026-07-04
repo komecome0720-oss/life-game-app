@@ -6,6 +6,7 @@ import 'package:task_manager/features/prediction_accuracy/model/prediction_accur
 import 'package:task_manager/features/roulette/model/reward_config.dart';
 import 'package:task_manager/features/roulette/model/roulette_outcome.dart';
 import 'package:task_manager/features/roulette/widgets/roulette_board.dart';
+import 'package:task_manager/theme/app_tokens.dart';
 import 'package:task_manager/widgets/message_guard.dart';
 
 class TaskCompletionScreen extends StatefulWidget {
@@ -165,7 +166,8 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
                 '獲得金額：¥${_formatYen(widget.rewardYen)}',
                 textAlign: TextAlign.center,
                 style: text.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w800, color: scheme.primary),
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.reward(context)),
               ),
               if (widget.balanceBeforeYen != null &&
                   widget.balanceAfterYen != null) ...[
@@ -338,7 +340,7 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
-                color: scheme.primaryContainer,
+                color: AppColors.rewardContainer(context),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Column(
@@ -347,13 +349,13 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
                     'レベルアップ！ Lv.${progressAfter.level}',
                     style: text.titleMedium?.copyWith(
                       fontWeight: FontWeight.w900,
-                      color: scheme.onPrimaryContainer,
+                      color: AppColors.onRewardContainer(context),
                     ),
                   ),
                   Text(
                     '称号「${progressAfter.title}」',
                     style: text.bodyMedium
-                        ?.copyWith(color: scheme.onPrimaryContainer),
+                        ?.copyWith(color: AppColors.onRewardContainer(context)),
                   ),
                 ],
               ),
