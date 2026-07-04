@@ -231,6 +231,8 @@ class AdventureLogRepository {
     await _commitPendingWrites(userRef, pendingWrites);
   }
 
+  /// backfill 済み（[_backfillMarkerKey] 済み）なら legacy tasks/wishlist の
+  /// 購読は不要なため、adventure_entries のみ購読する（Firestore 読み取りコスト削減）。
   Stream<List<AdventureLogEntry>> watchEntries() {
     final uid = _auth.currentUser?.uid;
     if (uid == null) return Stream.value(const []);
@@ -240,6 +242,7 @@ class AdventureLogRepository {
     var legacyTasks = const <AdventureLogEntry>[];
     var legacyWishes = const <AdventureLogEntry>[];
     final subscriptions = <StreamSubscription<dynamic>>[];
+    var cancelled = false;
 
     void emit() {
       final merged = <AdventureLogEntry>[
@@ -275,41 +278,48 @@ class AdventureLogRepository {
           }, onError: handleError),
     );
 
-    subscriptions.add(
-      userRef
-          .collection('tasks')
-          .where('isCompleted', isEqualTo: true)
-          .snapshots()
-          .listen((snapshot) {
-            legacyTasks = snapshot.docs
-                .map((doc) => CalendarTask.fromMap(doc.id, doc.data()))
-                .where(
-                  (task) =>
-                      task.completedAt != null &&
-                      task.completedRewardYen == null,
-                )
-                .map(AdventureLogEntry.legacyTask)
-                .toList();
-            emit();
-          }, onError: handleError),
-    );
+    userRef.get().then((doc) {
+      if (cancelled) return;
+      final backfilled = doc.data()?[_backfillMarkerKey] != null;
+      if (backfilled) return;
 
-    subscriptions.add(
-      userRef
-          .collection('wishlist')
-          .where('isPurchased', isEqualTo: true)
-          .snapshots()
-          .listen((snapshot) {
-            legacyWishes = snapshot.docs
-                .map(WishItem.fromFirestore)
-                .where((item) => item.purchasedAt == null)
-                .map(AdventureLogEntry.legacyWish)
-                .toList();
-            emit();
-          }, onError: handleError),
-    );
+      subscriptions.add(
+        userRef
+            .collection('tasks')
+            .where('isCompleted', isEqualTo: true)
+            .snapshots()
+            .listen((snapshot) {
+              legacyTasks = snapshot.docs
+                  .map((doc) => CalendarTask.fromMap(doc.id, doc.data()))
+                  .where(
+                    (task) =>
+                        task.completedAt != null &&
+                        task.completedRewardYen == null,
+                  )
+                  .map(AdventureLogEntry.legacyTask)
+                  .toList();
+              emit();
+            }, onError: handleError),
+      );
+
+      subscriptions.add(
+        userRef
+            .collection('wishlist')
+            .where('isPurchased', isEqualTo: true)
+            .snapshots()
+            .listen((snapshot) {
+              legacyWishes = snapshot.docs
+                  .map(WishItem.fromFirestore)
+                  .where((item) => item.purchasedAt == null)
+                  .map(AdventureLogEntry.legacyWish)
+                  .toList();
+              emit();
+            }, onError: handleError),
+      );
+    });
 
     controller.onCancel = () async {
+      cancelled = true;
       for (final sub in subscriptions) {
         await sub.cancel();
       }
