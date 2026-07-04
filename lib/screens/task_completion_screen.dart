@@ -8,6 +8,7 @@ import 'package:task_manager/features/roulette/model/roulette_outcome.dart';
 import 'package:task_manager/features/roulette/widgets/roulette_board.dart';
 import 'package:task_manager/theme/app_tokens.dart';
 import 'package:task_manager/widgets/message_guard.dart';
+import 'package:task_manager/widgets/reward_burst.dart';
 
 class TaskCompletionScreen extends StatefulWidget {
   const TaskCompletionScreen({
@@ -50,9 +51,15 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
   late final AnimationController _spinCtrl;
   late final Animation<double> _spin;
   late final List<RouletteCell> _cells;
+  late final bool _leveledUp;
+  late final int? _leveledUpLevel;
+  late final String? _leveledUpTitle;
   Timer? _spinStartTimer;
+  Timer? _levelBurstTimer;
+  Timer? _levelBurstHideTimer;
   double _targetRotation = 0;
   _RoulettePhase _phase = _RoulettePhase.waiting;
+  bool _showLevelBurst = false;
 
   bool get _hasBoard => widget.outcome?.probabilities != null;
 
@@ -94,6 +101,31 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
       _cells = const [];
       _phase = _RoulettePhase.revealed;
     }
+
+    final before = widget.cumulativeTaskCountBefore;
+    final after = widget.cumulativeTaskCountAfter;
+    if (before != null && after != null) {
+      final progressBefore = RewardConfig.progressFor(before);
+      final progressAfter = RewardConfig.progressFor(after);
+      _leveledUp = progressAfter.level > progressBefore.level;
+      _leveledUpLevel = progressAfter.level;
+      _leveledUpTitle = progressAfter.title;
+    } else {
+      _leveledUp = false;
+      _leveledUpLevel = null;
+      _leveledUpTitle = null;
+    }
+
+    if (_leveledUp) {
+      _levelBurstTimer = Timer(const Duration(milliseconds: 4500), () {
+        if (!mounted) return;
+        setState(() => _showLevelBurst = true);
+        _levelBurstHideTimer = Timer(const Duration(milliseconds: 2500), () {
+          if (!mounted) return;
+          setState(() => _showLevelBurst = false);
+        });
+      });
+    }
   }
 
   /// 着地させたい区分のマス中心が上部ポインタの真下に来る回転角を求める。
@@ -128,6 +160,8 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
   @override
   void dispose() {
     _spinStartTimer?.cancel();
+    _levelBurstTimer?.cancel();
+    _levelBurstHideTimer?.cancel();
     _spinCtrl.dispose();
     super.dispose();
   }
@@ -139,79 +173,130 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
 
     return Scaffold(
       appBar: AppBar(title: const Text('タスク完了')),
-      body: MessageGuard(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: 8),
-              Icon(Icons.celebration, size: 56, color: scheme.primary),
-              const SizedBox(height: 8),
-              Text(
-                'おめでとう！',
-                textAlign: TextAlign.center,
-                style:
-                    text.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+      body: Stack(
+        children: [
+          MessageGuard(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: 8),
+                  Icon(Icons.celebration, size: 56, color: scheme.primary),
+                  const SizedBox(height: 8),
+                  Text(
+                    'おめでとう！',
+                    textAlign: TextAlign.center,
+                    style: text.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '「${widget.taskTitle}」を完了しました',
+                    textAlign: TextAlign.center,
+                    style: text.titleSmall,
+                  ),
+                  const SizedBox(height: 12),
+                  // お金は先に・確実に見せる（努力がゼロに見えないように）。
+                  TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: widget.rewardYen.toDouble()),
+                    duration: const Duration(milliseconds: 800),
+                    curve: Curves.easeOutCubic,
+                    builder: (context, value, child) => Text(
+                      '獲得金額：¥${_formatYen(value.round())}',
+                      textAlign: TextAlign.center,
+                      style: text.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.reward(context),
+                      ),
+                    ),
+                  ),
+                  if (widget.balanceBeforeYen != null &&
+                      widget.balanceAfterYen != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      _formatBalanceFlow(
+                        widget.balanceBeforeYen!,
+                        widget.balanceAfterYen!,
+                      ),
+                      textAlign: TextAlign.center,
+                      style: text.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: scheme.primary,
+                      ),
+                    ),
+                  ],
+                  if (_thisTaskErrorPercent != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '今回の予測精度：${_thisTaskErrorPercent! >= 0 ? '+' : ''}$_thisTaskErrorPercent%'
+                      '（予測${widget.predictedMinutes}分→実績${widget.actualMinutes}分）',
+                      textAlign: TextAlign.center,
+                      style: text.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        children: [
+                          if (_hasBoard) _buildRoulette(text),
+                          _buildLevelSection(text, scheme),
+                        ],
+                      ),
+                    ),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('ホームに戻る'),
+                  ),
+                ],
               ),
-              const SizedBox(height: 4),
-              Text(
-                '「${widget.taskTitle}」を完了しました',
-                textAlign: TextAlign.center,
-                style: text.titleSmall,
-              ),
-              const SizedBox(height: 12),
-              // お金は先に・確実に見せる（努力がゼロに見えないように）。
-              TweenAnimationBuilder<double>(
-                tween: Tween(begin: 0, end: widget.rewardYen.toDouble()),
-                duration: const Duration(milliseconds: 800),
-                curve: Curves.easeOutCubic,
-                builder: (context, value, child) => Text(
-                  '獲得金額：¥${_formatYen(value.round())}',
-                  textAlign: TextAlign.center,
-                  style: text.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.reward(context)),
-                ),
-              ),
-              if (widget.balanceBeforeYen != null &&
-                  widget.balanceAfterYen != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  _formatBalanceFlow(
-                      widget.balanceBeforeYen!, widget.balanceAfterYen!),
-                  textAlign: TextAlign.center,
-                  style: text.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700, color: scheme.primary),
-                ),
-              ],
-              if (_thisTaskErrorPercent != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  '今回の予測精度：${_thisTaskErrorPercent! >= 0 ? '+' : ''}$_thisTaskErrorPercent%'
-                  '（予測${widget.predictedMinutes}分→実績${widget.actualMinutes}分）',
-                  textAlign: TextAlign.center,
-                  style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-                ),
-              ],
-              const SizedBox(height: 8),
-              Expanded(
-                child: SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      if (_hasBoard) _buildRoulette(text),
-                      _buildLevelSection(text, scheme),
-                    ],
+            ),
+          ),
+          if (_showLevelBurst)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Center(
+                  child: RewardBurst(
+                    assetName: 'level_up',
+                    size: 240,
+                    fallback: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.rewardContainer(context),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'レベルアップ！ Lv.$_leveledUpLevel',
+                            style: text.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w900,
+                              color: AppColors.onRewardContainer(context),
+                            ),
+                          ),
+                          Text(
+                            '称号「$_leveledUpTitle」',
+                            style: text.bodyMedium?.copyWith(
+                              color: AppColors.onRewardContainer(context),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
-              FilledButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('ホームに戻る'),
-              ),
-            ],
-          ),
-        ),
+            ),
+        ],
       ),
     );
   }
@@ -237,29 +322,29 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
           duration: const Duration(milliseconds: 250),
           child: switch (_phase) {
             _RoulettePhase.waiting => Text(
-                'ご褒美ルーレットを抽選します',
-                key: const ValueKey('waiting'),
-                textAlign: TextAlign.center,
-                style: text.bodySmall,
-              ),
+              'ご褒美ルーレットを抽選します',
+              key: const ValueKey('waiting'),
+              textAlign: TextAlign.center,
+              style: text.bodySmall,
+            ),
             _RoulettePhase.spinning => Column(
-                key: const ValueKey('spinning'),
-                children: [
-                  Text(
-                    '抽選中...',
-                    textAlign: TextAlign.center,
-                    style: text.bodySmall,
+              key: const ValueKey('spinning'),
+              children: [
+                Text(
+                  '抽選中...',
+                  textAlign: TextAlign.center,
+                  style: text.bodySmall,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'タップでスキップ',
+                  textAlign: TextAlign.center,
+                  style: text.labelSmall?.copyWith(
+                    color: Theme.of(context).colorScheme.outline,
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'タップでスキップ',
-                    textAlign: TextAlign.center,
-                    style: text.labelSmall?.copyWith(
-                      color: Theme.of(context).colorScheme.outline,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
+            ),
             _RoulettePhase.revealed => _buildResultMessage(text),
           },
         ),
@@ -267,8 +352,9 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
         Text(
           'ご褒美の内容、出現確率はメニュー画面から変更できます',
           textAlign: TextAlign.center,
-          style: text.labelSmall
-              ?.copyWith(color: Theme.of(context).colorScheme.outline),
+          style: text.labelSmall?.copyWith(
+            color: Theme.of(context).colorScheme.outline,
+          ),
         ),
         const SizedBox(height: 8),
       ],
@@ -296,8 +382,7 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
         break;
       case RouletteOutcomeKind.nearMiss:
         title = 'ハズレ';
-        subtitle =
-            '今回はご褒美なし。¥${_formatYen(widget.rewardYen)}は獲得済みです';
+        subtitle = '今回はご褒美なし。¥${_formatYen(widget.rewardYen)}は獲得済みです';
         color = scheme.onSurfaceVariant;
         break;
       case RouletteOutcomeKind.needsSetup:
@@ -318,7 +403,9 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
           title,
           textAlign: TextAlign.center,
           style: text.titleLarge?.copyWith(
-              fontWeight: FontWeight.w900, color: color),
+            fontWeight: FontWeight.w900,
+            color: color,
+          ),
         ),
         if (subtitle != null) ...[
           const SizedBox(height: 4),
@@ -359,8 +446,9 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
                   ),
                   Text(
                     '称号「${progressAfter.title}」',
-                    style: text.bodyMedium
-                        ?.copyWith(color: AppColors.onRewardContainer(context)),
+                    style: text.bodyMedium?.copyWith(
+                      color: AppColors.onRewardContainer(context),
+                    ),
                   ),
                 ],
               ),
@@ -386,9 +474,9 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
 
   String _formatYen(int n) {
     return n.toString().replaceAllMapped(
-          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-          (m) => '${m[1]},',
-        );
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (m) => '${m[1]},',
+    );
   }
 
   /// 全角￥・全角数字で所持金の流れを表示する。
