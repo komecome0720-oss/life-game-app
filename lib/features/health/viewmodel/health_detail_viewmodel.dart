@@ -7,6 +7,7 @@ import 'package:task_manager/features/auth/providers/auth_providers.dart';
 import 'package:task_manager/features/economy/data/economy_repository.dart';
 import 'package:task_manager/features/economy/providers/economy_providers.dart';
 import 'package:task_manager/features/health/model/health_category.dart';
+import 'package:task_manager/features/health/model/health_entry_title.dart';
 import 'package:task_manager/features/health/model/health_log.dart';
 import 'package:task_manager/features/health/model/health_rollover.dart';
 import 'package:task_manager/features/health/model/health_scoring.dart';
@@ -20,6 +21,7 @@ class HealthDetailState {
     this.isEditableNow = true,
     this.errorMessage,
     this.lastSavedProvisionalYen = 0,
+    this.baselineLog,
     List<HealthLog> historyLogs = const [],
     bool isHistoryLoading = false,
     String? historyErrorMessage,
@@ -38,6 +40,9 @@ class HealthDetailState {
   /// 直近の Firestore 書き込み時点の provisional。totalEarned 差分計算に使用。
   final int lastSavedProvisionalYen;
 
+  /// 直近の Firestore 書き込み時点の HealthLog。冒険の記録タイトル生成の差分計算に使用。
+  final HealthLog? baselineLog;
+
   // Hot reload直後の古いStateインスタンスでも安全に読めるよう、
   // 追加フィールドはnullableで保持しつつ公開getterで既定値に寄せる。
   final List<HealthLog>? _historyLogs;
@@ -54,6 +59,7 @@ class HealthDetailState {
     bool? isEditableNow,
     String? errorMessage,
     int? lastSavedProvisionalYen,
+    HealthLog? baselineLog,
     List<HealthLog>? historyLogs,
     bool? isHistoryLoading,
     Object? historyErrorMessage = _unset,
@@ -65,6 +71,7 @@ class HealthDetailState {
       errorMessage: errorMessage,
       lastSavedProvisionalYen:
           lastSavedProvisionalYen ?? this.lastSavedProvisionalYen,
+      baselineLog: baselineLog ?? this.baselineLog,
       historyLogs: historyLogs ?? this.historyLogs,
       isHistoryLoading: isHistoryLoading ?? this.isHistoryLoading,
       historyErrorMessage: identical(historyErrorMessage, _unset)
@@ -208,6 +215,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
         // baseline は totalEarned に反映済みの額＝ディスクから読んだ値（sync前）。
         // sync で値が変わっても totalEarned は動いていないため recomputed 値は使わない。
         lastSavedProvisionalYen: loadedLog.provisionalEarnedYen,
+        baselineLog: loadedLog,
         historyLogs: pastResult.logs.take(14).toList(growable: false),
         isHistoryLoading: false,
         historyErrorMessage: null,
@@ -318,6 +326,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
         errorMessage: pastResult.error,
         // baseline はロードした値（sync前）＝totalEarned 反映済みの額。
         lastSavedProvisionalYen: loadedLog.provisionalEarnedYen,
+        baselineLog: loadedLog,
         historyLogs: pastResult.logs.take(14).toList(growable: false),
         isHistoryLoading: false,
         historyErrorMessage: null,
@@ -406,12 +415,15 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     final saveGeneration = _stateGeneration;
     final logData = current.log.toFirestore();
     final settledProvisional = current.log.provisionalEarnedYen;
+    final settledLog = current.log;
+    final entryTitle = buildHealthEntryTitle(current.baselineLog, current.log);
     try {
       await _trackActiveSave(
         _economyRepo.saveHealthLogAndAdjust(
           dateKey: saveDateKey,
           healthLogData: logData,
           deltaYen: delta,
+          entryTitle: entryTitle,
         ),
       );
     } catch (e) {
@@ -425,7 +437,10 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     }
     try {
       if (_shouldApplySaveResult(uid, saveDateKey, saveGeneration)) {
-        state = state.copyWith(lastSavedProvisionalYen: settledProvisional);
+        state = state.copyWith(
+          lastSavedProvisionalYen: settledProvisional,
+          baselineLog: settledLog,
+        );
       }
     } catch (_) {}
   }
