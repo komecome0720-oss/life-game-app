@@ -134,4 +134,70 @@ void main() {
       expect(userDoc.data()?['totalEarned'], 1000);
     });
   });
+
+  group('saveHealthLogAndAdjust', () {
+    test('entryTitleを指定するとadventure_entriesのtitleに反映される', () async {
+      await firestore.collection('users').doc(uid).set({'totalEarned': 1000});
+
+      await repo.saveHealthLogAndAdjust(
+        dateKey: '2026-07-05',
+        healthLogData: {'dateKey': '2026-07-05'},
+        deltaYen: 300,
+        entryTitle: '運動 +30 分',
+      );
+
+      final entries = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('adventure_entries')
+          .get();
+      expect(entries.docs.length, 1);
+      expect(entries.docs.first.data()['title'], '運動 +30 分');
+    });
+
+    test('entryTitleがnullまたは空文字なら健康スコアにフォールバックする', () async {
+      await firestore.collection('users').doc(uid).set({'totalEarned': 1000});
+
+      await repo.saveHealthLogAndAdjust(
+        dateKey: '2026-07-05',
+        healthLogData: {'dateKey': '2026-07-05'},
+        deltaYen: 300,
+      );
+      await repo.saveHealthLogAndAdjust(
+        dateKey: '2026-07-05',
+        healthLogData: {'dateKey': '2026-07-05'},
+        deltaYen: 300,
+        entryTitle: '',
+      );
+
+      final entries = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('adventure_entries')
+          .get();
+      expect(entries.docs.length, 2);
+      expect(
+        entries.docs.map((d) => d.data()['title']),
+        everyElement('健康スコア'),
+      );
+    });
+
+    test('deltaYenが0ならentryTitleを渡してもエントリを作成しない', () async {
+      await firestore.collection('users').doc(uid).set({'totalEarned': 1000});
+
+      await repo.saveHealthLogAndAdjust(
+        dateKey: '2026-07-05',
+        healthLogData: {'dateKey': '2026-07-05'},
+        deltaYen: 0,
+        entryTitle: '運動 +30 分',
+      );
+
+      final entries = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('adventure_entries')
+          .get();
+      expect(entries.docs, isEmpty);
+    });
+  });
 }

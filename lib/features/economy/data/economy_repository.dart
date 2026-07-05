@@ -415,6 +415,7 @@ class EconomyRepository {
     required String dateKey,
     required Map<String, dynamic> healthLogData,
     required int deltaYen,
+    String? entryTitle,
   }) async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) throw Exception('Not authenticated');
@@ -443,7 +444,9 @@ class EconomyRepository {
         _entriesCol(uid).doc(),
         _entryData(
           type: AdventureEntryType.healthAdjusted,
-          title: '健康スコア',
+          title: entryTitle == null || entryTitle.isEmpty
+              ? '健康スコア'
+              : entryTitle,
           deltaYen: deltaYen,
           balanceBeforeYen: before,
           balanceAfterYen: after,
