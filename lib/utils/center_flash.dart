@@ -18,27 +18,78 @@ void showCenterFlash(BuildContext context, String message) {
 
   late final OverlayEntry entry;
   entry = OverlayEntry(
-    builder: (_) => _CenterFlash(
-      message: message,
-      onDone: () {
-        if (entry.mounted) entry.remove();
-      },
+    builder: (_) => Positioned.fill(
+      child: IgnorePointer(
+        child: Center(
+          child: _FlashBubble(
+            message: message,
+            onDone: () {
+              if (entry.mounted) entry.remove();
+            },
+          ),
+        ),
+      ),
     ),
   );
   overlay.insert(entry);
 }
 
-class _CenterFlash extends StatefulWidget {
-  const _CenterFlash({required this.message, required this.onDone});
+/// 指定したウィジェット（[anchorKey]）のすぐ下（右端揃え）に、一瞬だけ小さめの
+/// メッセージを表示してフェードアウトする装飾演出。ボタン操作に対する軽い
+/// フィードバック用（例：無効な操作をタップした際の理由表示）。
+///
+/// [showCenterFlash] 同様、タップを一切ブロックしない演出のため
+/// `messageVisibleNotifier` / `MessageGuard` / `showAppSnackBar` の経路は通さない。
+void showAnchoredFlash(
+  BuildContext context,
+  String message, {
+  required GlobalKey anchorKey,
+}) {
+  final overlay = Overlay.maybeOf(context, rootOverlay: true);
+  if (overlay == null) return;
+  final renderBox = anchorKey.currentContext?.findRenderObject() as RenderBox?;
+  if (renderBox == null || !renderBox.attached) return;
+  final anchorTopLeft = renderBox.localToGlobal(Offset.zero);
+  final anchorSize = renderBox.size;
+  final screenWidth = MediaQuery.of(context).size.width;
+
+  late final OverlayEntry entry;
+  entry = OverlayEntry(
+    builder: (_) => Positioned(
+      top: anchorTopLeft.dy + anchorSize.height + 4,
+      right: screenWidth - (anchorTopLeft.dx + anchorSize.width),
+      child: IgnorePointer(
+        child: _FlashBubble(
+          message: message,
+          compact: true,
+          onDone: () {
+            if (entry.mounted) entry.remove();
+          },
+        ),
+      ),
+    ),
+  );
+  overlay.insert(entry);
+}
+
+class _FlashBubble extends StatefulWidget {
+  const _FlashBubble({
+    required this.message,
+    required this.onDone,
+    this.compact = false,
+  });
 
   final String message;
   final VoidCallback onDone;
 
+  /// true の場合、ボタン近傍のツールチップ用に一回り小さく表示する。
+  final bool compact;
+
   @override
-  State<_CenterFlash> createState() => _CenterFlashState();
+  State<_FlashBubble> createState() => _FlashBubbleState();
 }
 
-class _CenterFlashState extends State<_CenterFlash>
+class _FlashBubbleState extends State<_FlashBubble>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
   late final Animation<double> _opacity;
@@ -97,37 +148,32 @@ class _CenterFlashState extends State<_CenterFlash>
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
-    return Positioned.fill(
-      child: IgnorePointer(
-        child: Center(
-          child: FadeTransition(
-            opacity: _opacity,
-            child: ScaleTransition(
-              scale: _scale,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 28,
-                  vertical: 16,
-                ),
-                decoration: BoxDecoration(
-                  color: scheme.primary,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.25),
-                      blurRadius: 16,
-                      offset: const Offset(0, 6),
-                    ),
-                  ],
-                ),
-                child: Text(
-                  widget.message,
-                  style: text.displaySmall?.copyWith(
-                    color: scheme.onPrimary,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
+    return FadeTransition(
+      opacity: _opacity,
+      child: ScaleTransition(
+        scale: _scale,
+        alignment: widget.compact ? Alignment.topRight : Alignment.center,
+        child: Container(
+          padding: widget.compact
+              ? const EdgeInsets.symmetric(horizontal: 14, vertical: 10)
+              : const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+          decoration: BoxDecoration(
+            color: scheme.primary,
+            borderRadius: BorderRadius.circular(widget.compact ? 12 : 20),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: widget.compact ? 8 : 16,
+                offset: const Offset(0, 4),
               ),
+            ],
+          ),
+          child: Text(
+            widget.message,
+            style:
+                (widget.compact ? text.bodyMedium : text.displaySmall)?.copyWith(
+              color: scheme.onPrimary,
+              fontWeight: FontWeight.w900,
             ),
           ),
         ),

@@ -10,7 +10,7 @@ extension HealthCategoryX on HealthCategory {
   static const double sleepBaselineMinutes = 180;
 
   String get label => switch (this) {
-    HealthCategory.meal => '食事',
+    HealthCategory.meal => '野菜・果物',
     HealthCategory.exercise => '運動',
     HealthCategory.sleep => '睡眠',
     HealthCategory.meditation => '瞑想',
@@ -74,7 +74,7 @@ extension HealthCategoryX on HealthCategory {
   String? validateGoal(UserSettings s) {
     final goal = goalValue(s);
     return switch (this) {
-      HealthCategory.meal when goal <= 0 => '食事の目標は0より大きい数で入力してください',
+      HealthCategory.meal when goal <= 0 => '野菜・果物の目標は0より大きい数で入力してください',
       HealthCategory.exercise when goal <= 0 => '運動の目標は0より大きい数で入力してください',
       HealthCategory.meditation when goal <= 0 => '瞑想の目標は0より大きい数で入力してください',
       HealthCategory.sleep when goal <= sleepBaselineMinutes =>

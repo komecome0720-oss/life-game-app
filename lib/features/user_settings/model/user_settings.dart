@@ -19,6 +19,7 @@ class UserSettings {
     this.weeklyTaskCount = RewardConfig.defaultWeeklyTaskCount,
     this.weeklyJackpotCount = RewardConfig.defaultWeeklyJackpotCount,
     this.weeklyChuCount = RewardConfig.defaultWeeklyChuCount,
+    this.weeklyShoCount = RewardConfig.defaultWeeklyShoCount,
     this.jackpotRewards = RewardConfig.defaultJackpotRewards,
     this.chuRewards = RewardConfig.defaultChuRewards,
     this.shoRewards = RewardConfig.defaultShoRewards,
@@ -31,6 +32,7 @@ class UserSettings {
     this.weekStartDay = DateTime.monday,
     this.defaultTodoEstimatedMinutes = defaultTodoEstimatedMinutesFallback,
     this.defaultCalendarDurationMinutes = defaultCalendarDurationMinutesFallback,
+    this.onboardingCompleted = false,
   });
 
   final String displayName;
@@ -55,6 +57,9 @@ class UserSettings {
   /// 週に欲しい中当たり回数 (C)。
   final double weeklyChuCount;
 
+  /// 週に欲しい小当たり回数 (S)。
+  final double weeklyShoCount;
+
   /// 大／中／小それぞれのご褒美内容リスト。
   final List<String> jackpotRewards;
   final List<String> chuRewards;
@@ -77,6 +82,12 @@ class UserSettings {
 
   /// カレンダー新規タスク作成時の所要時間デフォルト（分）。
   final int defaultCalendarDurationMinutes;
+
+  /// オンボーディング（初回チュートリアル）を完了済みか。
+  /// `OnboardingGate` がコーチマーク終了時に部分保存で所有するフィールドのため、
+  /// **[toFirestore] には含めない**（cumulativeTaskCount と同じ規約。ウィザードや
+  /// 設定画面の全体保存でこのフラグを stale 値に巻き戻さないため）。
+  final bool onboardingCompleted;
 
   double get hourlyRate {
     final totalMinutes = monthlyQuestDays * dailyQuestMinutes;
@@ -110,6 +121,7 @@ class UserSettings {
     double? weeklyTaskCount,
     double? weeklyJackpotCount,
     double? weeklyChuCount,
+    double? weeklyShoCount,
     List<String>? jackpotRewards,
     List<String>? chuRewards,
     List<String>? shoRewards,
@@ -122,6 +134,7 @@ class UserSettings {
     int? weekStartDay,
     int? defaultTodoEstimatedMinutes,
     int? defaultCalendarDurationMinutes,
+    bool? onboardingCompleted,
   }) {
     return UserSettings(
       displayName: displayName ?? this.displayName,
@@ -134,6 +147,7 @@ class UserSettings {
       weeklyTaskCount: weeklyTaskCount ?? this.weeklyTaskCount,
       weeklyJackpotCount: weeklyJackpotCount ?? this.weeklyJackpotCount,
       weeklyChuCount: weeklyChuCount ?? this.weeklyChuCount,
+      weeklyShoCount: weeklyShoCount ?? this.weeklyShoCount,
       jackpotRewards: jackpotRewards ?? this.jackpotRewards,
       chuRewards: chuRewards ?? this.chuRewards,
       shoRewards: shoRewards ?? this.shoRewards,
@@ -150,6 +164,7 @@ class UserSettings {
           defaultTodoEstimatedMinutes ?? this.defaultTodoEstimatedMinutes,
       defaultCalendarDurationMinutes:
           defaultCalendarDurationMinutes ?? this.defaultCalendarDurationMinutes,
+      onboardingCompleted: onboardingCompleted ?? this.onboardingCompleted,
     );
   }
 
@@ -166,6 +181,12 @@ class UserSettings {
     final weeklyJackpotCount =
         (data['weeklyJackpotCount'] as num?)?.toDouble() ??
         RewardConfig.defaultWeeklyJackpotCount;
+    final weeklyChuCount =
+        (data['weeklyChuCount'] as num?)?.toDouble() ??
+        RewardConfig.legacyWeeklyChuCountFor(
+          weeklyTaskCount: weeklyTaskCount,
+          weeklyJackpotCount: weeklyJackpotCount,
+        );
     return UserSettings(
       displayName: data['displayName'] as String? ?? '',
       avatarUrl: data['avatarUrl'] as String? ?? '',
@@ -176,11 +197,13 @@ class UserSettings {
       cumulativeTaskCount: (data['cumulativeTaskCount'] as num?)?.toInt() ?? 0,
       weeklyTaskCount: weeklyTaskCount,
       weeklyJackpotCount: weeklyJackpotCount,
-      weeklyChuCount:
-          (data['weeklyChuCount'] as num?)?.toDouble() ??
-          RewardConfig.legacyWeeklyChuCountFor(
+      weeklyChuCount: weeklyChuCount,
+      weeklyShoCount:
+          (data['weeklyShoCount'] as num?)?.toDouble() ??
+          RewardConfig.legacyWeeklyShoCountFor(
             weeklyTaskCount: weeklyTaskCount,
             weeklyJackpotCount: weeklyJackpotCount,
+            weeklyChuCount: weeklyChuCount,
           ),
       jackpotRewards: _rewardsFromData(
         data['jackpotRewards'],
@@ -209,11 +232,14 @@ class UserSettings {
       defaultCalendarDurationMinutes:
           (data['defaultCalendarDurationMinutes'] as num?)?.toInt() ??
               defaultCalendarDurationMinutesFallback,
+      onboardingCompleted: data['onboardingCompleted'] as bool? ?? false,
     );
   }
 
   Map<String, dynamic> toFirestore() {
     // 注意: `cumulativeTaskCount` は完了トランザクションが所有するため、ここには含めない。
+    // 注意: `onboardingCompleted` は OnboardingGate の部分保存が所有するため、ここには含めない
+    // （ウィザードや設定画面での全体保存がフラグを stale 値に巻き戻さないようにするため）。
     return {
       'displayName': displayName,
       'avatarUrl': avatarUrl,
@@ -225,6 +251,7 @@ class UserSettings {
       'weeklyTaskCount': weeklyTaskCount,
       'weeklyJackpotCount': weeklyJackpotCount,
       'weeklyChuCount': weeklyChuCount,
+      'weeklyShoCount': weeklyShoCount,
       'jackpotRewards': jackpotRewards,
       'chuRewards': chuRewards,
       'shoRewards': shoRewards,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:task_manager/features/health/model/health_log.dart';
+import 'package:task_manager/widgets/segmented_progress_bar.dart';
 
 /// 合計点数カード（100点満点）
 class TotalScoreCard extends StatelessWidget {
@@ -12,6 +13,7 @@ class TotalScoreCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return _SummaryCard(
       icon: Icons.favorite,
+      iconWidget: AnimatedHealthHeart(totalScore: log.totalScore),
       title: '合計点数',
       accentColor: scheme.primary,
       trailing: null,
@@ -33,15 +35,7 @@ class TotalScoreCard extends StatelessWidget {
       ),
       footer: Align(
         alignment: Alignment.topLeft,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: (log.totalScore / 100).clamp(0, 1),
-            minHeight: 5,
-            backgroundColor: scheme.surfaceContainerHighest,
-            color: scheme.tertiary,
-          ),
-        ),
+        child: TotalSegmentedProgressBar(totalScore: log.totalScore, height: 5),
       ),
     );
   }
@@ -98,6 +92,7 @@ class TotalEarningsCard extends StatelessWidget {
 class _SummaryCard extends StatelessWidget {
   const _SummaryCard({
     required this.icon,
+    this.iconWidget,
     required this.title,
     required this.accentColor,
     required this.value,
@@ -106,6 +101,7 @@ class _SummaryCard extends StatelessWidget {
   });
 
   final IconData icon;
+  final Widget? iconWidget;
   final String title;
   final Color accentColor;
   final Widget value;
@@ -127,7 +123,7 @@ class _SummaryCard extends StatelessWidget {
               height: 18,
               child: Row(
                 children: [
-                  Icon(icon, size: 16, color: accentColor),
+                  iconWidget ?? Icon(icon, size: 16, color: accentColor),
                   const SizedBox(width: 6),
                   Text(title, style: text.labelSmall),
                   const Spacer(),

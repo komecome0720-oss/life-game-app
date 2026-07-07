@@ -347,6 +347,43 @@ final isDraggingTaskProvider =
   IsDraggingTaskNotifier.new,
 );
 
+/// 「今日」ボタン押下でインクリメントされるシグナル。
+/// パネル側はこれを listen して現在時刻へスクロールする。
+class ScrollToNowSignalNotifier extends Notifier<int> {
+  @override
+  int build() => 0;
+  void bump() => state++;
+}
+
+final scrollToNowSignalProvider =
+    NotifierProvider<ScrollToNowSignalNotifier, int>(
+  ScrollToNowSignalNotifier.new,
+);
+
+/// カレンダーの1時間あたりの高さ(px)。週・日・全ページで共有。永続化しない。
+class CalendarHourHeightNotifier extends Notifier<double> {
+  @override
+  double build() => 48.0;
+  void set(double v) => state = v;
+}
+
+final calendarHourHeightProvider =
+    NotifierProvider<CalendarHourHeightNotifier, double>(
+  CalendarHourHeightNotifier.new,
+);
+
+/// 2本指ピンチ操作中かどうか。true の間、親の PageView はスワイプ無効にする。
+class IsPinchingCalendarNotifier extends Notifier<bool> {
+  @override
+  bool build() => false;
+  void set(bool v) => state = v;
+}
+
+final isPinchingCalendarProvider =
+    NotifierProvider<IsPinchingCalendarNotifier, bool>(
+  IsPinchingCalendarNotifier.new,
+);
+
 Color? _parseHexColor(String hex) {
   var clean = hex.replaceAll('#', '').trim();
   if (clean.length == 6) clean = 'FF$clean';

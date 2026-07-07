@@ -1,11 +1,16 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:task_manager/features/adventure_log/model/adventure_log_entry.dart';
+import 'package:task_manager/features/adventure_log/model/daily_earning.dart';
 import 'package:task_manager/features/adventure_log/providers/adventure_log_providers.dart';
+import 'package:task_manager/features/adventure_log/providers/daily_earnings_providers.dart';
 import 'package:task_manager/features/adventure_log/widgets/adventure_timeline_tile.dart';
-import 'package:task_manager/features/adventure_log/widgets/balance_history_chart.dart';
-import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
+import 'package:task_manager/features/adventure_log/widgets/cumulative_earnings_chart.dart';
+import 'package:task_manager/features/adventure_log/widgets/daily_earnings_bar_chart.dart';
+import 'package:task_manager/features/adventure_log/widgets/earnings_period_selector.dart';
 import 'package:task_manager/widgets/empty_state_view.dart';
 import 'package:task_manager/widgets/message_guard.dart';
 
@@ -15,9 +20,7 @@ class AdventureLogScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final entriesAsync = ref.watch(adventureLogEntriesProvider);
-    final currentBalance = ref.watch(
-      userSettingsProvider.select((s) => s.settings.totalEarned),
-    );
+    final windowData = ref.watch(earningsWindowDataProvider);
 
     return Scaffold(
       appBar: AppBar(title: const Text('冒険の記録')),
@@ -25,10 +28,8 @@ class AdventureLogScreen extends ConsumerWidget {
         child: entriesAsync.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (error, _) => Center(child: Text('読み込みに失敗しました: $error')),
-          data: (entries) => _AdventureLogContent(
-            entries: entries,
-            currentBalanceYen: currentBalance,
-          ),
+          data: (entries) =>
+              _AdventureLogContent(entries: entries, windowData: windowData),
         ),
       ),
     );
@@ -36,23 +37,37 @@ class AdventureLogScreen extends ConsumerWidget {
 }
 
 class _AdventureLogContent extends StatelessWidget {
-  const _AdventureLogContent({
-    required this.entries,
-    required this.currentBalanceYen,
-  });
+  const _AdventureLogContent({required this.entries, required this.windowData});
 
   final List<AdventureLogEntry> entries;
-  final int currentBalanceYen;
+  final EarningsWindowData? windowData;
 
   @override
   Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final chartHeight = math.max(
+      170.0,
+      (mediaQuery.size.height - mediaQuery.padding.vertical - kToolbarHeight) /
+          3,
+    );
+
+    final graphChildren = <Widget>[
+      const EarningsPeriodSelector(),
+      if (windowData == null)
+        SizedBox(
+          height: chartHeight,
+          child: const Center(child: CircularProgressIndicator()),
+        )
+      else ...[
+        CumulativeEarningsChart(data: windowData!, height: chartHeight),
+        DailyEarningsBarChart(data: windowData!, height: chartHeight),
+      ],
+    ];
+
     if (entries.isEmpty) {
       return ListView(
         children: [
-          BalanceHistoryChart(
-            entries: entries,
-            currentBalanceYen: currentBalanceYen,
-          ),
+          ...graphChildren,
           const SizedBox(height: 80),
           const Center(
             child: EmptyStateView(
@@ -65,10 +80,7 @@ class _AdventureLogContent extends StatelessWidget {
     }
 
     final children = <Widget>[
-      BalanceHistoryChart(
-        entries: entries,
-        currentBalanceYen: currentBalanceYen,
-      ),
+      ...graphChildren,
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
         child: Text(

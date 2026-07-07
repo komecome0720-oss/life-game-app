@@ -48,6 +48,8 @@ dependencies:
   crypto: ^3.0.7
   flutter_slidable: ^4.0.3
   lottie: ^3.3.3
+  just_audio: ^0.9.46
+  audio_session: ^0.1.25
 
 dev_dependencies:
   flutter_test:
@@ -62,6 +64,7 @@ dev_dependencies:
   fake_cloud_firestore: ^4.0.0
   mocktail: ^1.0.4
   mock_exceptions: ^0.8.2
+  firebase_core_platform_interface: ^6.0.3
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -79,6 +82,8 @@ flutter:
   #   - images/a_dot_burr.jpeg
   assets:
     - assets/lottie/
+    - assets/audio/
+    - assets/images/
   #   - images/a_dot_ham.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see

@@ -5,8 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/economy/model/reward_calculator.dart';
 import 'package:task_manager/features/economy/providers/economy_providers.dart';
+import 'package:task_manager/features/pomodoro/view/pomodoro_settings_screen.dart';
 import 'package:task_manager/features/roulette/model/roulette_outcome.dart';
 import 'package:task_manager/features/roulette/providers/roulette_providers.dart';
+import 'package:task_manager/features/timer/model/task_sheet_result.dart';
+import 'package:task_manager/features/timer/widgets/split_start_button.dart';
 import 'package:task_manager/features/todo/providers/todo_providers.dart';
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
@@ -14,12 +17,11 @@ import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/screens/task_completion_screen.dart';
 import 'package:task_manager/theme/app_tokens.dart';
 import 'package:task_manager/utils/app_messenger.dart';
-import 'package:task_manager/utils/center_flash.dart';
 import 'package:task_manager/widgets/draggable_detail_sheet.dart';
 import 'package:task_manager/widgets/task_detail/quadrant_selector.dart';
 
-/// 大型一体型タイマーボタンの高さ。「現状」列もこの高さ内に収める。
-const double _kTimerButtonHeight = 112;
+/// 大型一体型スタートボタンの高さ。「現状」列もこの高さ内に収める。
+const double _kStartButtonHeight = kSplitStartButtonHeight;
 
 /// 実績「分」入力欄の幅（半角数字4桁＋内側パディング・枠線ぶん）。
 double _fourDigitMinutesFieldWidth(BuildContext context) {
@@ -36,11 +38,14 @@ double _fourDigitMinutesFieldWidth(BuildContext context) {
   return painter.width + horizontalContentPadding + decorationSlack;
 }
 
-Future<void> showTodoTaskDetailSheet({
+/// 戻り値が [TaskSheetResult.startTimer] の場合、呼び出し側は安定した context で
+/// `TimerLockLauncher.openForStart` を呼んでロック画面を起動する（このシート自身は
+/// タイマー開始処理を行わない。詳細は `lib/features/timer/view/timer_lock_launcher.dart`）。
+Future<TaskSheetResult?> showTodoTaskDetailSheet({
   required BuildContext context,
   required CalendarTask task,
 }) {
-  return showDraggableDetailSheet<void>(
+  return showDraggableDetailSheet<TaskSheetResult>(
     context: context,
     builder: (context, scrollController) =>
         _TodoDetailBody(task: task, scrollController: scrollController),
@@ -66,12 +71,6 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
   late bool _importance;
   late int _estimatedMinutes;
   late Quadrant _quadrant;
-
-  // タイマー
-  Stopwatch? _stopwatch;
-  Timer? _ticker;
-  int _baselineMinutes = 0;
-  bool _needsBaselineCapture = true;
 
   bool _isCompleting = false;
 
@@ -107,7 +106,6 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
 
   @override
   void dispose() {
-    _ticker?.cancel();
     _titleCtrl.dispose();
     _descCtrl.dispose();
     _actualMinutesCtrl.dispose();
@@ -115,71 +113,26 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
     super.dispose();
   }
 
-  // ── タイマー ────────────────────────────────────────
+  // ── スタート ────────────────────────────────────────
 
-  void _writeElapsedToField() {
-    final elapsedSec = _stopwatch?.elapsed.inSeconds ?? 0;
-    final added = elapsedSec ~/ 60;
-    _actualMinutesCtrl.text = (_baselineMinutes + added).toString();
+  /// スタートボタン：タイマー開始処理はこのシートでは行わず、
+  /// 結果を返して閉じるだけにする（呼び出し側が安定した context で
+  /// `TimerLockLauncher.openForStart` を呼ぶ）。
+  void _onTapStartTimer() {
+    Navigator.of(context).pop(TaskSheetResult.startTimer);
   }
 
-  String _elapsedLabel() {
-    final d = _stopwatch?.elapsed ?? Duration.zero;
-    final h = d.inHours.toString().padLeft(2, '0');
-    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$h:$m:$s';
+  /// ポモドーロボタン：同様に結果を返して閉じるだけにする
+  /// （呼び出し側が `TimerLockLauncher.openForPomodoro` を呼ぶ）。
+  void _onTapStartPomodoro() {
+    Navigator.of(context).pop(TaskSheetResult.startPomodoro);
   }
 
-  void _toggleTimer() {
-    if (_stopwatch?.isRunning ?? false) {
-      _stopwatch!.stop();
-      _ticker?.cancel();
-      _ticker = null;
-      _writeElapsedToField();
-    } else {
-      if (_needsBaselineCapture) {
-        _baselineMinutes = int.tryParse(_actualMinutesCtrl.text.trim()) ?? 0;
-        _needsBaselineCapture = false;
-      }
-      _stopwatch ??= Stopwatch();
-      _stopwatch!.start();
-      _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (mounted) setState(() {});
-      });
-      // スタート押下時に画面中央へ「スタート！」を一瞬表示してやる気を高める。
-      if (mounted) showCenterFlash(context, 'スタート！');
-    }
-    if (mounted) setState(() {});
-  }
-
-  void _resetTimer() {
-    _ticker?.cancel();
-    _ticker = null;
-    _stopwatch?.stop();
-    _stopwatch?.reset();
-    _needsBaselineCapture = true;
-    if (mounted) setState(() {});
-  }
-
-  void _showTimerHelp() {
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('タイマーの使い方'),
-        content: const SingleChildScrollView(
-          child: Text(
-            '・一時停止すると、計測した時間が「現状」へ自動で追加されます。\n'
-            '・「現状」の値は手動で書き換えられます。\n'
-            '・リセットしても「現状」の値は保持されます。',
-          ),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('OK'),
-          ),
-        ],
+  /// 歯車：シートは閉じずにポモドーロ設定画面を上に重ねて開く。
+  void _onTapPomodoroSettings() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const PomodoroSettingsScreen(),
       ),
     );
   }
@@ -206,14 +159,6 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
 
   Future<void> _onTapComplete() async {
     if (_isCompleting) return;
-
-    if (_stopwatch?.isRunning ?? false) {
-      _stopwatch!.stop();
-      _ticker?.cancel();
-      _ticker = null;
-      _writeElapsedToField();
-      if (mounted) setState(() {});
-    }
 
     final fieldText = _actualMinutesCtrl.text.trim();
     final fieldMinutes = int.tryParse(fieldText);
@@ -457,8 +402,6 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final scheme = Theme.of(context).colorScheme;
-    final running = _stopwatch?.isRunning ?? false;
-    final canReset = !running && (_stopwatch?.elapsed.inSeconds ?? 0) > 0;
 
     // 報酬プレビュー
     final settings = ref.read(userSettingsProvider).settings;
@@ -607,99 +550,26 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
                 ),
               ),
 
-              // タイマー＋実績
+              // スタート＋実績
               const SizedBox(height: 16),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    // 大型の一体型タイマーボタン：中に経過時間を大きく表示。
-                    // タップで開始/一時停止をトグル。状態は ▶/⏸ アイコンと背景色で表す。
-                    // ヘルプ（左上）とリセット（右上）はボタンの隅に重ねて縦空間を節約。
-                    child: Stack(
-                      children: [
-                        SizedBox(
-                          width: double.infinity,
-                          height: _kTimerButtonHeight,
-                          child: FilledButton(
-                            onPressed: _toggleTimer,
-                            style: FilledButton.styleFrom(
-                              backgroundColor: running
-                                  ? scheme.primaryContainer
-                                  : scheme.secondaryContainer,
-                              foregroundColor: running
-                                  ? scheme.onPrimaryContainer
-                                  : scheme.onSecondaryContainer,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  running
-                                      ? Icons.pause_rounded
-                                      : Icons.play_arrow_rounded,
-                                  size: 32,
-                                ),
-                                const SizedBox(width: AppSpacing.md),
-                                Flexible(
-                                  child: FittedBox(
-                                    fit: BoxFit.scaleDown,
-                                    child: Text(
-                                      _elapsedLabel(),
-                                      style: text.displayMedium?.copyWith(
-                                        fontWeight: FontWeight.w700,
-                                        fontFeatures: const [
-                                          FontFeature.tabularFigures(),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        // ヘルプ（隅に小さく）
-                        Positioned(
-                          top: 4,
-                          left: 4,
-                          child: IconButton(
-                            onPressed: _showTimerHelp,
-                            icon: const Icon(Icons.help_outline),
-                            tooltip: 'タイマーの使い方',
-                            iconSize: 18,
-                            visualDensity: VisualDensity.compact,
-                            color: running
-                                ? scheme.onPrimaryContainer
-                                : scheme.onSecondaryContainer,
-                          ),
-                        ),
-                        // リセット（隅に小さく）：一時停止中かつ経過 > 0 のみ有効。
-                        Positioned(
-                          top: 4,
-                          right: 4,
-                          child: IconButton(
-                            onPressed: canReset ? _resetTimer : null,
-                            icon: const Icon(Icons.refresh_rounded),
-                            tooltip: 'リセット',
-                            iconSize: 20,
-                            visualDensity: VisualDensity.compact,
-                            color: running
-                                ? scheme.onPrimaryContainer
-                                : scheme.onSecondaryContainer,
-                          ),
-                        ),
-                      ],
+                    // 二分割スタートボタン：左＝通常タイマー、右＝ポモドーロ。
+                    // 押すとシートを閉じてロック画面を起動する
+                    // （タイマー本体の開始・計測はロック画面側で行う）。
+                    child: SplitStartButton(
+                      onTapStart: _onTapStartTimer,
+                      onTapPomodoro: _onTapStartPomodoro,
+                      onTapSettings: _onTapPomodoroSettings,
                     ),
                   ),
                   const SizedBox(width: AppSpacing.lg),
-                  // 「現状」ラベル＋入力欄をタイマーの高さ内に2行で収める
-                  // （ラベル上端はタイマー上端に揃う）。
+                  // 「現状」ラベル＋入力欄をボタンの高さ内に2行で収める
+                  // （ラベル上端はボタン上端に揃う）。
                   SizedBox(
-                    height: _kTimerButtonHeight,
+                    height: _kStartButtonHeight,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [

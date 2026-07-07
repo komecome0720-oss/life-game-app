@@ -228,6 +228,15 @@ class ActiveTimerRepository {
     });
   }
 
+  /// ロック画面での「見込み」手動編集。
+  Future<void> updatePredictedMinutes(int predictedMinutes) async {
+    final uid = _uidOrThrow;
+    await _docRef(uid).update({
+      'predictedMinutes': predictedMinutes,
+      'updatedAtUtc': Timestamp.fromDate(_now().toUtc()),
+    });
+  }
+
   /// ロック画面での「現状」手動編集。
   ///
   /// フェーズ遷移（savedWorkPhases の増加）と競合しないよう、トランザクション内で

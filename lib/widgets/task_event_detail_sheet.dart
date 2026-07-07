@@ -1,19 +1,19 @@
-import 'dart:async';
-
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:task_manager/features/pomodoro/view/pomodoro_settings_screen.dart';
 import 'package:task_manager/features/prediction_accuracy/model/prediction_accuracy_config.dart';
+import 'package:task_manager/features/timer/model/task_sheet_result.dart';
+import 'package:task_manager/features/timer/widgets/split_start_button.dart';
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/theme/app_tokens.dart';
 import 'package:task_manager/utils/app_messenger.dart';
-import 'package:task_manager/utils/center_flash.dart';
 import 'package:task_manager/widgets/draggable_detail_sheet.dart';
 import 'package:task_manager/widgets/task_detail/quadrant_selector.dart';
 
-/// 大型一体型タイマーボタンの高さ。「現状」列もこの高さ内に収める。
-const double _kTimerButtonHeight = 112;
+/// 大型一体型スタートボタンの高さ。「現状」列もこの高さ内に収める。
+const double _kStartButtonHeight = kSplitStartButtonHeight;
 
 /// 完了処理コールバック。
 /// [predictedMinutes] はカレンダー枠（ToDoなら estimatedMinutes）から計算した見込時間。
@@ -22,13 +22,6 @@ typedef TaskCompleteCallback =
     Future<void> Function({
       required int predictedMinutes,
       required int? actualMinutes,
-    });
-
-/// タイマー一時停止時に、未了のまま見込み・実績分を保存するコールバック。
-typedef TaskPauseAndSaveCallback =
-    Future<void> Function({
-      required int predictedMinutes,
-      required int actualMinutes,
     });
 
 /// 開始・終了時刻が変更されたときに呼ばれるコールバック。
@@ -51,15 +44,17 @@ typedef TaskSaveEditsCallback =
       required int actualMinutes,
     });
 
-/// 予定タップ時のボトムシート: 見込時間・報酬・タイマー・実績入力・完了 + 編集/複製/削除
+/// 予定タップ時のボトムシート: 見込時間・報酬・スタート・実績入力・完了 + 編集/複製/削除
 ///
 /// [predictedMinutes] と [expectedRewardYen] は呼び出し側で計算して渡す（Riverpod非依存）。
 /// [calcReward] は編集後の見込時間から報酬を再計算する関数（ライブ更新用）。
 /// [onSaveEdits] はタイトル・象限・開始/終了時刻を一括保存するコールバック。
-/// [onTimerStart] はタイマー開始時に呼ばれる。
-/// [onPauseAndSave] はタイマー一時停止時に呼ばれる（未了のまま進捗保存）。
 /// [onRevert] は task.isCompleted=true のとき「未了に戻す」ボタンから呼ばれる。
-Future<void> showTaskEventDetailSheet({
+///
+/// 戻り値が [TaskSheetResult.startTimer] の場合、呼び出し側は安定した context で
+/// `TimerLockLauncher.openForStart` を呼んでロック画面を起動する（このシート自身は
+/// タイマー開始処理を行わない。詳細は `lib/features/timer/view/timer_lock_launcher.dart`）。
+Future<TaskSheetResult?> showTaskEventDetailSheet({
   required BuildContext context,
   required CalendarTask task,
   required int predictedMinutes,
@@ -68,14 +63,12 @@ Future<void> showTaskEventDetailSheet({
   int defaultDurationMinutes = 60,
   int Function(int minutes)? calcReward,
   TaskSaveEditsCallback? onSaveEdits,
-  Future<void> Function()? onTimerStart,
-  TaskPauseAndSaveCallback? onPauseAndSave,
   Future<bool> Function()? onRevert,
   VoidCallback? onEdit,
   VoidCallback? onDuplicate,
   VoidCallback? onDelete,
 }) {
-  return showDraggableDetailSheet<void>(
+  return showDraggableDetailSheet<TaskSheetResult>(
     context: context,
     builder: (context, scrollController) => _TaskEventDetailBody(
       task: task,
@@ -85,8 +78,6 @@ Future<void> showTaskEventDetailSheet({
       defaultDurationMinutes: defaultDurationMinutes,
       calcReward: calcReward,
       onSaveEdits: onSaveEdits,
-      onTimerStart: onTimerStart,
-      onPauseAndSave: onPauseAndSave,
       onRevert: onRevert,
       onEdit: onEdit,
       onDuplicate: onDuplicate,
@@ -120,8 +111,6 @@ class _TaskEventDetailBody extends StatefulWidget {
     this.defaultDurationMinutes = 60,
     this.calcReward,
     this.onSaveEdits,
-    this.onTimerStart,
-    this.onPauseAndSave,
     this.onRevert,
     this.onEdit,
     this.onDuplicate,
@@ -136,8 +125,6 @@ class _TaskEventDetailBody extends StatefulWidget {
   final int defaultDurationMinutes;
   final int Function(int minutes)? calcReward;
   final TaskSaveEditsCallback? onSaveEdits;
-  final Future<void> Function()? onTimerStart;
-  final TaskPauseAndSaveCallback? onPauseAndSave;
   final Future<bool> Function()? onRevert;
   final VoidCallback? onEdit;
   final VoidCallback? onDuplicate;
@@ -149,16 +136,9 @@ class _TaskEventDetailBody extends StatefulWidget {
 }
 
 class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
-  Stopwatch? _stopwatch;
-  Timer? _ticker;
   late final TextEditingController _titleCtrl;
   final TextEditingController _actualMinutesCtrl = TextEditingController();
   final FocusNode _actualMinutesFocus = FocusNode();
-
-  // 現在のタイマーセッション（リセット〜次のリセットまで）開始時のフィールド値。
-  // 一時停止のたびに `_baselineMinutes + 経過分(秒切り捨て)` をフィールドへ転記する。
-  int _baselineMinutes = 0;
-  bool _needsBaselineCapture = true;
 
   // 完了状態は未了に戻す操作で書き換わる可能性があるので、シート内で保持する。
   bool _isCompleted = false;
@@ -227,114 +207,32 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
 
   @override
   void dispose() {
-    _ticker?.cancel();
     _titleCtrl.dispose();
     _actualMinutesCtrl.dispose();
     _actualMinutesFocus.dispose();
     super.dispose();
   }
 
-  /// 一時停止：停止 + フィールドへ転記（baseline + 経過分・秒切り捨て）＋進捗保存。
-  /// 一時停止ボタンのほか、タイマー走行中にシートを閉じるときにも呼ばれる。
-  Future<void> _pauseTimerAndSave() async {
-    _stopwatch?.stop();
-    _ticker?.cancel();
-    _ticker = null;
-    _writeElapsedToField();
-    final pauseSave = widget.onPauseAndSave;
-    if (pauseSave != null) {
-      final actual = int.tryParse(_actualMinutesCtrl.text.trim()) ?? 0;
-      try {
-        await pauseSave(
-          predictedMinutes: _livePredictedMinutes,
-          actualMinutes: actual,
-        );
-      } catch (_) {
-        /* 呼び出し側でメッセージ表示 */
-      }
-    }
+  /// スタートボタン：タイマー開始処理はこのシートでは行わず、
+  /// 結果を返して閉じるだけにする（呼び出し側が安定した context で
+  /// `TimerLockLauncher.openForStart` を呼ぶ）。
+  void _onTapStartTimer() {
+    Navigator.of(context).pop(TaskSheetResult.startTimer);
   }
 
-  Future<void> _toggleTimer() async {
-    if (_stopwatch?.isRunning ?? false) {
-      await _pauseTimerAndSave();
-    } else {
-      // 開始：DB未保存（リモート表示中）なら、この時点でアプリタスクとして保存する。
-      // 既にDB保存済みなら onTimerStart 側の findTaskIdByExternalId で no-op。
-      if (widget.onTimerStart != null && _stopwatch == null) {
-        try {
-          await widget.onTimerStart!();
-        } catch (_) {
-          /* 保存失敗でもタイマーは継続 */
-        }
-      }
-      // セッション開始時のフィールド値を baseline として保持。
-      // 同一セッション内（pause→resume）では再取得しない。
-      if (_needsBaselineCapture) {
-        _baselineMinutes = int.tryParse(_actualMinutesCtrl.text.trim()) ?? 0;
-        _needsBaselineCapture = false;
-      }
-      _stopwatch ??= Stopwatch();
-      _stopwatch!.start();
-      _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (mounted) setState(() {});
-      });
-      // スタート押下時に画面中央へ「スタート！」を一瞬表示してやる気を高める。
-      if (mounted) showCenterFlash(context, 'スタート！');
-    }
-    if (mounted) setState(() {});
+  /// ポモドーロボタン：同様に結果を返して閉じるだけにする
+  /// （呼び出し側が `TimerLockLauncher.openForPomodoro` を呼ぶ）。
+  void _onTapStartPomodoro() {
+    Navigator.of(context).pop(TaskSheetResult.startPomodoro);
   }
 
-  /// 現在のタイマー経過分（秒切り捨て）を baseline と合算してフィールドへ書き込む。
-  void _writeElapsedToField() {
-    final elapsedSec = _stopwatch?.elapsed.inSeconds ?? 0;
-    final addedMinutes = elapsedSec ~/ 60;
-    _actualMinutesCtrl.text = (_baselineMinutes + addedMinutes).toString();
-  }
-
-  void _showTimerHelp() {
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('タイマーの使い方'),
-        content: const SingleChildScrollView(
-          child: Text(
-            '・一時停止すると、計測した時間が右の「現状」へ自動で追加されます。\n'
-            '・「現状」の値は手動で書き換えられます。\n'
-            '・「リセット」ボタンを押しても、「現状」の値は保持されます。\n'
-            '・リセット後に再スタートして一時停止すると、その時点の「現状」に '
-            '新しい計測分が加算されます。\n'
-            '　例）「現状」が 25 分の状態で、リセット → スタート → 3:22 で一時停止 → 28 分。\n'
-            '・タイマーを動かしたまま「完了」を押した場合は、自動で一時停止と転記をしてから完了します。',
-          ),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('OK'),
-          ),
-        ],
+  /// 歯車：シートは閉じずにポモドーロ設定画面を上に重ねて開く。
+  void _onTapPomodoroSettings() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const PomodoroSettingsScreen(),
       ),
     );
-  }
-
-  /// リセット：タイマー表示を 0 に戻し、次回 start で baseline を再取得させる。
-  /// 「現状」フィールドの値は保持する。
-  void _resetTimer() {
-    _ticker?.cancel();
-    _ticker = null;
-    _stopwatch?.stop();
-    _stopwatch?.reset();
-    _needsBaselineCapture = true;
-    if (mounted) setState(() {});
-  }
-
-  String _elapsedLabel() {
-    final d = _stopwatch?.elapsed ?? Duration.zero;
-    final h = d.inHours.toString().padLeft(2, '0');
-    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$h:$m:$s';
   }
 
   String _formatHm(DateTime dt) {
@@ -455,13 +353,6 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
     if (cb == null) return true;
     final title =
         _titleCtrl.text.trim().isEmpty ? widget.task.title : _titleCtrl.text.trim();
-    // 走行中なら停止して経過分を実績フィールドへ転記。
-    if (_stopwatch?.isRunning ?? false) {
-      _stopwatch!.stop();
-      _ticker?.cancel();
-      _ticker = null;
-      _writeElapsedToField();
-    }
     final actual = int.tryParse(_actualMinutesCtrl.text.trim()) ?? 0;
     setState(() => _isSavingEdits = true);
     try {
@@ -479,13 +370,7 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
   }
 
   Future<bool> _onWillPop() async {
-    if (!_isDirty) {
-      // タイマー走行中に閉じた場合は自動で一時停止＋進捗保存してから閉じる。
-      if (_stopwatch?.isRunning ?? false) {
-        await _pauseTimerAndSave();
-      }
-      return true;
-    }
+    if (!_isDirty) return true;
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -520,19 +405,12 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
   }
 
   Future<void> _onTapRevert() async {
-    _ticker?.cancel();
     final cb = widget.onRevert;
     if (cb == null) return;
     final ok = await cb();
     if (!mounted) return;
     if (ok) {
-      // タイマー・実績入力を再操作できるように、完了フラグだけ戻す。
-      // タイマー自体はリセット状態（次の start で baseline 再取得）にしておく。
-      _stopwatch?.stop();
-      _stopwatch?.reset();
-      _ticker?.cancel();
-      _ticker = null;
-      _needsBaselineCapture = true;
+      // 実績入力を再操作できるように、完了フラグだけ戻す。
       setState(() {
         _isCompleted = false;
       });
@@ -554,20 +432,10 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
       const SnackBar(content: Text('保存しました')),
       blocking: false,
     );
-    _ticker?.cancel();
     Navigator.of(context).pop();
   }
 
   Future<void> _onTapComplete() async {
-    // 走行中なら一時停止扱いにして転記（最新の経過分をフィールドへ反映）。
-    if (_stopwatch?.isRunning ?? false) {
-      _stopwatch!.stop();
-      _ticker?.cancel();
-      _ticker = null;
-      _writeElapsedToField();
-      if (mounted) setState(() {});
-    }
-
     final fieldText = _actualMinutesCtrl.text.trim();
     final fieldMinutes = int.tryParse(fieldText);
     final fieldHasValue = fieldMinutes != null && fieldMinutes > 0;
@@ -595,7 +463,6 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
 
     final actual = fieldHasValue ? fieldMinutes : null;
 
-    _ticker?.cancel();
     if (!mounted) return;
     Navigator.of(context).pop();
     await widget.onComplete(
@@ -608,7 +475,6 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final scheme = Theme.of(context).colorScheme;
-    final running = _stopwatch?.isRunning ?? false;
     final liveMinutes = _livePredictedMinutes;
     final predictedLabel = liveMinutes > 0 ? '$liveMinutes分' : '—';
 
@@ -703,14 +569,11 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
                       expectedRewardYen: _liveRewardYen,
                     ),
               const SizedBox(height: 16),
-              _TimerAndActualRow(
+              _StartAndActualRow(
                 isCompleted: _isCompleted,
-                running: running,
-                elapsedLabel: _elapsedLabel(),
-                canResetTimer: !running && (_stopwatch?.elapsed.inSeconds ?? 0) > 0,
-                onToggle: _toggleTimer,
-                onReset: _resetTimer,
-                onShowHelp: _showTimerHelp,
+                onTapStart: _onTapStartTimer,
+                onTapPomodoro: _onTapStartPomodoro,
+                onTapPomodoroSettings: _onTapPomodoroSettings,
                 controller: _actualMinutesCtrl,
                 focusNode: _actualMinutesFocus,
               ),
@@ -725,17 +588,14 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
               ),
               _ActionButtonsRow(
                 onEdit: widget.onEdit == null ? null : () {
-                  _ticker?.cancel();
                   Navigator.of(context).pop();
                   widget.onEdit!();
                 },
                 onDuplicate: widget.onDuplicate == null ? null : () {
-                  _ticker?.cancel();
                   Navigator.of(context).pop();
                   widget.onDuplicate!();
                 },
                 onDelete: widget.onDelete == null ? null : () {
-                  _ticker?.cancel();
                   Navigator.of(context).pop();
                   widget.onDelete!();
                 },
@@ -944,32 +804,25 @@ class _TimeChip extends StatelessWidget {
 /// Key for the actual-minutes text field — used in widget tests.
 const Key kActualMinutesFieldKey = Key('actual_minutes_field');
 
-class _TimerAndActualRow extends StatelessWidget {
-  const _TimerAndActualRow({
+class _StartAndActualRow extends StatelessWidget {
+  const _StartAndActualRow({
     required this.isCompleted,
-    required this.running,
-    required this.elapsedLabel,
-    required this.canResetTimer,
-    required this.onToggle,
-    required this.onReset,
-    required this.onShowHelp,
+    required this.onTapStart,
+    required this.onTapPomodoro,
+    required this.onTapPomodoroSettings,
     required this.controller,
     required this.focusNode,
   });
 
   final bool isCompleted;
-  final bool running;
-  final String elapsedLabel;
-  final bool canResetTimer;
-  final VoidCallback onToggle;
-  final VoidCallback onReset;
-  final VoidCallback onShowHelp;
+  final VoidCallback onTapStart;
+  final VoidCallback onTapPomodoro;
+  final VoidCallback onTapPomodoroSettings;
   final TextEditingController controller;
   final FocusNode focusNode;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
     return IgnorePointer(
       ignoring: isCompleted,
@@ -979,93 +832,20 @@ class _TimerAndActualRow extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              // 大型の一体型タイマーボタン：中に経過時間を大きく表示。
-              // タップで開始/一時停止をトグル。状態は ▶/⏸ アイコンと背景色で表す。
-              // ヘルプ（左上）とリセット（右上）はボタンの隅に重ねて縦空間を節約。
-              child: Stack(
-                children: [
-                  SizedBox(
-                    width: double.infinity,
-                    height: _kTimerButtonHeight,
-                    child: FilledButton(
-                      onPressed: onToggle,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: running
-                            ? scheme.primaryContainer
-                            : scheme.secondaryContainer,
-                        foregroundColor: running
-                            ? scheme.onPrimaryContainer
-                            : scheme.onSecondaryContainer,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            running
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded,
-                            size: 32,
-                          ),
-                          const SizedBox(width: AppSpacing.md),
-                          Flexible(
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: Text(
-                                elapsedLabel,
-                                style: text.displayMedium?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                  fontFeatures: const [
-                                    FontFeature.tabularFigures(),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  // ヘルプ（隅に小さく）
-                  Positioned(
-                    top: 4,
-                    left: 4,
-                    child: IconButton(
-                      onPressed: onShowHelp,
-                      icon: const Icon(Icons.help_outline),
-                      tooltip: 'タイマーの使い方',
-                      iconSize: 18,
-                      visualDensity: VisualDensity.compact,
-                      color: running
-                          ? scheme.onPrimaryContainer
-                          : scheme.onSecondaryContainer,
-                    ),
-                  ),
-                  // リセット（隅に小さく）：一時停止中かつ経過 > 0 のみ有効。
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: IconButton(
-                      onPressed: canResetTimer ? onReset : null,
-                      icon: const Icon(Icons.refresh_rounded),
-                      tooltip: 'リセット',
-                      iconSize: 20,
-                      visualDensity: VisualDensity.compact,
-                      color: running
-                          ? scheme.onPrimaryContainer
-                          : scheme.onSecondaryContainer,
-                    ),
-                  ),
-                ],
+              // 二分割スタートボタン：左＝通常タイマー、右＝ポモドーロ。
+              // 押すとシートを閉じてロック画面を起動する
+              // （タイマー本体の開始・計測はロック画面側で行う）。
+              child: SplitStartButton(
+                onTapStart: onTapStart,
+                onTapPomodoro: onTapPomodoro,
+                onTapSettings: onTapPomodoroSettings,
               ),
             ),
             const SizedBox(width: AppSpacing.lg),
-            // 「現状」ラベル＋入力欄をタイマーの高さ内に2行で収める
-            // （ラベル上端はタイマー上端に揃う）。
+            // 「現状」ラベル＋入力欄をボタンの高さ内に2行で収める
+            // （ラベル上端はボタン上端に揃う）。
             SizedBox(
-              height: _kTimerButtonHeight,
+              height: _kStartButtonHeight,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [

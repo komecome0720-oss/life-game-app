@@ -134,4 +134,105 @@ void main() {
       expect(userDoc.data()?['totalEarned'], 1000);
     });
   });
+
+  group('daily_earnings への日次集計', () {
+    String todayKey() {
+      final now = DateTime.now();
+      String pad2(int v) => v.toString().padLeft(2, '0');
+      return '${now.year}-${pad2(now.month)}-${pad2(now.day)}';
+    }
+
+    Future<Map<String, dynamic>?> dailyDoc() async {
+      final doc = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('daily_earnings')
+          .doc(todayKey())
+          .get();
+      return doc.data();
+    }
+
+    test('adjustBalance(manualAdjusted)はmanualYenへ加算する', () async {
+      await firestore.collection('users').doc(uid).set({'totalEarned': 0});
+      await repo.adjustBalance(
+        deltaYen: 500,
+        type: AdventureEntryType.manualAdjusted,
+        title: '手動で受け取り',
+      );
+
+      final data = await dailyDoc();
+      expect(data?['manualYen'], 500);
+      expect(data?['taskYen'], isNull);
+      expect(data?['healthYen'], isNull);
+    });
+
+    test('completeTaskはtaskYenへ加算する', () async {
+      await firestore.collection('users').doc(uid).set({'totalEarned': 0});
+      final ref = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('tasks')
+          .add({'title': 'テストタスク', 'isCompleted': false});
+
+      await repo.completeTask(
+        taskId: ref.id,
+        title: 'テストタスク',
+        rewardYen: 400,
+        predictedMinutes: 30,
+        actualMinutes: 25,
+      );
+
+      final data = await dailyDoc();
+      expect(data?['taskYen'], 400);
+    });
+
+    test('revertTaskはtaskYenへ相殺分を加算する（マイナス許容）', () async {
+      await firestore.collection('users').doc(uid).set({'totalEarned': 400});
+      final ref = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('tasks')
+          .add({
+            'title': 'テストタスク',
+            'isCompleted': true,
+            'completedRewardYen': 400,
+          });
+
+      await repo.revertTask(taskId: ref.id, title: 'テストタスク');
+
+      final data = await dailyDoc();
+      expect(data?['taskYen'], -400);
+    });
+
+    test('saveHealthLogAndAdjustはhealthYenへ加算する', () async {
+      await firestore.collection('users').doc(uid).set({'totalEarned': 0});
+
+      await repo.saveHealthLogAndAdjust(
+        dateKey: '2026-07-05',
+        healthLogData: {'score': 80},
+        deltaYen: 150,
+      );
+
+      final data = await dailyDoc();
+      expect(data?['healthYen'], 150);
+    });
+
+    test('purchaseWishはdaily_earningsを書き込まない', () async {
+      await firestore.collection('users').doc(uid).set({'totalEarned': 1000});
+      final ref = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('wishlist')
+          .add({'name': 'ギフト', 'price': 500, 'isPurchased': false});
+
+      await repo.purchaseWish(itemId: ref.id, title: 'ギフト');
+
+      final days = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('daily_earnings')
+          .get();
+      expect(days.docs, isEmpty);
+    });
+  });
 }

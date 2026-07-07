@@ -46,6 +46,8 @@ class TimerLockScreen extends ConsumerStatefulWidget {
 
 class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
     with WidgetsBindingObserver {
+  late final TextEditingController _predictedMinutesCtrl;
+  final FocusNode _predictedMinutesFocus = FocusNode();
   late final TextEditingController _actualMinutesCtrl;
   final FocusNode _actualMinutesFocus = FocusNode();
   final GlobalKey _closeButtonKey = GlobalKey();
@@ -66,6 +68,8 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
     WidgetsBinding.instance.addObserver(this);
     _lastTimer = widget.initialTimer;
     _task = widget.initialTask;
+    _predictedMinutesCtrl =
+        TextEditingController(text: widget.initialTimer.predictedMinutes.toString());
     _actualMinutesCtrl =
         TextEditingController(text: (_task?.actualMinutes ?? 0).toString());
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -82,6 +86,8 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _ticker?.cancel();
+    _predictedMinutesCtrl.dispose();
+    _predictedMinutesFocus.dispose();
     _actualMinutesCtrl.dispose();
     _actualMinutesFocus.dispose();
     super.dispose();
@@ -95,6 +101,9 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
 
   int get _currentActualMinutes =>
       int.tryParse(_actualMinutesCtrl.text.trim()) ?? 0;
+
+  int get _currentPredictedMinutes =>
+      int.tryParse(_predictedMinutesCtrl.text.trim()) ?? 0;
 
   String _elapsedLabel(int elapsedSec) {
     final d = Duration(seconds: elapsedSec);
@@ -124,7 +133,7 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
     final total = _currentActualMinutes + elapsedSec ~/ 60;
     final ok = await ref.read(timerActionsProvider).saveProgress(
           taskId: timer.taskId,
-          predictedMinutes: timer.predictedMinutes,
+          predictedMinutes: _currentPredictedMinutes,
           actualMinutes: total,
         );
     if (!mounted) return;
@@ -169,7 +178,7 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
     final total = _currentActualMinutes + addedMinutes;
     final ok = await ref.read(timerActionsProvider).saveProgress(
           taskId: timer.taskId,
-          predictedMinutes: timer.predictedMinutes,
+          predictedMinutes: _currentPredictedMinutes,
           actualMinutes: total,
         );
     if (!mounted) return;
@@ -243,7 +252,7 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
     setState(() => _isCompleting = true);
     final outcome = await ref.read(timerActionsProvider).complete(
           task: task,
-          predictedMinutes: timer.predictedMinutes,
+          predictedMinutes: _currentPredictedMinutes,
           actualMinutes: actualMinutes,
         );
     if (!mounted) return;
@@ -345,7 +354,6 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
 
   Widget _buildBody(BuildContext context, ActiveTimer timer) {
     final text = Theme.of(context).textTheme;
-    final scheme = Theme.of(context).colorScheme;
     final running = timer.isRunning;
     final elapsedSec = timer.elapsedSeconds(DateTime.now());
     final taskTitle = _task?.title ?? timer.taskTitle;
@@ -373,12 +381,6 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
               style: text.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 8),
-            Text(
-              timer.predictedMinutes > 0 ? '見込時間：${timer.predictedMinutes}分' : '見込時間：—',
-              style: text.bodyLarge?.copyWith(color: scheme.onSurfaceVariant),
-              textAlign: TextAlign.center,
-            ),
             const Spacer(),
             Center(
               child: Text(
@@ -390,41 +392,79 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
               ),
             ),
             const SizedBox(height: 24),
-            Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('現状', style: text.labelLarge),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox(
-                        width: 100,
-                        child: TextField(
-                          controller: _actualMinutesCtrl,
-                          focusNode: _actualMinutesFocus,
-                          keyboardType:
-                              const TextInputType.numberWithOptions(decimal: false),
-                          inputFormatters: [
-                            FilteringTextInputFormatter.digitsOnly,
-                            LengthLimitingTextInputFormatter(4),
-                          ],
-                          textAlign: TextAlign.end,
-                          decoration: const InputDecoration(
-                            isDense: true,
-                            contentPadding:
-                                EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                            border: OutlineInputBorder(),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('見込み', style: text.labelLarge),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 100,
+                          child: TextField(
+                            controller: _predictedMinutesCtrl,
+                            focusNode: _predictedMinutesFocus,
+                            keyboardType:
+                                const TextInputType.numberWithOptions(decimal: false),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(4),
+                            ],
+                            textAlign: TextAlign.end,
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              contentPadding:
+                                  EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                              border: OutlineInputBorder(),
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text('分', style: text.bodyLarge),
-                    ],
-                  ),
-                ],
-              ),
+                        const SizedBox(width: 8),
+                        Text('分', style: text.bodyLarge),
+                      ],
+                    ),
+                  ],
+                ),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('現状', style: text.labelLarge),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 100,
+                          child: TextField(
+                            controller: _actualMinutesCtrl,
+                            focusNode: _actualMinutesFocus,
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: false),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(4),
+                            ],
+                            textAlign: TextAlign.end,
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 10),
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text('分', style: text.bodyLarge),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
             ),
             const Spacer(),
             FilledButton.icon(

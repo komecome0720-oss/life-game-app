@@ -11,12 +11,15 @@ import 'package:task_manager/features/calendar_sync/providers/calendar_sync_prov
 import 'package:task_manager/features/economy/model/reward_calculator.dart';
 import 'package:task_manager/features/economy/providers/economy_providers.dart';
 import 'package:task_manager/features/health/model/health_category.dart';
+import 'package:task_manager/features/onboarding/onboarding_keys.dart';
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
 import 'package:task_manager/features/health/view/health_detail_screen.dart';
 import 'package:task_manager/features/health/viewmodel/health_detail_viewmodel.dart';
 import 'package:task_manager/features/roulette/model/roulette_outcome.dart';
 import 'package:task_manager/features/roulette/providers/roulette_providers.dart';
 import 'package:task_manager/features/roulette/view/roulette_settings_screen.dart';
+import 'package:task_manager/features/timer/model/task_sheet_result.dart';
+import 'package:task_manager/features/timer/view/timer_lock_launcher.dart';
 import 'package:task_manager/features/todo/providers/todo_providers.dart';
 import 'package:task_manager/features/todo/widgets/todo_drop_bar.dart';
 import 'package:task_manager/features/user_settings/view/settings_screen.dart';
@@ -233,7 +236,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       fallbackYen: task.rewardYen,
     );
 
-    await showTaskEventDetailSheet(
+    final result = await showTaskEventDetailSheet(
       context: context,
       task: task,
       predictedMinutes: predictedMinutes,
@@ -290,42 +293,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           return false;
         }
       },
-      onTimerStart: () async {
-        // リモート表示中なら DB に promote（保存済みなら no-op）
-        await ref
-            .read(calendarSyncViewModelProvider.notifier)
-            .promoteRemoteTaskIfNeeded(task);
-      },
-      onPauseAndSave:
-          ({required predictedMinutes, required actualMinutes}) async {
-            if (task.isCompleted) return;
-            final taskId = await ref
-                .read(calendarSyncViewModelProvider.notifier)
-                .promoteRemoteTaskIfNeeded(task);
-            if (taskId == null) {
-              if (mounted) {
-                _showErrorSnackBar('タスクの保存に失敗したため、中断できませんでした');
-              }
-              return;
-            }
-            try {
-              await ref
-                  .read(calendarTaskSyncRepositoryProvider)
-                  .saveProgress(
-                    taskId: taskId,
-                    predictedMinutes: predictedMinutes,
-                    actualMinutes: actualMinutes,
-                  );
-            } catch (e) {
-              if (mounted) _showErrorSnackBar('保存に失敗しました: $e');
-              return;
-            }
-            if (!mounted) return;
-            showAppSnackBar(
-              context,
-              const SnackBar(content: Text('一時中断しました（未了のまま保存）')),
-            );
-          },
       onRevert: () async {
         if (!task.isCompleted) return false;
         try {
@@ -456,6 +423,46 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           vm.clearError();
         }
       },
+    );
+
+    // シートで「スタート」/「ポモドーロ」が押された場合、安定した context で
+    // ロック画面を起動する。リモート表示中のタスクは promote して DB 上の
+    // taskId を確定させてから開始する（両経路で扱いは同一）。
+    if ((result != TaskSheetResult.startTimer &&
+            result != TaskSheetResult.startPomodoro) ||
+        !mounted) {
+      return;
+    }
+    final taskId = await ref
+        .read(calendarSyncViewModelProvider.notifier)
+        .promoteRemoteTaskIfNeeded(task);
+    if (taskId == null) {
+      if (mounted) _showErrorSnackBar('タスクの保存に失敗したため、タイマーを開始できませんでした');
+      return;
+    }
+    // promote で ID が変わり得るため、DB 上のタスクを取得し直す。
+    final resolved = taskId == task.id
+        ? task
+        : await resolveTaskForStart(ref, taskId: taskId);
+    if (resolved == null) {
+      if (mounted) _showErrorSnackBar('タスクの取得に失敗したため、タイマーを開始できませんでした');
+      return;
+    }
+    if (!mounted) return;
+    if (result == TaskSheetResult.startPomodoro) {
+      await TimerLockLauncher.openForPomodoro(
+        context,
+        ref,
+        task: resolved,
+        predictedMinutes: _predictedMinutesFor(resolved),
+      );
+      return;
+    }
+    await TimerLockLauncher.openForStart(
+      context,
+      ref,
+      task: resolved,
+      predictedMinutes: _predictedMinutesFor(resolved),
     );
   }
 
@@ -897,6 +904,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     } else {
       _dayPageController.jumpToPage(_initialPage);
     }
+    ref.read(scrollToNowSignalProvider.notifier).bump();
   }
 
   void _handleViewModeChange(CalendarViewMode mode) {
@@ -943,6 +951,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       appBar: AppBar(
         leading: Builder(
           builder: (ctx) => IconButton(
+            key: OnboardingKeys.menuButton,
             tooltip: 'メニュー',
             icon: const Icon(Icons.menu),
             onPressed: () => Scaffold.of(ctx).openDrawer(),
@@ -951,6 +960,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         title: const Text('人生ゲーム化'),
       ),
       floatingActionButton: FloatingActionButton(
+        key: OnboardingKeys.addTaskFab,
         heroTag: 'home_fab',
         tooltip: '予定を追加',
         onPressed: () {
@@ -1012,14 +1022,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               },
             ),
             ListTile(
-              leading: const Icon(Icons.logout),
-              title: const Text('ログアウト'),
-              onTap: () async {
-                Navigator.of(context).pop();
-                await _signOut();
-              },
-            ),
-            ListTile(
               leading: const Icon(Icons.settings_outlined),
               title: const Text('設定'),
               onTap: () {
@@ -1029,6 +1031,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                     builder: (_) => const SettingsScreen(),
                   ),
                 );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.logout),
+              title: const Text('ログアウト'),
+              onTap: () async {
+                Navigator.of(context).pop();
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('ログアウト確認'),
+                    content: const Text('ログアウトしますか？'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('キャンセル'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('ログアウト'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirmed != true || !mounted) return;
+                await _signOut();
               },
             ),
           ],
@@ -1046,15 +1074,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          const Expanded(child: UserStatusPanel()),
+                          Expanded(
+                            child: KeyedSubtree(
+                              key: OnboardingKeys.userStatusPanel,
+                              child: const UserStatusPanel(),
+                            ),
+                          ),
                           const SizedBox(width: 10),
-                          const Expanded(child: _HealthPanelConnector()),
+                          Expanded(
+                            child: KeyedSubtree(
+                              key: OnboardingKeys.healthPanel,
+                              child: const _HealthPanelConnector(),
+                            ),
+                          ),
                         ],
                       ),
                     ),
                     const SizedBox(height: 6),
                     Expanded(
                       child: Card(
+                        key: OnboardingKeys.weekSchedule,
                         margin: EdgeInsets.zero,
                         clipBehavior: Clip.antiAlias,
                         child: Column(
@@ -1076,6 +1115,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                                 children: [
                                   PageView.builder(
                                     controller: _weekPageController,
+                                    physics: ref.watch(isPinchingCalendarProvider)
+                                        ? const NeverScrollableScrollPhysics()
+                                        : null,
                                     onPageChanged: (p) {
                                       final prevWs = _weekStartForPage(
                                         _currentWeekPage,
@@ -1103,6 +1145,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                                     onPointerMove: _handleDayDragPointerMove,
                                     child: PageView.builder(
                                       controller: _dayPageController,
+                                      physics: ref.watch(isPinchingCalendarProvider)
+                                          ? const NeverScrollableScrollPhysics()
+                                          : null,
                                       onPageChanged: (p) {
                                         final prevWs = startOfWeek(
                                           _dayForPage(_currentDayPage),

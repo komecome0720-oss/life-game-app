@@ -83,15 +83,20 @@ class _BoardPainter extends CustomPainter {
       canvas.drawArc(rect, topOffset + start, sweep, true, paint);
       canvas.drawArc(rect, topOffset + start, sweep, true, divider);
 
-      _drawCellLabel(
-        canvas,
-        center: center,
-        radius: radius,
-        angle: topOffset + start + sweep / 2,
-        label: _boardLabelFor(cell.category),
-        fillColor: fillColor,
-        size: size,
-      );
+      // sweep がほぼ0のマス（例: 小当たり数を絞って S/W≈0 やハズレ0の設定）は
+      // マス自体がほぼ描画されないため、ラベルだけが隣のマスに浮いて表示されてしまう。
+      // そのためラベル描画自体をスキップする。
+      if (cell.sweepFraction > 1e-9) {
+        _drawCellLabel(
+          canvas,
+          center: center,
+          radius: radius,
+          angle: topOffset + start + sweep / 2,
+          label: _boardLabelFor(cell.category),
+          fillColor: fillColor,
+          size: size,
+        );
+      }
       start += sweep;
     }
 

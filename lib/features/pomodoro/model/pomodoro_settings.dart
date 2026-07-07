@@ -3,7 +3,11 @@ import 'package:flutter/foundation.dart';
 
 /// ポモドーロで再生する BGM の種類。
 enum PomodoroBgm {
-  waves('waves', 'assets/audio/bgm_waves.mp3', '波の音'),
+  // NOTE: BGM素材を同名のまま差し替えないこと。just_audio はアセットを
+  // 端末キャッシュにコピーし、同じパスなら古いキャッシュを再生し続けるため、
+  // 素材を替えるときは必ずファイル名も変える（このファイルも過去に声入り
+  // 素材が残り続ける問題があり bgm_waves.mp3 → bgm_waves_soothing.mp3 に改名）。
+  waves('waves', 'assets/audio/bgm_waves_soothing.mp3', '波の音'),
   river('river', 'assets/audio/bgm_river.m4a', '川のせせらぎ'),
   fire('fire', 'assets/audio/bgm_fire.m4a', '焚き火'),
   birds('birds', 'assets/audio/bgm_birds.m4a', '鳥のさえずり');

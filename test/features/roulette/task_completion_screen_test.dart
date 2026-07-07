@@ -9,6 +9,7 @@ RouletteProbabilities _probs() => RewardConfig.probabilitiesFor(
   weeklyTaskCount: 56,
   weeklyJackpotCount: 1.5,
   weeklyChuCount: 16.35,
+  weeklyShoCount: 30,
 );
 
 Widget _host(Widget child) => MaterialApp(home: child);

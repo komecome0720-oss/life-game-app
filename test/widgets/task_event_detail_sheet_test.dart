@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:task_manager/features/timer/model/task_sheet_result.dart';
+import 'package:task_manager/features/timer/widgets/split_start_button.dart';
 import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/widgets/task_event_detail_sheet.dart';
 
@@ -27,7 +29,7 @@ Future<void> _pumpSheet(
   required int expectedRewardYen,
   required TaskCompleteCallback onComplete,
   TaskSaveEditsCallback? onSaveEdits,
-  TaskPauseAndSaveCallback? onPauseAndSave,
+  ValueChanged<TaskSheetResult?>? onResult,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -41,8 +43,7 @@ Future<void> _pumpSheet(
               expectedRewardYen: expectedRewardYen,
               onComplete: onComplete,
               onSaveEdits: onSaveEdits,
-              onPauseAndSave: onPauseAndSave,
-            ),
+            ).then((r) => onResult?.call(r)),
             child: const Text('OPEN'),
           ),
         ),
@@ -299,38 +300,41 @@ void main() {
       expect(find.text('見込時間：60分'), findsNothing);
     });
 
-    testWidgets('タイマー走行中に下フリックで閉じると onPauseAndSave が呼ばれる',
-        (tester) async {
-      bool pauseCalled = false;
+    testWidgets('スタートボタンでシートが閉じ、startTimer が返る', (tester) async {
+      TaskSheetResult? result;
       await _pumpSheet(
         tester,
         task: _sampleTask(),
         predictedMinutes: 60,
         expectedRewardYen: 1500,
         onComplete: ({required predictedMinutes, required actualMinutes}) async {},
-        onPauseAndSave:
-            ({required predictedMinutes, required actualMinutes}) async {
-          pauseCalled = true;
-        },
+        onResult: (r) => result = r,
       );
 
-      // タイマー開始（センターフラッシュ演出と1秒ティッカーが動き出す）
-      await tester.ensureVisible(find.byIcon(Icons.play_arrow_rounded));
-      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
-      await tester.pump();
-      // センターフラッシュ（約900ms）を消化
-      await tester.pump(const Duration(milliseconds: 1000));
-
-      await tester.fling(
-        find.text('見込時間：60分'),
-        const Offset(0, 600),
-        2000,
-      );
-      // 閉じる処理内でティッカーが止まるので、その後は settle できる
-      await tester.pump(const Duration(milliseconds: 300));
+      await tester.ensureVisible(find.byKey(kSplitStartButtonStartKey));
+      await tester.tap(find.byKey(kSplitStartButtonStartKey));
       await tester.pumpAndSettle();
 
-      expect(pauseCalled, isTrue);
+      expect(result, TaskSheetResult.startTimer);
+      expect(find.text('見込時間：60分'), findsNothing);
+    });
+
+    testWidgets('ポモドーロボタンでシートが閉じ、startPomodoro が返る', (tester) async {
+      TaskSheetResult? result;
+      await _pumpSheet(
+        tester,
+        task: _sampleTask(),
+        predictedMinutes: 60,
+        expectedRewardYen: 1500,
+        onComplete: ({required predictedMinutes, required actualMinutes}) async {},
+        onResult: (r) => result = r,
+      );
+
+      await tester.ensureVisible(find.byKey(kSplitStartButtonPomodoroKey));
+      await tester.tap(find.byKey(kSplitStartButtonPomodoroKey));
+      await tester.pumpAndSettle();
+
+      expect(result, TaskSheetResult.startPomodoro);
       expect(find.text('見込時間：60分'), findsNothing);
     });
   });

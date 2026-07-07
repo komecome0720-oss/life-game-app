@@ -128,11 +128,13 @@ class WeekSchedulePanel extends ConsumerStatefulWidget {
   ConsumerState<WeekSchedulePanel> createState() => _WeekSchedulePanelState();
 }
 
-class _WeekSchedulePanelState extends ConsumerState<WeekSchedulePanel> {
+class _WeekSchedulePanelState extends ConsumerState<WeekSchedulePanel>
+    with WidgetsBindingObserver {
   static const double _defaultHourHeight = 48.0;
   static const double _minHourHeight = 24.0;
   static const double _maxHourHeight = 120.0;
   static const double _gutterWidth = 40.0;
+  static const double _gutterLabelHeight = 14.0;
   static const double _allDayRowHeight = 28.0;
   static const double _dayHeaderHeight = 32.0;
   static const int _startHour = 0;
@@ -143,28 +145,55 @@ class _WeekSchedulePanelState extends ConsumerState<WeekSchedulePanel> {
   DateTime _now = DateTime.now();
   bool _didInitialScroll = false;
 
-  double _hourHeight = _defaultHourHeight;
   double _pinchStartHourHeight = _defaultHourHeight;
+  double _pinchStartScrollOffset = 0;
+  double _pinchStartFocalY = 0;
+  int _activePointers = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() => _now = DateTime.now());
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToNow());
   }
 
-  void _scrollToNow() {
-    if (_didInitialScroll) return;
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      setState(() => _now = DateTime.now());
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _scrollToNow(force: true));
+    }
+  }
+
+  void _scrollToNow({bool force = false}) {
+    if (!force && _didInitialScroll) return;
     if (!_scrollController.hasClients) return;
-    final target = ((_now.hour - 1).clamp(0, 23)) * _hourHeight;
+    final position = _scrollController.position;
+    final hourHeight = ref.read(calendarHourHeightProvider);
+    final nowY = (_now.hour * 60 + _now.minute) / 60 * hourHeight;
+    final target = (nowY - position.viewportDimension / 3)
+        .clamp(0.0, position.maxScrollExtent);
     _scrollController.jumpTo(target);
     _didInitialScroll = true;
   }
 
+  void _onPointerReleased() {
+    if (_activePointers <= 0) return;
+    final wasPinching = _activePointers >= 2;
+    _activePointers--;
+    if (wasPinching && _activePointers < 2) {
+      setState(() {});
+      ref.read(isPinchingCalendarProvider.notifier).set(false);
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _clockTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
@@ -231,10 +260,16 @@ class _WeekSchedulePanelState extends ConsumerState<WeekSchedulePanel> {
     final visibleDays = widget.visibleDays;
     final dayCount = visibleDays.length;
     final totalHours = _endHour - _startHour;
-    final gridHeight = totalHours * _hourHeight;
+    final hourHeight = ref.watch(calendarHourHeightProvider);
+    final gridHeight = totalHours * hourHeight;
     final hasAllDay = days.any((list) => list.any((t) => t.isAllDay));
     final calendarColors = ref.watch(calendarColorsProvider);
     final todayIdx = _todayIndexInRange();
+
+    ref.listen<int>(scrollToNowSignalProvider, (prev, next) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _scrollToNow(force: true));
+    });
 
     // データが来てからスクロール位置を合わせる（初回のみ）
     if (!_didInitialScroll) {
@@ -371,74 +406,106 @@ class _WeekSchedulePanelState extends ConsumerState<WeekSchedulePanel> {
 
           // ── 時間グリッド（スクロール + ピンチで時間高さ拡縮） ──
           Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.deferToChild,
-              onScaleStart: (details) {
-                if (details.pointerCount < 2) return;
-                _pinchStartHourHeight = _hourHeight;
-              },
-              onScaleUpdate: (details) {
-                if (details.pointerCount < 2) return;
-                final next = (_pinchStartHourHeight * details.scale)
-                    .clamp(_minHourHeight, _maxHourHeight);
-                if (next != _hourHeight) {
-                  setState(() => _hourHeight = next);
+            child: Listener(
+              onPointerDown: (_) {
+                _activePointers++;
+                if (_activePointers == 2) {
+                  setState(() {});
+                  ref.read(isPinchingCalendarProvider.notifier).set(true);
                 }
               },
-              child: SingleChildScrollView(
-                controller: _scrollController,
-                child: SizedBox(
-                  height: gridHeight,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // 時刻ガター
-                    SizedBox(
-                      width: _gutterWidth,
-                      child: Column(
-                        children: List.generate(totalHours, (i) {
-                          final h = _startHour + i;
-                          return SizedBox(
-                            height: _hourHeight,
-                            child: Padding(
-                              padding: const EdgeInsets.only(top: 2, right: 6),
+              onPointerUp: (_) => _onPointerReleased(),
+              onPointerCancel: (_) => _onPointerReleased(),
+              child: GestureDetector(
+                behavior: HitTestBehavior.deferToChild,
+                onScaleStart: (details) {
+                  if (details.pointerCount < 2) return;
+                  _pinchStartHourHeight = ref.read(calendarHourHeightProvider);
+                  _pinchStartScrollOffset = _scrollController.hasClients
+                      ? _scrollController.offset
+                      : 0;
+                  _pinchStartFocalY = details.localFocalPoint.dy;
+                },
+                onScaleUpdate: (details) {
+                  if (details.pointerCount < 2) return;
+                  final next = (_pinchStartHourHeight * details.scale)
+                      .clamp(_minHourHeight, _maxHourHeight);
+                  ref.read(calendarHourHeightProvider.notifier).set(next);
+                  if (_scrollController.hasClients) {
+                    final ratio = next / _pinchStartHourHeight;
+                    final newOffset = ((_pinchStartScrollOffset +
+                                _pinchStartFocalY) *
+                            ratio -
+                        _pinchStartFocalY)
+                        .clamp(
+                            0.0, _scrollController.position.maxScrollExtent);
+                    _scrollController.jumpTo(newOffset);
+                  }
+                },
+                onScaleEnd: (_) {
+                  ref.read(isPinchingCalendarProvider.notifier).set(false);
+                },
+                child: SingleChildScrollView(
+                  controller: _scrollController,
+                  physics: _activePointers >= 2
+                      ? const NeverScrollableScrollPhysics()
+                      : null,
+                  child: SizedBox(
+                    height: gridHeight,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // 時刻ガター
+                      SizedBox(
+                        width: _gutterWidth,
+                        height: gridHeight,
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: List.generate(23, (i) {
+                            final h = i + 1;
+                            return Positioned(
+                              top: h * hourHeight - _gutterLabelHeight / 2,
+                              left: 0,
+                              right: 6,
+                              height: _gutterLabelHeight,
                               child: Text(
-                                h == 0 ? '' : '$h:00',
+                                '$h:00',
+                                textAlign: TextAlign.right,
                                 style: text.labelSmall?.copyWith(
                                   fontSize: 10,
+                                  height: 1.4,
                                   color: scheme.onSurfaceVariant,
                                 ),
-                                textAlign: TextAlign.right,
                               ),
-                            ),
-                          );
-                        }),
-                      ),
-                    ),
-                    // 可変日数のカラム
-                    ...List.generate(dayCount, (i) {
-                      final dayDate = visibleDays[i];
-                      return Expanded(
-                        child: _DayColumn(
-                          dayDate: dayDate,
-                          tasks: days[i].where((t) => !t.isAllDay).toList(),
-                          hourHeight: _hourHeight,
-                          startHour: _startHour,
-                          endHour: _endHour,
-                          onTaskTap: widget.onTaskTap,
-                          onMoveTask: _onMoveTask,
-                          onEmptyTap: widget.onEmptyTap,
-                          onReadOnlyMoveAttempt: widget.onReadOnlyMoveAttempt,
-                          calendarColors: calendarColors,
-                          isToday: todayIdx == i,
-                          now: _now,
-                          taskIds: widget.taskIds,
+                            );
+                          }),
                         ),
-                      );
-                    }),
-                  ],
+                      ),
+                      // 可変日数のカラム
+                      ...List.generate(dayCount, (i) {
+                        final dayDate = visibleDays[i];
+                        return Expanded(
+                          child: _DayColumn(
+                            dayDate: dayDate,
+                            tasks: days[i].where((t) => !t.isAllDay).toList(),
+                            hourHeight: hourHeight,
+                            startHour: _startHour,
+                            endHour: _endHour,
+                            onTaskTap: widget.onTaskTap,
+                            onMoveTask: _onMoveTask,
+                            onEmptyTap: widget.onEmptyTap,
+                            onReadOnlyMoveAttempt: widget.onReadOnlyMoveAttempt,
+                            calendarColors: calendarColors,
+                            isToday: todayIdx == i,
+                            now: _now,
+                            taskIds: widget.taskIds,
+                          ),
+                        );
+                      }),
+                    ],
+                  ),
                 ),
-              ),
+                ),
               ),
             ),
           ),
@@ -558,9 +625,11 @@ class _DayColumn extends ConsumerWidget {
                     final task = entry.$1;
                     final lane = entry.$2;
                     final laneCount = entry.$3;
+                    final dayStart =
+                        DateTime(dayDate.year, dayDate.month, dayDate.day);
                     final startMin =
-                        task.start!.hour * 60 + task.start!.minute;
-                    final endMin = task.end!.hour * 60 + task.end!.minute;
+                        task.start!.difference(dayStart).inMinutes;
+                    final endMin = task.end!.difference(dayStart).inMinutes;
                     final clipStart =
                         startMin.clamp(rangeStartMin, rangeEndMin);
                     final clipEnd = endMin.clamp(rangeStartMin, rangeEndMin);

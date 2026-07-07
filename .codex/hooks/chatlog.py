@@ -6,7 +6,7 @@ import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-PROJECT_PATH = "/Users/kometaninaoki/Documents/life_game_app(cursor)"
+PROJECT_PATH = "/Users/kometaninaoki/Documents/life_game_app"
 LOG_DIR = "/Users/kometaninaoki/Library/CloudStorage/GoogleDrive-n.kometani@re-startlaw.com/マイドライブ/Obsidian Vault - life_game_app/40_chatlog"
 JST = timezone(timedelta(hours=9))
 

@@ -19,7 +19,7 @@ class HealthPanel extends StatelessWidget {
         children: [
           Text('健康管理', style: text.labelMedium?.copyWith(color: Theme.of(context).colorScheme.primary)),
           const SizedBox(height: 6),
-          _row(context, '食事', scores.meal),
+          _row(context, '野菜・果物', scores.meal),
           _row(context, '睡眠', scores.sleep),
           _row(context, '運動', scores.exercise),
           _row(context, '瞑想', scores.meditation),
@@ -36,7 +36,7 @@ class HealthPanel extends StatelessWidget {
   }
 
   static const _icons = {
-    '食事': Icons.restaurant,
+    '野菜・果物': Icons.restaurant,
     '睡眠': Icons.bedtime,
     '運動': Icons.directions_run,
     '瞑想': Icons.self_improvement,
@@ -61,12 +61,11 @@ class HealthPanel extends StatelessWidget {
 
   Widget _totalRow(BuildContext context, int total) {
     final text = Theme.of(context).textTheme;
-    final color = Theme.of(context).colorScheme.primary;
     return Padding(
       padding: const EdgeInsets.only(top: 2),
       child: Row(
         children: [
-          Icon(Icons.favorite, size: 16, color: color),
+          AnimatedHealthHeart(totalScore: total),
           const SizedBox(width: 4),
           Expanded(child: TotalSegmentedProgressBar(totalScore: total)),
           const SizedBox(width: 4),

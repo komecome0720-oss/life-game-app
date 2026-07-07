@@ -22,6 +22,7 @@ class _RouletteSettingsScreenState
   late final TextEditingController _wCtrl;
   late final TextEditingController _jCtrl;
   late final TextEditingController _cCtrl;
+  late final TextEditingController _sCtrl;
   late final List<TextEditingController> _jackpotCtrls;
   late final List<TextEditingController> _chuCtrls;
   late final List<TextEditingController> _shoCtrls;
@@ -33,6 +34,7 @@ class _RouletteSettingsScreenState
     _wCtrl = TextEditingController();
     _jCtrl = TextEditingController();
     _cCtrl = TextEditingController();
+    _sCtrl = TextEditingController();
     _jackpotCtrls = [];
     _chuCtrls = [];
     _shoCtrls = [];
@@ -40,6 +42,7 @@ class _RouletteSettingsScreenState
     _wCtrl.addListener(() => setState(() {}));
     _jCtrl.addListener(() => setState(() {}));
     _cCtrl.addListener(() => setState(() {}));
+    _sCtrl.addListener(() => setState(() {}));
   }
 
   void _initFrom(UserSettings s) {
@@ -48,6 +51,7 @@ class _RouletteSettingsScreenState
     _wCtrl.text = _trimNum(s.weeklyTaskCount);
     _jCtrl.text = _trimNum(s.weeklyJackpotCount);
     _cCtrl.text = _trimNum(s.weeklyChuCount);
+    _sCtrl.text = _trimNum(s.weeklyShoCount);
     _fillSlots(_jackpotCtrls, s.jackpotRewards);
     _fillSlots(_chuCtrls, s.chuRewards);
     _fillSlots(_shoCtrls, s.shoRewards);
@@ -74,6 +78,7 @@ class _RouletteSettingsScreenState
     _wCtrl.dispose();
     _jCtrl.dispose();
     _cCtrl.dispose();
+    _sCtrl.dispose();
     for (final c in [..._jackpotCtrls, ..._chuCtrls, ..._shoCtrls]) {
       c.dispose();
     }
@@ -83,6 +88,7 @@ class _RouletteSettingsScreenState
   double get _w => double.tryParse(_wCtrl.text.trim()) ?? 0;
   double get _j => double.tryParse(_jCtrl.text.trim()) ?? 0;
   double get _c => double.tryParse(_cCtrl.text.trim()) ?? 0;
+  double get _s => double.tryParse(_sCtrl.text.trim()) ?? 0;
 
   List<String> _collect(List<TextEditingController> ctrls) => ctrls
       .map((c) => c.text.trim())
@@ -94,6 +100,7 @@ class _RouletteSettingsScreenState
       weeklyTaskCount: _w,
       weeklyJackpotCount: _j,
       weeklyChuCount: _c,
+      weeklyShoCount: _s,
     );
     if (err != null) {
       showAppSnackBar(context, SnackBar(content: Text(err)));
@@ -106,6 +113,7 @@ class _RouletteSettingsScreenState
         weeklyTaskCount: _w,
         weeklyJackpotCount: _j,
         weeklyChuCount: _c,
+        weeklyShoCount: _s,
         jackpotRewards: _collect(_jackpotCtrls),
         chuRewards: _collect(_chuCtrls),
         shoRewards: _collect(_shoCtrls),
@@ -142,6 +150,7 @@ class _RouletteSettingsScreenState
       weeklyTaskCount: _w,
       weeklyJackpotCount: _j,
       weeklyChuCount: _c,
+      weeklyShoCount: _s,
     );
 
     return Scaffold(
@@ -230,6 +239,7 @@ class _RouletteSettingsScreenState
       weeklyTaskCount: _w,
       weeklyJackpotCount: _j,
       weeklyChuCount: _c,
+      weeklyShoCount: _s,
     );
     final cells = RewardConfig.boardCells(probs);
     return Column(
@@ -239,52 +249,51 @@ class _RouletteSettingsScreenState
         Center(child: RouletteLegend(probabilities: probs)),
         if (probs.jackpotClamped) ...[
           const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.errorContainer,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              '大当たりが多すぎます（上限${(RewardConfig.jackpotCap * 100).toStringAsFixed(0)}%でクランプ）。'
-              '特別感が薄れるため J を小さく、または W を大きくしてください。',
-              style: text.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onErrorContainer,
-              ),
-            ),
+          _warnBanner(
+            text,
+            '大当たりが多すぎます（上限${(RewardConfig.jackpotCap * 100).toStringAsFixed(0)}%でクランプ）。'
+            '特別感が薄れるため J を小さく、または W を大きくしてください。',
           ),
         ],
         if (probs.chuClamped) ...[
           const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.errorContainer,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              '中当たりが多すぎます。残り確率を超える分は自動で調整されます。',
-              style: text.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onErrorContainer,
-              ),
-            ),
-          ),
+          _warnBanner(text, '中当たりが多すぎます。残り確率を超える分は自動で調整されます。'),
+        ],
+        if (probs.shoClamped) ...[
+          const SizedBox(height: 8),
+          _warnBanner(text, '小当たりが多すぎます。残り確率を超える分は自動で調整されます。'),
         ],
       ],
+    );
+  }
+
+  Widget _warnBanner(TextTheme text, String message) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.errorContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        message,
+        style: text.bodySmall?.copyWith(
+          color: Theme.of(context).colorScheme.onErrorContainer,
+        ),
+      ),
     );
   }
 
   Widget _buildWeeklyFields() {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = (constraints.maxWidth - 24) / 3;
+        final width = (constraints.maxWidth - 24) / 4;
         final row = Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
               child: _NumberField(controller: _wCtrl, label: 'タスク予定数'),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 8),
             Expanded(
               child: _NumberField(
                 controller: _jCtrl,
@@ -292,7 +301,7 @@ class _RouletteSettingsScreenState
                 allowDecimal: true,
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 8),
             Expanded(
               child: _NumberField(
                 controller: _cCtrl,
@@ -300,9 +309,17 @@ class _RouletteSettingsScreenState
                 allowDecimal: true,
               ),
             ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _NumberField(
+                controller: _sCtrl,
+                label: '小当たり数',
+                allowDecimal: true,
+              ),
+            ),
           ],
         );
-        if (width >= 92) return row;
+        if (width >= 70) return row;
         return Column(
           children: [
             _NumberField(controller: _wCtrl, label: 'タスク予定数'),
@@ -316,6 +333,12 @@ class _RouletteSettingsScreenState
             _NumberField(
               controller: _cCtrl,
               label: '中当たり数',
+              allowDecimal: true,
+            ),
+            const SizedBox(height: 12),
+            _NumberField(
+              controller: _sCtrl,
+              label: '小当たり数',
               allowDecimal: true,
             ),
           ],

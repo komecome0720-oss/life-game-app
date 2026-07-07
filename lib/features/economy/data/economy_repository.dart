@@ -49,6 +49,49 @@ class EconomyRepository {
     return (doc.data()?['cumulativeTaskCount'] as num?)?.toInt() ?? 0;
   }
 
+  CollectionReference<Map<String, dynamic>> _dailyEarningsCol(String uid) =>
+      _userRef(uid).collection('daily_earnings');
+
+  String? _dailyEarningsFieldFor(AdventureEntryType type) {
+    switch (type) {
+      case AdventureEntryType.taskCompleted:
+      case AdventureEntryType.taskReverted:
+        return 'taskYen';
+      case AdventureEntryType.healthAdjusted:
+        return 'healthYen';
+      case AdventureEntryType.manualAdjusted:
+        return 'manualYen';
+      case AdventureEntryType.wishPurchased:
+      case AdventureEntryType.wishUnpurchased:
+        return null;
+    }
+  }
+
+  String _localDateKey(DateTime date) {
+    final local = date.toLocal();
+    String pad2(int v) => v.toString().padLeft(2, '0');
+    return '${local.year.toString().padLeft(4, '0')}-${pad2(local.month)}-${pad2(local.day)}';
+  }
+
+  /// wish系タイプは何もしない。日次集計コレクション `daily_earnings` へ
+  /// `FieldValue.increment` で加算する（順序非依存。クランプは表示側で行う）。
+  void _applyDailyEarning(
+    Transaction tx,
+    String uid,
+    AdventureEntryType type,
+    int deltaYen,
+    DateTime? occurredAt,
+  ) {
+    final field = _dailyEarningsFieldFor(type);
+    if (field == null) return;
+    final dateKey = _localDateKey(occurredAt ?? DateTime.now());
+    final dailyRef = _dailyEarningsCol(uid).doc(dateKey);
+    tx.set(dailyRef, {
+      field: FieldValue.increment(deltaYen),
+      'updatedAtUtc': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
   Map<String, dynamic> _entryData({
     required AdventureEntryType type,
     required String title,
@@ -118,6 +161,7 @@ class EconomyRepository {
           occurredAt: occurredAt,
         ),
       );
+      _applyDailyEarning(tx, uid, type, deltaYen, occurredAt);
       return BalanceLedgerResult(
         applied: true,
         deltaYen: deltaYen,
@@ -184,6 +228,13 @@ class EconomyRepository {
           balanceAfterYen: after,
           sourceId: taskId,
         ),
+      );
+      _applyDailyEarning(
+        tx,
+        uid,
+        AdventureEntryType.taskCompleted,
+        rewardYen,
+        null,
       );
       return BalanceLedgerResult(
         applied: true,
@@ -260,6 +311,7 @@ class EconomyRepository {
           sourceId: taskId,
         ),
       );
+      _applyDailyEarning(tx, uid, AdventureEntryType.taskReverted, delta, null);
       return BalanceLedgerResult(
         applied: true,
         deltaYen: delta,
@@ -449,6 +501,13 @@ class EconomyRepository {
           balanceAfterYen: after,
           sourceId: dateKey,
         ),
+      );
+      _applyDailyEarning(
+        tx,
+        uid,
+        AdventureEntryType.healthAdjusted,
+        deltaYen,
+        null,
       );
       return BalanceLedgerResult(
         applied: true,

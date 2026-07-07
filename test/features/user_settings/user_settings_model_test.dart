@@ -1,3 +1,4 @@
+import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:task_manager/features/roulette/model/reward_config.dart';
 import 'package:task_manager/features/user_settings/model/user_settings.dart';
@@ -20,6 +21,64 @@ void main() {
       const settings = UserSettings(weeklyChuCount: 9.5);
       final data = settings.toFirestore();
       expect(data['weeklyChuCount'], 9.5);
+    });
+  });
+
+  group('UserSettings weeklyShoCount', () {
+    test('default で小当たり数を持つ', () {
+      const settings = UserSettings();
+      expect(settings.weeklyShoCount, RewardConfig.defaultWeeklyShoCount);
+    });
+
+    test('copyWith で小当たり数を更新できる', () {
+      const settings = UserSettings();
+      final updated = settings.copyWith(weeklyShoCount: 20.5);
+      expect(updated.weeklyShoCount, 20.5);
+      expect(settings.weeklyShoCount, RewardConfig.defaultWeeklyShoCount);
+    });
+
+    test('toFirestore に weeklyShoCount を含める', () {
+      const settings = UserSettings(weeklyShoCount: 25.5);
+      final data = settings.toFirestore();
+      expect(data['weeklyShoCount'], 25.5);
+    });
+  });
+
+  group('UserSettings onboardingCompleted', () {
+    test('default で false を持つ', () {
+      const settings = UserSettings();
+      expect(settings.onboardingCompleted, isFalse);
+    });
+
+    test('copyWith で true に更新できる', () {
+      const settings = UserSettings();
+      final updated = settings.copyWith(onboardingCompleted: true);
+      expect(updated.onboardingCompleted, isTrue);
+      expect(settings.onboardingCompleted, isFalse);
+    });
+
+    test('toFirestore には onboardingCompleted を含めない', () {
+      const settings = UserSettings(onboardingCompleted: true);
+      final data = settings.toFirestore();
+      expect(data.containsKey('onboardingCompleted'), isFalse);
+    });
+
+    test('fromFirestore: キー無しなら false', () async {
+      final firestore = FakeFirebaseFirestore();
+      final ref = firestore.collection('users').doc('u1');
+      await ref.set({'displayName': 'たろう'});
+      final doc = await ref.get();
+      final settings = UserSettings.fromFirestore(doc);
+      expect(settings.onboardingCompleted, isFalse);
+    });
+
+    test('fromFirestore: true が保存されていれば true', () async {
+      final firestore = FakeFirebaseFirestore();
+      final ref = firestore.collection('users').doc('u1');
+      await ref.set({'onboardingCompleted': true});
+      final doc = await ref.get();
+      final settings = UserSettings.fromFirestore(doc);
+      expect(settings.onboardingCompleted, isTrue);
     });
   });
 }

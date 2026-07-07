@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:task_manager/features/onboarding/providers/onboarding_providers.dart';
+import 'package:task_manager/features/onboarding/view/onboarding_flow_screen.dart';
 import 'package:task_manager/features/user_settings/model/user_settings.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 import 'package:task_manager/utils/app_messenger.dart';
@@ -65,6 +67,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           current.copyWith(defaultCalendarDurationMinutes: minutes),
         );
     await _persist(defaultCalendarDurationMinutes: minutes);
+  }
+
+  /// 「使い方をもう一度見る」：コンセプト説明ページのみ再生し、
+  /// その後ホームに戻ってコーチマーク（説明部分）を再生する。
+  Future<void> _showReplayIntro() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => OnboardingFlowScreen(
+          replayOnly: true,
+          onFinished: () {
+            ref.read(onboardingReplayProvider.notifier).trigger();
+            Navigator.of(context).popUntil((r) => r.isFirst);
+          },
+        ),
+      ),
+    );
   }
 
   @override
@@ -143,6 +161,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     label: '新規予定の所要時間デフォルト',
                     minutes: settings.defaultCalendarDurationMinutes,
                     onChanged: (m) => _onCalendarMinutesChanged(settings, m),
+                  ),
+                  const SizedBox(height: 24),
+                  _SectionHeader('ヘルプ'),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: _showReplayIntro,
+                    icon: const Icon(Icons.help_outline),
+                    label: const Text('使い方をもう一度見る'),
                   ),
                 ],
               ),

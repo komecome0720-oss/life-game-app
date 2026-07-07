@@ -10,9 +10,9 @@ class RewardConfig {
   RewardConfig._();
 
   // ---------------------------------------------------------------------------
-  // ルーレット配分比率。旧ロジックでは remaining = 1 - P(大) を
-  // ハズレ/中/小へ配分していた。中を明示入力にした後も、小/ハズレの相対比 55:15 は維持する。
-  // 合計は必ず 1.0（_ratiosSumToOne テストで保証）。後から調整可能。
+  // ルーレット配分比率。新ロジックでは大・中・小はすべて明示入力（週あたり回数から逆算）で、
+  // 残り確率は全てハズレになる。この比率定数は weeklyChuCount / weeklyShoCount 導入前の
+  // 保存データを逆算するための legacy 専用値（現行ロジックでは使用しない）。
   // ---------------------------------------------------------------------------
   static const double hazureRatio = 0.15;
   static const double chuRatio = 0.30;
@@ -23,12 +23,13 @@ class RewardConfig {
   static const double jackpotCap = 0.10;
 
   // ---------------------------------------------------------------------------
-  // 盤面構成（固定: 大×1 / 中×2 / 小×3 / ハズレ×1 = 7マス）。
+  // 盤面構成（固定: 大×1 / 中×2 / 小×3 / ハズレ×3 = 9マス）。
   // マスの角度（面積）＝当選確率に比例（等分割ではない）。
   // ---------------------------------------------------------------------------
   static const int chuCells = 2;
   static const int shoCells = 3;
-  static const int boardCellCount = 1 + chuCells + shoCells + 1; // = 7
+  static const int missCells = 3;
+  static const int boardCellCount = 1 + chuCells + shoCells + missCells; // = 9
 
   // ---------------------------------------------------------------------------
   // レベル曲線 C(L) = floor(A * (L - 1)^P)  （L>=1, C(1)=0）。ポケモン式の逓増カーブ。
@@ -56,6 +57,7 @@ class RewardConfig {
   static const double defaultWeeklyTaskCount = 56;
   static const double defaultWeeklyJackpotCount = 1.5;
   static const double defaultWeeklyChuCount = 16.35;
+  static const double defaultWeeklyShoCount = 30;
 
   // ===========================================================================
   // 入力バリデーション
@@ -66,6 +68,7 @@ class RewardConfig {
     required num weeklyTaskCount,
     required num weeklyJackpotCount,
     required num weeklyChuCount,
+    required num weeklyShoCount,
   }) {
     if (weeklyTaskCount <= 0) {
       return '週あたりのタスク予定回数は1以上で入力してください';
@@ -75,6 +78,9 @@ class RewardConfig {
     }
     if (weeklyChuCount < 0) {
       return '週に欲しい中当たり回数は0以上で入力してください';
+    }
+    if (weeklyShoCount < 0) {
+      return '週に欲しい小当たり回数は0以上で入力してください';
     }
     return null;
   }
@@ -88,17 +94,18 @@ class RewardConfig {
   /// ```
   /// P(大)    = clamp(J / W, 0, JACKPOT_CAP)
   /// P(中)    = clamp(C / W, 0, 1 - P(大))
-  /// remaining = 1 - P(大) - P(中)
-  /// P(ハズレ) = remaining × HAZURE_RATIO / (HAZURE_RATIO + SHO_RATIO)
-  /// P(小)    = remaining × SHO_RATIO / (HAZURE_RATIO + SHO_RATIO)
+  /// P(小)    = clamp(S / W, 0, 1 - P(大) - P(中))
+  /// P(ハズレ) = 1 - P(大) - P(中) - P(小)
   /// ```
   ///
+  /// 大 → 中 → 小 の順に確率を確保し、残りは全てハズレになる。
   /// 合計は必ず 1.0 になる。[weeklyTaskCount] <= 0 は不正入力なので [ArgumentError]
   /// （呼び出し側は事前に [validateRouletteInput] でガードすること）。
   static RouletteProbabilities probabilitiesFor({
     required num weeklyTaskCount,
     required num weeklyJackpotCount,
     required num weeklyChuCount,
+    required num weeklyShoCount,
   }) {
     if (weeklyTaskCount <= 0) {
       throw ArgumentError.value(
@@ -116,15 +123,19 @@ class RewardConfig {
     final maxChu = 1 - pJackpot;
     final chuClamped = rawChu > maxChu;
     final pChu = rawChu < 0 ? 0.0 : (chuClamped ? maxChu : rawChu.toDouble());
-    final remaining = (1 - pJackpot - pChu).clamp(0.0, 1.0).toDouble();
-    final shoMissRatio = shoRatio + hazureRatio;
+    final rawSho = weeklyShoCount / weeklyTaskCount;
+    final maxSho = 1 - pJackpot - pChu;
+    final shoClamped = rawSho > maxSho;
+    final pSho = rawSho < 0 ? 0.0 : (shoClamped ? maxSho : rawSho.toDouble());
+    final pMiss = (1 - pJackpot - pChu - pSho).clamp(0.0, 1.0).toDouble();
     return RouletteProbabilities(
       jackpot: pJackpot,
       chu: pChu,
-      sho: remaining * (shoRatio / shoMissRatio),
-      miss: remaining * (hazureRatio / shoMissRatio),
+      sho: pSho,
+      miss: pMiss,
       jackpotClamped: jackpotClamped,
       chuClamped: chuClamped,
+      shoClamped: shoClamped,
     );
   }
 
@@ -138,8 +149,29 @@ class RewardConfig {
       weeklyTaskCount: weeklyTaskCount,
       weeklyJackpotCount: weeklyJackpotCount,
       weeklyChuCount: 0,
+      weeklyShoCount: 0,
     );
     return weeklyTaskCount * ((1 - p.jackpot) * chuRatio);
+  }
+
+  /// `weeklyShoCount` 導入前の保存データから、小当たり設定値を逆算して体験を維持する。
+  /// 旧ロジックの remaining（= 1 - P(大) - P(中)）を 小:ハズレ = [shoRatio]:[hazureRatio]
+  /// で配分していた比率をそのまま使い、体感確率を変えない。
+  static double legacyWeeklyShoCountFor({
+    required num weeklyTaskCount,
+    required num weeklyJackpotCount,
+    required num weeklyChuCount,
+  }) {
+    if (weeklyTaskCount <= 0) return defaultWeeklyShoCount;
+    final p = probabilitiesFor(
+      weeklyTaskCount: weeklyTaskCount,
+      weeklyJackpotCount: weeklyJackpotCount,
+      weeklyChuCount: weeklyChuCount,
+      weeklyShoCount: 0,
+    );
+    final remaining = p.miss;
+    final raw = weeklyTaskCount * remaining * shoRatio / (shoRatio + hazureRatio);
+    return (raw * 100).roundToDouble() / 100;
   }
 
   /// roll ∈ [0, 1) を 4区分へ割り当てる（乱数を注入してロジックを決定的に保つ）。
@@ -180,20 +212,23 @@ class RewardConfig {
     return null;
   }
 
-  /// 盤面7マスの構成。各マスの [RouletteCell.sweepFraction]（円全体に対する角度割合）の
-  /// 合計は 1.0。中は[chuCells]マス、小は[shoCells]マスで確率を均等に分け合う。
-  /// 演出上、当たりが偏って見えないよう散らして配置する。
+  /// 盤面9マスの構成。各マスの [RouletteCell.sweepFraction]（円全体に対する角度割合）の
+  /// 合計は 1.0。中は[chuCells]マス、小は[shoCells]マス、ハズレは[missCells]マスで
+  /// 確率を均等に分け合う。演出上、同じ区分が偏って見えないよう交互に散らして配置する。
   static List<RouletteCell> boardCells(RouletteProbabilities p) {
     final chuEach = p.chu / chuCells;
     final shoEach = p.sho / shoCells;
+    final missEach = p.miss / missCells;
     return [
       RouletteCell(RouletteCategory.jackpot, p.jackpot),
       RouletteCell(RouletteCategory.sho, shoEach),
       RouletteCell(RouletteCategory.chu, chuEach),
+      RouletteCell(RouletteCategory.miss, missEach),
       RouletteCell(RouletteCategory.sho, shoEach),
-      RouletteCell(RouletteCategory.miss, p.miss),
+      RouletteCell(RouletteCategory.miss, missEach),
       RouletteCell(RouletteCategory.chu, chuEach),
       RouletteCell(RouletteCategory.sho, shoEach),
+      RouletteCell(RouletteCategory.miss, missEach),
     ];
   }
 
@@ -282,6 +317,7 @@ class RouletteProbabilities {
     required this.miss,
     required this.jackpotClamped,
     required this.chuClamped,
+    required this.shoClamped,
   });
 
   final double jackpot;
@@ -292,6 +328,7 @@ class RouletteProbabilities {
   /// J/W が [RewardConfig.jackpotCap] を超えてクランプされたか（設定画面で警告表示）。
   final bool jackpotClamped;
   final bool chuClamped;
+  final bool shoClamped;
 
   double probabilityOf(RouletteCategory category) => switch (category) {
     RouletteCategory.jackpot => jackpot,

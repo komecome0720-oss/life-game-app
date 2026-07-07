@@ -12,15 +12,16 @@ Widget _host(Widget child) {
 }
 
 void main() {
-  testWidgets('レベル行は Lv.数字 と 称号 を分けて表示する', (tester) async {
+  testWidgets('レベル行は称号を表示せず、Lv.数字の行に「次まであと」を表示する', (tester) async {
     const settings = UserSettings(displayName: 'らいす', cumulativeTaskCount: 10);
 
     await tester.pumpWidget(_host(UserStatusLevelLine(settings: settings)));
     await tester.pumpAndSettle();
 
     expect(find.text('Lv.3'), findsOneWidget);
-    expect(find.text('駆け出し'), findsOneWidget);
+    expect(find.text('駆け出し'), findsNothing);
     expect(find.text('レベル'), findsNothing);
     expect(find.text('Lv.3 駆け出し'), findsNothing);
+    expect(find.textContaining('次まであと'), findsOneWidget);
   });
 }

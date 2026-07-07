@@ -60,12 +60,15 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
   // saveProgress失敗の通知は初回のみ（以後の遷移では黙って継続）。
   bool _saveFailureNotified = false;
 
-  // クエスト名・「現状」編集用のコントローラ／フォーカス。
+  // クエスト名・「見込み」・「現状」編集用のコントローラ／フォーカス。
   late final TextEditingController _titleController;
   final FocusNode _titleFocus = FocusNode();
+  late final TextEditingController _predictedController;
+  final FocusNode _predictedFocus = FocusNode();
   late final TextEditingController _minutesController;
   final FocusNode _minutesFocus = FocusNode();
   bool _titleCommitting = false;
+  bool _predictedCommitting = false;
   bool _minutesCommitting = false;
 
   late ActiveTimer _lastTimer;
@@ -80,6 +83,11 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     _titleController = TextEditingController(text: _displayTaskTitle);
     _titleFocus.addListener(() {
       if (!_titleFocus.hasFocus) _commitTitle();
+    });
+    _predictedController =
+        TextEditingController(text: _lastTimer.predictedMinutes.toString());
+    _predictedFocus.addListener(() {
+      if (!_predictedFocus.hasFocus) _commitPredicted();
     });
     _minutesController =
         TextEditingController(text: _displayTotalMinutes.toString());
@@ -103,6 +111,8 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     _ticker?.cancel();
     _titleController.dispose();
     _titleFocus.dispose();
+    _predictedController.dispose();
+    _predictedFocus.dispose();
     _minutesController.dispose();
     _minutesFocus.dispose();
     super.dispose();
@@ -214,6 +224,37 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     }
   }
 
+  /// 「見込み」の確定処理：フォーカスを失ったとき／キーボード完了時に呼ぶ。
+  /// active_timer 側の predictedMinutes を更新する
+  /// （saveProgress/complete が参照する値のため即時反映が必要）。
+  Future<void> _commitPredicted() async {
+    if (_predictedCommitting) return;
+    final parsed = int.tryParse(_predictedController.text.trim());
+    final current = _lastTimer.predictedMinutes;
+    if (parsed == null || parsed == current) {
+      _predictedController.text = current.toString();
+      return;
+    }
+    _predictedCommitting = true;
+    try {
+      await ref.read(activeTimerRepositoryProvider).updatePredictedMinutes(parsed);
+      if (!mounted) return;
+      setState(() {
+        _lastTimer = _lastTimer.copyWith(predictedMinutes: parsed);
+      });
+    } catch (_) {
+      if (mounted) {
+        showAppSnackBar(
+          context,
+          const SnackBar(content: Text('見込み時間を保存できませんでした')),
+        );
+      }
+      _predictedController.text = current.toString();
+    } finally {
+      _predictedCommitting = false;
+    }
+  }
+
   /// 「現状」の確定処理：フォーカスを失ったとき／キーボード完了時に呼ぶ。
   /// active_timer 側をトランザクションで確定させた後、tasks doc へも即時
   /// 反映する（✕クローズの addedMinutes==0 early-return で編集が消えないように）。
@@ -270,7 +311,7 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     }
   }
 
-  /// クエスト名・「現状」の未確定編集をフラッシュする。
+  /// クエスト名・「見込み」・「現状」の未確定編集をフラッシュする。
   /// complete/close/pause の各操作の直前に必ず await すること
   /// （ボタンタップはフォーカスを奪わないため、確定処理が走らないまま
   /// actualMinutes 計算に進んでしまう Critical な不整合を防ぐ）。
@@ -278,6 +319,11 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     FocusScope.of(context).unfocus();
     if (_titleController.text.trim() != _displayTaskTitle) {
       await _commitTitle();
+    }
+    final currentPredicted = _lastTimer.predictedMinutes;
+    final parsedPredicted = int.tryParse(_predictedController.text.trim());
+    if (parsedPredicted != null && parsedPredicted != currentPredicted) {
+      await _commitPredicted();
     }
     final currentTotal = _displayTotalMinutes;
     final parsedMinutes = int.tryParse(_minutesController.text.trim());
@@ -308,7 +354,11 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
       final newSavedWorkPhases = run.savedWorkPhases + completedDelta;
 
       // 理論境界時刻（前フェーズ開始 + 経過したフェーズ長の合計）を計算する。
-      var boundary = run.phaseStartedAtUtc!;
+      // 一時停止で貯まった phaseAccumulatedSeconds の分だけ実際の境界は
+      // 早く来るため、先に差し引く（差し引かないと未来時刻が書き込まれ、
+      // 新フェーズのタイマー表示がその分だけ凍結する）。
+      var boundary = run.phaseStartedAtUtc!
+          .subtract(Duration(seconds: run.phaseAccumulatedSeconds));
       for (var i = run.phaseIndex; i < effective.phaseIndex; i++) {
         boundary =
             boundary.add(Duration(seconds: schedule.phaseLengthSecondsAt(i)));
@@ -393,6 +443,33 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
       );
     } catch (_) {
       // 音の失敗で休憩スキップを止めない。
+    }
+  }
+
+  /// クエストスキップ（クエスト中かつ実行中のみ）：休憩へ進め、
+  /// フェーズ時計をリセットし、休憩開始音＋休憩BGMを鳴らす。
+  /// 現フェーズの経過分は完了扱いにしない（savedWorkPhasesは変更しない）。
+  Future<void> _onTapSkipQuest(ActiveTimer timer) async {
+    final run = timer.pomodoro!;
+    final schedule = _scheduleFor(timer);
+    final currentEffective = schedule.currentPhase(DateTime.now());
+    final nextIndex = currentEffective.phaseIndex + 1;
+    final nextType = schedule.phaseTypeAt(nextIndex);
+    final ok = await ref.read(activeTimerRepositoryProvider).commitPomodoroTransition(
+          expectedCurrentPhaseIndex: currentEffective.phaseIndex,
+          newPhaseIndex: nextIndex,
+          phaseStartedAtUtc: DateTime.now(),
+          newSavedWorkPhases: run.savedWorkPhases,
+        );
+    if (!ok) return;
+    final audio = ref.read(pomodoroAudioProvider);
+    try {
+      await audio.playPhase(
+        bgm: _bgmFor(timer, nextType),
+        chime: _chimeFor(timer, nextType),
+      );
+    } catch (_) {
+      // 音の失敗でクエストスキップを止めない。
     }
   }
 
@@ -600,6 +677,11 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
       if (!_titleFocus.hasFocus && _titleController.text != _displayTaskTitle) {
         _titleController.text = _displayTaskTitle;
       }
+      final predicted = timer.predictedMinutes;
+      if (!_predictedFocus.hasFocus &&
+          _predictedController.text != predicted.toString()) {
+        _predictedController.text = predicted.toString();
+      }
       final total = _displayTotalMinutes;
       if (!_minutesFocus.hasFocus && _minutesController.text != total.toString()) {
         _minutesController.text = total.toString();
@@ -648,6 +730,8 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     final state = schedule.currentPhase(DateTime.now());
     final canSkipBreak =
         running && state.type != PomodoroPhaseType.work;
+    final canSkipQuest =
+        running && state.type == PomodoroPhaseType.work;
 
     return SafeArea(
       child: Padding(
@@ -719,40 +803,77 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
                         ),
                       ),
                       const SizedBox(height: 24),
-                      Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text('現状', style: text.labelLarge),
-                            const SizedBox(height: 8),
-                            SizedBox(
-                              width: 140,
-                              child: TextField(
-                                controller: _minutesController,
-                                focusNode: _minutesFocus,
-                                keyboardType: const TextInputType.numberWithOptions(
-                                    decimal: false),
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly,
-                                  LengthLimitingTextInputFormatter(4),
-                                ],
-                                textAlign: TextAlign.center,
-                                textInputAction: TextInputAction.done,
-                                onSubmitted: (_) => _commitMinutes(),
-                                style: text.titleLarge?.copyWith(
-                                  fontFeatures: const [FontFeature.tabularFigures()],
-                                ),
-                                decoration: const InputDecoration(
-                                  isDense: true,
-                                  suffixText: '分',
-                                  border: OutlineInputBorder(),
-                                  contentPadding: EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 10),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('見込み', style: text.labelLarge),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: 140,
+                                child: TextField(
+                                  controller: _predictedController,
+                                  focusNode: _predictedFocus,
+                                  keyboardType: const TextInputType.numberWithOptions(
+                                      decimal: false),
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly,
+                                    LengthLimitingTextInputFormatter(4),
+                                  ],
+                                  textAlign: TextAlign.center,
+                                  textInputAction: TextInputAction.done,
+                                  onSubmitted: (_) => _commitPredicted(),
+                                  style: text.titleLarge?.copyWith(
+                                    fontFeatures: const [FontFeature.tabularFigures()],
+                                  ),
+                                  decoration: const InputDecoration(
+                                    isDense: true,
+                                    suffixText: '分',
+                                    border: OutlineInputBorder(),
+                                    contentPadding: EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 10),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
-                        ),
+                            ],
+                          ),
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('現状', style: text.labelLarge),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: 140,
+                                child: TextField(
+                                  controller: _minutesController,
+                                  focusNode: _minutesFocus,
+                                  keyboardType: const TextInputType.numberWithOptions(
+                                      decimal: false),
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly,
+                                    LengthLimitingTextInputFormatter(4),
+                                  ],
+                                  textAlign: TextAlign.center,
+                                  textInputAction: TextInputAction.done,
+                                  onSubmitted: (_) => _commitMinutes(),
+                                  style: text.titleLarge?.copyWith(
+                                    fontFeatures: const [FontFeature.tabularFigures()],
+                                  ),
+                                  decoration: const InputDecoration(
+                                    isDense: true,
+                                    suffixText: '分',
+                                    border: OutlineInputBorder(),
+                                    contentPadding: EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 10),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
                       const Spacer(),
                       if (canSkipBreak) ...[
@@ -760,6 +881,16 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
                           onPressed: () => _onTapSkipBreak(timer),
                           icon: const Icon(Icons.skip_next_rounded),
                           label: const Text('休憩をスキップ'),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size.fromHeight(48),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ] else if (canSkipQuest) ...[
+                        OutlinedButton.icon(
+                          onPressed: () => _onTapSkipQuest(timer),
+                          icon: const Icon(Icons.skip_next_rounded),
+                          label: const Text('クエストをスキップして休憩へ'),
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size.fromHeight(48),
                           ),

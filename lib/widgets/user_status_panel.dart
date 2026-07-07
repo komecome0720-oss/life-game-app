@@ -115,17 +115,13 @@ Widget statusLine(IconData icon, String label, String value, TextTheme text) {
       children: [
         Icon(icon, size: 16),
         const SizedBox(width: 6),
-        Expanded(
-          flex: 4,
-          child: Text(
-            label,
-            style: text.bodySmall,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
+        Text(
+          label,
+          style: text.bodySmall,
+          maxLines: 1,
+          softWrap: false,
         ),
         Expanded(
-          flex: 6,
           child: Text(
             value,
             style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
@@ -170,12 +166,9 @@ class UserStatusLevelLine extends StatelessWidget {
                 child: Align(
                   alignment: Alignment.centerRight,
                   child: Text(
-                    p.title,
-                    style: valueStyle,
-                    textAlign: TextAlign.right,
+                    '次まであと${p.remainingToNext}',
+                    style: text.labelSmall?.copyWith(color: scheme.outline),
                     maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    softWrap: false,
                   ),
                 ),
               ),
@@ -185,11 +178,6 @@ class UserStatusLevelLine extends StatelessWidget {
           ClipRRect(
             borderRadius: BorderRadius.circular(3),
             child: LinearProgressIndicator(value: p.fraction, minHeight: 4),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            '次まであと${p.remainingToNext}',
-            style: text.labelSmall?.copyWith(color: scheme.outline),
           ),
         ],
       ),
@@ -206,9 +194,27 @@ class _PredictionAccuracyLine extends ConsumerWidget {
     final stats = ref.watch(predictionAccuracyStatsProvider).asData?.value;
     final percent = stats?.percentRounded;
     final title = stats?.title;
-    final value = percent == null
+    final percentText = percent == null
         ? '—'
-        : '${percent >= 0 ? '+' : ''}$percent%　$title';
-    return statusLine(Icons.schedule, '時間予測精度', value, text);
+        : '${percent >= 0 ? '+' : ''}$percent%';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        statusLine(Icons.schedule, '時間予測精度', percentText, text),
+        if (title != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                title,
+                style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+      ],
+    );
   }
 }

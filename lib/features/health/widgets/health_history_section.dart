@@ -107,7 +107,7 @@ class _HistoryTile extends StatelessWidget {
         : entry.provisionalEarnedYen;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(12),
@@ -117,17 +117,17 @@ class _HistoryTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           SizedBox(
-            width: 38,
+            width: 32,
             child: Text(
               _formatDateKey(entry.dateKey),
               style: text.titleSmall?.copyWith(fontWeight: FontWeight.w700),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           Expanded(
             child: Wrap(
-              spacing: 8,
-              runSpacing: 4,
+              spacing: 6,
+              runSpacing: 2,
               children: [
                 for (final category in HealthCategory.values)
                   _InlineScore(
@@ -137,33 +137,35 @@ class _HistoryTile extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
+          const SizedBox(width: 4),
+          SizedBox(
+            width: 34,
+            child: FittedBox(
+              alignment: Alignment.centerRight,
+              fit: BoxFit.scaleDown,
+              child: Text(
                 '${entry.totalScore}点',
                 style: text.labelLarge?.copyWith(
                   fontWeight: FontWeight.w800,
                   color: accent,
                 ),
               ),
-              const SizedBox(height: 2),
-              SizedBox(
-                width: 86,
-                child: FittedBox(
-                  alignment: Alignment.centerRight,
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    '¥${_formatYen(earnedYen)}',
-                    style: text.labelLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      color: scheme.tertiary,
-                    ),
-                  ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          SizedBox(
+            width: 68,
+            child: FittedBox(
+              alignment: Alignment.centerRight,
+              fit: BoxFit.scaleDown,
+              child: Text(
+                '¥${_formatYen(earnedYen)}',
+                style: text.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: scheme.tertiary,
                 ),
               ),
-            ],
+            ),
           ),
         ],
       ),

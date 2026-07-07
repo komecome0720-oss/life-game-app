@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/Users/kometaninaoki/Documents/life_game_app(cursor)/.claude/hooks/chatlog.py\""
+            "command": "python3 \"/Users/kometaninaoki/Documents/life_game_app/.claude/hooks/chatlog.py\""
           }
         ]
       }

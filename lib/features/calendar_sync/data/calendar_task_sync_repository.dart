@@ -243,6 +243,21 @@ class CalendarTaskSyncRepository {
     return doc.id;
   }
 
+  /// taskId からタスク単体を取得する。存在しなければ null（削除済み等）。
+  Future<CalendarTask?> fetchTaskById(String taskId) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return null;
+    final doc = await _db
+        .collection('users')
+        .doc(uid)
+        .collection('tasks')
+        .doc(taskId)
+        .get();
+    final data = doc.data();
+    if (data == null) return null;
+    return CalendarTask.fromMap(doc.id, data);
+  }
+
   /// externalCalendarId に一致する既存タスクの Firestore ID を返す。
   /// 見つからなければ null（未保存）。
   Future<String?> findTaskIdByExternalId(String externalCalendarId) async {

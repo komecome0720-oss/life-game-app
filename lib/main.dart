@@ -1,10 +1,14 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/adventure_log/providers/adventure_log_providers.dart';
+import 'package:task_manager/features/adventure_log/providers/daily_earnings_providers.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:task_manager/features/auth/presentation/login_screen.dart';
 import 'package:task_manager/features/auth/providers/auth_providers.dart';
+import 'package:task_manager/features/onboarding/onboarding_keys.dart';
+import 'package:task_manager/features/onboarding/view/onboarding_gate.dart';
 import 'package:task_manager/features/pomodoro/model/pomodoro_schedule.dart';
 import 'package:task_manager/features/pomodoro/model/pomodoro_settings.dart';
 import 'package:task_manager/features/pomodoro/providers/pomodoro_providers.dart';
@@ -22,6 +26,20 @@ import 'package:task_manager/theme/app_tokens.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // トマトアイコン（Twemoji）の CC-BY 4.0 帰属表示。
+  // Flutter 標準のライセンス画面（showLicensePage 等）に表示される。
+  // 詳細は assets/images/LICENSES.md 参照。
+  LicenseRegistry.addLicense(() async* {
+    yield const LicenseEntryWithLineBreaks(
+      ['Twemoji'],
+      'Tomato icon (assets/images/tomato_twemoji.png) is derived from Twemoji.\n'
+      'Copyright 2020 Twitter, Inc and other contributors.\n'
+      'Graphics licensed under CC-BY 4.0: '
+      'https://creativecommons.org/licenses/by/4.0/\n'
+      'Source: https://github.com/jdecked/twemoji (assets/svg/1f345.svg)\n'
+      'Modifications: rasterized to PNG and background made transparent.',
+    );
+  });
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await initializeDateFormatting('ja_JP');
   runApp(const ProviderScope(child: TaskManagerApp()));
@@ -76,7 +94,9 @@ class _AuthGate extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final authState = ref.watch(authStateProvider);
     return authState.when(
-      data: (user) => user != null ? const _MainShell() : const LoginScreen(),
+      data: (user) => user != null
+          ? const OnboardingGate(child: _MainShell())
+          : const LoginScreen(),
       loading: () =>
           const Scaffold(body: Center(child: CircularProgressIndicator())),
       error: (_, _) => const LoginScreen(),
@@ -186,6 +206,7 @@ class _MainShell extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     ref.watch(adventureLogBackfillProvider);
+    ref.watch(dailyEarningsBackfillProvider);
     ref.listen<AsyncValue<ActiveTimer?>>(activeTimerStreamProvider, (_, next) {
       final timer = next.asData?.value;
       if (timer == null) return;
@@ -206,20 +227,26 @@ class _MainShell extends ConsumerWidget {
         selectedIndex: index,
         onDestinationSelected: (i) =>
             ref.read(mainTabIndexProvider.notifier).set(i),
-        destinations: const [
-          NavigationDestination(
+        destinations: [
+          const NavigationDestination(
             icon: Icon(Icons.home_outlined),
             selectedIcon: Icon(Icons.home),
             label: 'ホーム',
           ),
           NavigationDestination(
-            icon: Icon(Icons.check_box_outlined),
-            selectedIcon: Icon(Icons.check_box),
+            icon: KeyedSubtree(
+              key: OnboardingKeys.todoTab,
+              child: const Icon(Icons.check_box_outlined),
+            ),
+            selectedIcon: const Icon(Icons.check_box),
             label: 'ToDo',
           ),
           NavigationDestination(
-            icon: Icon(Icons.favorite_border),
-            selectedIcon: Icon(Icons.favorite),
+            icon: KeyedSubtree(
+              key: OnboardingKeys.wishTab,
+              child: const Icon(Icons.favorite_border),
+            ),
+            selectedIcon: const Icon(Icons.favorite),
             label: '欲しいもの',
           ),
         ],
