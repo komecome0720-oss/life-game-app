@@ -3,8 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
+import 'package:task_manager/features/health/model/health_rollover.dart';
+import 'package:task_manager/features/pomodoro/model/pomodoro_day.dart';
 import 'package:task_manager/features/pomodoro/model/pomodoro_schedule.dart';
 import 'package:task_manager/features/pomodoro/model/pomodoro_settings.dart';
+import 'package:task_manager/features/pomodoro/providers/pomodoro_day_providers.dart';
 import 'package:task_manager/features/pomodoro/providers/pomodoro_providers.dart';
 import 'package:task_manager/features/pomodoro/view/pomodoro_lock_screen.dart';
 import 'package:task_manager/features/timer/model/active_timer.dart';
@@ -133,6 +136,7 @@ class TimerLockLauncher {
         // ストリーム未確定（起動直後など）のみ従来のサーバ確認つき経路。
         final settings =
             await ref.read(pomodoroSettingsRepositoryProvider).read();
+        final resolved = await _resolvePomodoroDayStart(ref, settings);
         timer = await ref.read(activeTimerRepositoryProvider).startPomodoro(
               taskId: task.id,
               isTodo: task.isTodo,
@@ -140,15 +144,21 @@ class TimerLockLauncher {
               predictedMinutes: predictedMinutes,
               settings: settings,
               baseActualMinutes: baseActualMinutes,
+              dateKey: resolved.dateKey,
+              dayStart: resolved.dayStart,
             );
       } else if (asyncTimer.value != null) {
         // 既存タイマーはメモリ値をそのまま尊重（Firestoreアクセスなし）。
         timer = asyncTimer.value!;
       } else {
         // 新規スタート：設定は常時listenのメモリ値を優先し、書き込み完了を
-        // 待たずに即開く（ローカルファースト）。
+        // 待たずに即開く（ローカルファースト）。「1日通しセット」の開始位置
+        // 解決のみ、pomodoroDayStreamProvider のメモリ値が未確定な場合に限り
+        // Firestore を直接読む（`_resolvePomodoroDayStart` 内）。
         final settings = ref.read(pomodoroSettingsStreamProvider).value ??
             await ref.read(pomodoroSettingsRepositoryProvider).read();
+        if (!context.mounted) return;
+        final resolved = await _resolvePomodoroDayStart(ref, settings);
         if (!context.mounted) return;
         final started =
             ref.read(activeTimerRepositoryProvider).startPomodoroLocalFirst(
@@ -158,6 +168,8 @@ class TimerLockLauncher {
                   predictedMinutes: predictedMinutes,
                   settings: settings,
                   baseActualMinutes: baseActualMinutes,
+                  dateKey: resolved.dateKey,
+                  dayStart: resolved.dayStart,
                 );
         timer = started.timer;
         _notifyOnWriteFailure(context, started.write);
@@ -255,6 +267,23 @@ class TimerLockLauncher {
     } finally {
       _visible = false;
     }
+  }
+
+  /// 「1日通しセット」の開始位置を解決する。dateKey は現在（端末ローカル）の
+  /// 日付。day doc は常時listen中の `pomodoroDayStreamProvider` のメモリ値を
+  /// 優先し、未確定（起動直後・直前に closePomodoroRun したばかりで stream が
+  /// 追いついていない可能性がある場合）のみ Firestore を直接読む。
+  static Future<({String dateKey, PomodoroDayStart dayStart})>
+      _resolvePomodoroDayStart(WidgetRef ref, PomodoroSettings settings) async {
+    final nowUtc = DateTime.now().toUtc();
+    final dateKey = HealthRollover.dateKey(DateTime.now());
+    final asyncDay = ref.read(pomodoroDayStreamProvider);
+    final day = asyncDay.hasValue
+        ? asyncDay.value
+        : await ref.read(pomodoroDayRepositoryProvider).readToday();
+    final dayStart = (day ?? PomodoroDay.empty(nowUtc))
+        .resolveStart(settings: settings, nowUtc: nowUtc);
+    return (dateKey: dateKey, dayStart: dayStart);
   }
 
   /// ローカルファースト書き込みの失敗を事後通知する（画面は既に開いている）。

@@ -66,7 +66,14 @@ class PomodoroSchedule {
   }
 
   /// 絶対フェーズ番号 [phaseIndex] の長さ（秒）を返す。
+  /// ランの開始フェーズ（[PomodoroRun.startPhaseIndex]）かつ
+  /// [PomodoroRun.startPhaseLengthSecondsOverride] が指定されていれば、
+  /// それを優先する（やりかけフェーズ再開・未消化休憩の残秒引き継ぎ用）。
   int phaseLengthSecondsAt(int phaseIndex) {
+    final override = run.startPhaseLengthSecondsOverride;
+    if (phaseIndex == run.startPhaseIndex && override != null) {
+      return override;
+    }
     switch (phaseTypeAt(phaseIndex)) {
       case PomodoroPhaseType.work:
         return run.workMinutes * 60;
@@ -125,6 +132,48 @@ class PomodoroSchedule {
   int completedWorkPhases(DateTime now) {
     final effective = currentPhase(now).phaseIndex;
     return completedWorkPhasesUntil(effective);
+  }
+
+  /// [s] が work フェーズのときの「このセッションで新たに経過した秒数」を返す。
+  /// 開始フェーズ（[PomodoroRun.startPhaseIndex]）は前タスク群が消化済みの
+  /// [PomodoroRun.carriedInSeconds] を差し引く（下限0）。work 以外は 0。
+  ///
+  /// **呼び出し元が差分を計算するための道具**であり、doc の真実は常に
+  /// 累積カウンタ（`savedWorkPhases` / `creditedMinutes`）が持つ
+  /// （セット数・実績・作業秒をフェーズ番号の範囲から導出しない設計原則）。
+  int inProgressSessionSeconds(PomodoroPhaseState s) {
+    if (s.type != PomodoroPhaseType.work) return 0;
+    final carried = s.phaseIndex == run.startPhaseIndex ? run.carriedInSeconds : 0;
+    final v = s.elapsedSeconds - carried;
+    return v < 0 ? 0 : v;
+  }
+
+  /// `[from, to)` の遷移を**完走扱いにする**場合の差分をまとめて計算する。
+  /// スキップ（完走ではない遷移）にはこの関数を使わない。
+  /// `_maybeCommitTransition` と復元（catch-up）専用。
+  ({int completedWorkPhases, int creditedMinutes, int workSeconds})
+      creditForRange(int from, int to) {
+    var completed = 0;
+    var credited = 0;
+    var seconds = 0;
+    for (var i = from; i < to; i++) {
+      if (phaseTypeAt(i) != PomodoroPhaseType.work) continue;
+      completed += 1;
+      final length = phaseLengthSecondsAt(i);
+      if (i == run.startPhaseIndex) {
+        final m = length ~/ 60 - run.carriedInCreditedMinutes;
+        credited += m < 0 ? 0 : m;
+        seconds += length - run.carriedInSeconds;
+      } else {
+        credited += run.workMinutes;
+        seconds += length;
+      }
+    }
+    return (
+      completedWorkPhases: completed,
+      creditedMinutes: credited,
+      workSeconds: seconds,
+    );
   }
 
   /// 復元専用：実時間から計算した実効フェーズが doc の phaseIndex を

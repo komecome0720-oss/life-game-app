@@ -7,7 +7,9 @@ import 'package:task_manager/features/auth/providers/auth_providers.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
 import 'package:task_manager/features/pomodoro/model/pomodoro_schedule.dart';
 import 'package:task_manager/features/pomodoro/model/pomodoro_settings.dart';
+import 'package:task_manager/features/pomodoro/providers/pomodoro_day_providers.dart';
 import 'package:task_manager/features/pomodoro/providers/pomodoro_providers.dart';
+import 'package:task_manager/features/timer/data/active_timer_repository.dart';
 import 'package:task_manager/features/timer/model/active_timer.dart';
 import 'package:task_manager/features/timer/providers/timer_providers.dart';
 import 'package:task_manager/features/timer/viewmodel/timer_actions.dart';
@@ -56,6 +58,12 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
 
   // フェーズ遷移コミットの多重実行防止。
   bool _transitionCommitting = false;
+
+  // 現在進行中のフェーズ遷移コミット（あれば）。レビューM-3：完了ボタンが
+  // running中でも押せるため、closePomodoroRun 前にこれを待ってから
+  // 改めて _maybeCommitTransition を1回実行し、未コミットの完走分を
+  // day docへ確実に反映させる。
+  Future<void>? _inFlightTransitionCommit;
 
   // saveProgress失敗の通知は初回のみ（以後の遷移では黙って継続）。
   bool _saveFailureNotified = false;
@@ -123,7 +131,7 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
   int get _displayTotalMinutes {
     final run = _lastTimer.pomodoro;
     if (run == null) return 0;
-    return run.baseActualMinutes + run.savedWorkPhases * run.workMinutes;
+    return run.baseActualMinutes + run.creditedMinutes;
   }
 
   @override
@@ -336,8 +344,20 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
   /// 検知したら、doc を実効値へ update（新フェーズの phaseStartedAtUtc には
   /// 理論境界時刻を書きドリフトを防ぐ）→ 新規完了クエスト分を自動保存
   /// → チャイム+BGM切り替え、を行う。
-  Future<void> _maybeCommitTransition() async {
-    if (!mounted || _transitionCommitting || _closing) return;
+  ///
+  /// 呼び出し中は [_inFlightTransitionCommit] にその Future を保持する
+  /// （レビューM-3：完了ボタンから「進行中のコミットを待ってから確定する」
+  /// ために参照される）。
+  Future<void> _maybeCommitTransition() {
+    if (!mounted || _transitionCommitting || _closing) {
+      return Future<void>.value();
+    }
+    final future = _commitTransitionIfDue();
+    _inFlightTransitionCommit = future;
+    return future;
+  }
+
+  Future<void> _commitTransitionIfDue() async {
     final timer = _lastTimer;
     final run = timer.pomodoro;
     if (run == null || !run.isRunning) return;
@@ -349,9 +369,11 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
 
     _transitionCommitting = true;
     try {
-      final completedDelta =
-          schedule.completedWorkPhasesUntil(effective.phaseIndex);
-      final newSavedWorkPhases = run.savedWorkPhases + completedDelta;
+      // [run.phaseIndex, effective.phaseIndex) は「完走扱い」の範囲
+      // （ライブな自動進行。スキップではない）なので creditForRange を使う。
+      final credit = schedule.creditForRange(run.phaseIndex, effective.phaseIndex);
+      final newSavedWorkPhases = run.savedWorkPhases + credit.completedWorkPhases;
+      final newCreditedMinutes = run.creditedMinutes + credit.creditedMinutes;
 
       // 理論境界時刻（前フェーズ開始 + 経過したフェーズ長の合計）を計算する。
       // 一時停止で貯まった phaseAccumulatedSeconds の分だけ実際の境界は
@@ -369,11 +391,17 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
             newPhaseIndex: effective.phaseIndex,
             phaseStartedAtUtc: boundary,
             newSavedWorkPhases: newSavedWorkPhases,
+            newCreditedMinutes: newCreditedMinutes,
+            dayDelta: PomodoroDayDelta(
+              completedWorkPhasesDelta: credit.completedWorkPhases,
+              creditCycleProgress: true,
+              workSecondsDelta: credit.workSeconds,
+            ),
           );
       if (!ok || !mounted) return; // 他端末が既にコミット済み（冪等）／画面が破棄済み。
 
-      if (completedDelta > 0) {
-        final total = run.baseActualMinutes + newSavedWorkPhases * run.workMinutes;
+      if (credit.completedWorkPhases > 0) {
+        final total = run.baseActualMinutes + newCreditedMinutes;
         final saveOk = await ref.read(timerActionsProvider).saveProgress(
               taskId: timer.taskId,
               predictedMinutes: timer.predictedMinutes,
@@ -400,6 +428,7 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
       }
     } finally {
       _transitionCommitting = false;
+      _inFlightTransitionCommit = null;
     }
   }
 
@@ -448,20 +477,48 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
 
   /// クエストスキップ（クエスト中かつ実行中のみ）：休憩へ進め、
   /// フェーズ時計をリセットし、休憩開始音＋休憩BGMを鳴らす。
-  /// 現フェーズの経過分は完了扱いにしない（savedWorkPhasesは変更しない）。
+  ///
+  /// 仕様10：現フェーズの経過分（[s]）はタスク実績・本日作業時間に加算するが、
+  /// **セット数には加算しない**（savedWorkPhases・day docのcompletedSetsToday/
+  /// cycleCompletedSetsは据え置き）。スキップした作業フェーズの残りは消滅し、
+  /// 次のスタート位置は完走ベースで決まる（次回やり直しになる）。
   Future<void> _onTapSkipQuest(ActiveTimer timer) async {
     final run = timer.pomodoro!;
     final schedule = _scheduleFor(timer);
     final currentEffective = schedule.currentPhase(DateTime.now());
     final nextIndex = currentEffective.phaseIndex + 1;
     final nextType = schedule.phaseTypeAt(nextIndex);
+    final s = schedule.inProgressSessionSeconds(currentEffective);
+    final newCreditedMinutes = run.creditedMinutes + (s / 60).round();
     final ok = await ref.read(activeTimerRepositoryProvider).commitPomodoroTransition(
           expectedCurrentPhaseIndex: currentEffective.phaseIndex,
           newPhaseIndex: nextIndex,
           phaseStartedAtUtc: DateTime.now(),
           newSavedWorkPhases: run.savedWorkPhases,
+          newCreditedMinutes: newCreditedMinutes,
+          dayDelta: PomodoroDayDelta(
+            completedWorkPhasesDelta: 0,
+            creditCycleProgress: false,
+            workSecondsDelta: s,
+          ),
         );
-    if (!ok) return;
+    if (!ok || !mounted) return;
+
+    if (s > 0) {
+      final total = run.baseActualMinutes + newCreditedMinutes;
+      final saveOk = await ref.read(timerActionsProvider).saveProgress(
+            taskId: timer.taskId,
+            predictedMinutes: timer.predictedMinutes,
+            actualMinutes: total,
+          );
+      if (mounted && !saveOk) {
+        showAppSnackBar(
+          context,
+          const SnackBar(content: Text('作業時間を保存できませんでした')),
+        );
+      }
+    }
+
     final audio = ref.read(pomodoroAudioProvider);
     try {
       await audio.playPhase(
@@ -474,9 +531,22 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
   }
 
   /// 完了：running なら実効状態で確定。
-  /// actualMinutes = base + 完了クエスト数×N + (現フェーズがクエストなら経過分切り捨て)。
+  /// actualMinutes = base + creditedMinutes（新値）+ (現フェーズがクエストなら
+  /// このセッションの経過分を四捨五入)。
+  ///
+  /// レビューM-3：running中でも完了ボタンを押せる（docコミット前提）ため、
+  /// 進行中のフェーズ遷移コミットがあれば先に完了させ（未コミットの完走分が
+  /// day docへ反映されないまま closePomodoroRun されるのを防ぐ）、
+  /// その後改めて `_maybeCommitTransition` を1回実行してから確定する。
   Future<void> _onTapComplete(ActiveTimer timer) async {
     if (_isCompleting) return;
+    final pendingTransition = _inFlightTransitionCommit;
+    if (pendingTransition != null) {
+      await pendingTransition;
+    }
+    if (!mounted) return;
+    await _maybeCommitTransition();
+    if (!mounted) return;
     await _flushPendingEdits();
     if (!mounted) return;
     final task = _task;
@@ -490,13 +560,11 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     final schedule = _scheduleFor(current);
     final now = DateTime.now();
     final effective = schedule.currentPhase(now);
-    final totalCompletedWorkPhases =
-        run.savedWorkPhases + schedule.completedWorkPhasesUntil(effective.phaseIndex);
-    final inProgressWorkMinutes =
-        effective.type == PomodoroPhaseType.work ? effective.elapsedSeconds ~/ 60 : 0;
-    final total = run.baseActualMinutes +
-        totalCompletedWorkPhases * run.workMinutes +
-        inProgressWorkMinutes;
+    final credit = schedule.creditForRange(run.phaseIndex, effective.phaseIndex);
+    final newCreditedMinutes = run.creditedMinutes + credit.creditedMinutes;
+    final inProgressWorkSeconds = schedule.inProgressSessionSeconds(effective);
+    final addedMinutes = newCreditedMinutes + (inProgressWorkSeconds / 60).round();
+    final total = run.baseActualMinutes + addedMinutes;
     final actualMinutes = total > 0 ? total : null;
 
     final bool confirmed;
@@ -532,7 +600,11 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
 
     await ref.read(pomodoroAudioProvider).stop();
     _closing = true;
-    await ref.read(activeTimerRepositoryProvider).clear();
+    await ref.read(activeTimerRepositoryProvider).closePomodoroRun(
+          timer: current,
+          effective: effective,
+          inProgressWorkSeconds: inProgressWorkSeconds,
+        );
     if (!mounted) return;
     unawaited(
       Navigator.of(context).pushReplacement<void, void>(
@@ -554,7 +626,11 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
   }
 
   /// ✕（一時停止中のみ閉じられる）：完了と同じ式で actualMinutes を計算し
-  /// saveProgress → doc clear → pop。計測ゼロなら保存せず破棄。
+  /// saveProgress → closePomodoroRun → pop。計測ゼロなら保存せず破棄。
+  ///
+  /// レビューC-2：早期return（addedMinutes==0）は「タスク保存のスキップ」に
+  /// 限定し、day doc への書き戻し（carryWork/pendingBreak）は必ず行う
+  /// （carry持ちで開始して即✕なら carriedInSeconds を失わずに書き戻す）。
   Future<void> _onTapClose(ActiveTimer timer) async {
     // 動作中は閉じられないガードは flush 前に行う（flush は閉じ操作ではない）。
     final runBeforeFlush = timer.pomodoro!;
@@ -573,17 +649,20 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     final run = current.pomodoro!;
     final schedule = _scheduleFor(current);
     final effective = schedule.currentPhase(DateTime.now());
-    final totalCompletedWorkPhases =
-        run.savedWorkPhases + schedule.completedWorkPhasesUntil(effective.phaseIndex);
-    final inProgressWorkMinutes =
-        effective.type == PomodoroPhaseType.work ? effective.elapsedSeconds ~/ 60 : 0;
-    final addedMinutes = totalCompletedWorkPhases * run.workMinutes + inProgressWorkMinutes;
+    final credit = schedule.creditForRange(run.phaseIndex, effective.phaseIndex);
+    final newCreditedMinutes = run.creditedMinutes + credit.creditedMinutes;
+    final inProgressWorkSeconds = schedule.inProgressSessionSeconds(effective);
+    final addedMinutes = newCreditedMinutes + (inProgressWorkSeconds / 60).round();
 
     await ref.read(pomodoroAudioProvider).stop();
 
     if (addedMinutes == 0) {
       _closing = true;
-      await ref.read(activeTimerRepositoryProvider).clear();
+      await ref.read(activeTimerRepositoryProvider).closePomodoroRun(
+            timer: current,
+            effective: effective,
+            inProgressWorkSeconds: inProgressWorkSeconds,
+          );
       if (mounted) Navigator.of(context).pop();
       return;
     }
@@ -603,7 +682,11 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     if (!mounted) return;
     if (ok) {
       _closing = true;
-      await ref.read(activeTimerRepositoryProvider).clear();
+      await ref.read(activeTimerRepositoryProvider).closePomodoroRun(
+            timer: current,
+            effective: effective,
+            inProgressWorkSeconds: inProgressWorkSeconds,
+          );
       if (mounted) Navigator.of(context).pop();
     } else {
       await _confirmDiscardAndClose();
@@ -733,6 +816,18 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     final canSkipQuest =
         running && state.type == PomodoroPhaseType.work;
 
+    // 「本日Xセット」「本日X時間Y分」表示用（本日累計＋現フェーズの
+    // 未コミット分。pomodoroDayStreamProvider / todayEarningsStreamProvider
+    // は main.dart で常時listenされているメモリ値を参照する）。
+    final completedSetsToday =
+        ref.watch(pomodoroDayStreamProvider).value?.completedSetsToday ?? 0;
+    final earningsWorkSeconds =
+        ref.watch(todayEarningsStreamProvider).value?.workSeconds ?? 0;
+    final totalWorkSeconds =
+        earningsWorkSeconds + schedule.inProgressSessionSeconds(state);
+    final todayWorkHours = totalWorkSeconds ~/ 3600;
+    final todayWorkMinutes = (totalWorkSeconds % 3600) ~/ 60;
+
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
@@ -779,6 +874,17 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
                         'セット ${state.setNumber} / ${run.setCount}',
                         style:
                             text.bodyLarge?.copyWith(color: scheme.onSurfaceVariant),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '本日 $completedSetsToday セット',
+                        style: text.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+                        textAlign: TextAlign.center,
+                      ),
+                      Text(
+                        '本日 $todayWorkHours時間$todayWorkMinutes分',
+                        style: text.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
                         textAlign: TextAlign.center,
                       ),
                       const Spacer(),

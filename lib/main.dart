@@ -11,7 +11,9 @@ import 'package:task_manager/features/onboarding/onboarding_keys.dart';
 import 'package:task_manager/features/onboarding/view/onboarding_gate.dart';
 import 'package:task_manager/features/pomodoro/model/pomodoro_schedule.dart';
 import 'package:task_manager/features/pomodoro/model/pomodoro_settings.dart';
+import 'package:task_manager/features/pomodoro/providers/pomodoro_day_providers.dart';
 import 'package:task_manager/features/pomodoro/providers/pomodoro_providers.dart';
+import 'package:task_manager/features/timer/data/active_timer_repository.dart';
 import 'package:task_manager/features/timer/model/active_timer.dart';
 import 'package:task_manager/features/timer/providers/timer_providers.dart';
 import 'package:task_manager/features/timer/view/timer_lock_launcher.dart';
@@ -185,24 +187,38 @@ class _MainShell extends ConsumerWidget {
       return timer; // 同一フェーズ内：変更なし。
     }
 
+    // 復元でまたぐのは最大1フェーズ（restoreCappedToOnePhaseの制約）。完走
+    // 扱いにする範囲なので creditForRange を使い、明示差分として渡す
+    // （セット数・実績・作業秒はフェーズ番号の範囲から導出しない設計原則）。
+    final credit = schedule.creditForRange(run.phaseIndex, result.run.phaseIndex);
+    final newCreditedMinutes = run.creditedMinutes + credit.creditedMinutes;
+
     final repo = ref.read(activeTimerRepositoryProvider);
     final committed = await repo.commitPomodoroTransition(
       expectedCurrentPhaseIndex: run.phaseIndex,
       newPhaseIndex: result.run.phaseIndex,
       phaseStartedAtUtc: null, // 一時停止で復元する。
       newSavedWorkPhases: result.run.savedWorkPhases,
+      newCreditedMinutes: newCreditedMinutes,
+      dayDelta: PomodoroDayDelta(
+        completedWorkPhasesDelta: credit.completedWorkPhases,
+        creditCycleProgress: true,
+        workSecondsDelta: credit.workSeconds,
+      ),
     );
     if (!committed) return timer; // 他端末が既に処理済み（冪等）。
 
     if (result.completedWorkPhases > 0) {
-      final total = run.baseActualMinutes + result.run.savedWorkPhases * run.workMinutes;
+      final total = run.baseActualMinutes + newCreditedMinutes;
       await ref.read(timerActionsProvider).saveProgress(
             taskId: timer.taskId,
             predictedMinutes: timer.predictedMinutes,
             actualMinutes: total,
           );
     }
-    return timer.copyWith(pomodoro: result.run);
+    return timer.copyWith(
+      pomodoro: result.run.copyWith(creditedMinutes: newCreditedMinutes),
+    );
   }
 
   @override
@@ -220,6 +236,9 @@ class _MainShell extends ConsumerWidget {
       pomodoroSettingsStreamProvider,
       (_, _) {},
     );
+    // 「1日通しセット」の日次状態も常時メモリに保持する
+    // （TimerLockLauncher が開始位置解決のフォールバックに使う）。
+    ref.listen(pomodoroDayStreamProvider, (_, _) {});
     final index = ref.watch(mainTabIndexProvider);
     return Scaffold(
       body: IndexedStack(index: index, children: _pages),

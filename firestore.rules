@@ -59,6 +59,12 @@ service cloud.firestore {
         allow read, write: if isOwner(userId);
       }
 
+      // 「1日通しセット」の日次状態（サイクル位置・やりかけ作業フェーズ・
+      // 未消化休憩）。本人のみ。
+      match /pomodoro_days/{dateKey} {
+        allow read, write: if isOwner(userId);
+      }
+
       // ご褒美チケット在庫（ルーレット報酬）。本人のみ。
       // サブコレクションのルールは親から継承されないため明示する。
       // 消費は used=true への update を許可する（台帳と異なり更新可）。

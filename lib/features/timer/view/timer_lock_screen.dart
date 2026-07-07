@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/auth/providers/auth_providers.dart';
+import 'package:task_manager/features/economy/providers/economy_providers.dart';
 import 'package:task_manager/features/timer/model/active_timer.dart';
 import 'package:task_manager/features/timer/providers/timer_providers.dart';
 import 'package:task_manager/features/timer/viewmodel/timer_actions.dart';
@@ -138,6 +139,12 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
         );
     if (!mounted) return;
     if (ok) {
+      unawaited(
+        ref
+            .read(economyRepositoryProvider)
+            .addWorkSeconds(elapsedSec)
+            .catchError((Object _) {}),
+      );
       await ref.read(activeTimerRepositoryProvider).resetToZero();
       if (!mounted) return;
       _actualMinutesCtrl.text = total.toString();
@@ -183,6 +190,12 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
         );
     if (!mounted) return;
     if (ok) {
+      unawaited(
+        ref
+            .read(economyRepositoryProvider)
+            .addWorkSeconds(elapsedSec)
+            .catchError((Object _) {}),
+      );
       _closing = true;
       await ref.read(activeTimerRepositoryProvider).clear();
       if (mounted) Navigator.of(context).pop();
@@ -262,6 +275,12 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
       return;
     }
 
+    unawaited(
+      ref
+          .read(economyRepositoryProvider)
+          .addWorkSeconds(elapsedSec)
+          .catchError((Object _) {}),
+    );
     _closing = true;
     await ref.read(activeTimerRepositoryProvider).clear();
     if (!mounted) return;

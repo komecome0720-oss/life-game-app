@@ -463,6 +463,22 @@ class EconomyRepository {
     });
   }
 
+  /// ポモドーロ作業フェーズ・通常タイマー計測の消化秒を `daily_earnings` の
+  /// `workSeconds` へ加算する（ホームの「今日の作業時間」表示用）。
+  /// [seconds] が0以下なら no-op。加算先の dateKey は [when]（既定 now）の
+  /// ローカル日付（taskYen 等と同じ流儀）。
+  Future<void> addWorkSeconds(int seconds, {DateTime? when}) async {
+    if (seconds <= 0) return;
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) throw Exception('Not authenticated');
+    final dateKey = _localDateKey(when ?? DateTime.now());
+    final ref = _dailyEarningsCol(uid).doc(dateKey);
+    await ref.set({
+      'workSeconds': FieldValue.increment(seconds),
+      'updatedAtUtc': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
   Future<BalanceLedgerResult> saveHealthLogAndAdjust({
     required String dateKey,
     required Map<String, dynamic> healthLogData,

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
+import 'package:task_manager/features/pomodoro/providers/pomodoro_day_providers.dart';
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/utils/app_messenger.dart';
@@ -12,7 +13,11 @@ import 'package:task_manager/utils/app_messenger.dart';
 enum CalendarViewMode { week, day }
 
 /// PageView の外側に固定配置する共通ヘッダー。スワイプ・モード切替で位置がずれない。
-class ScheduleHeaderBar extends StatelessWidget {
+///
+/// 見出しは「クエスト」の代わりに本日の作業時間・獲得金額を表示する
+/// （仕様7：作業時間＝ポモドーロ作業フェーズ＋通常タイマー計測。金額＝taskYenのみ、
+/// 0未満は0表示）。
+class ScheduleHeaderBar extends ConsumerWidget {
   const ScheduleHeaderBar({
     super.key,
     required this.viewMode,
@@ -31,18 +36,30 @@ class ScheduleHeaderBar extends StatelessWidget {
   final bool isImporting;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
+    final earnings = ref.watch(todayEarningsStreamProvider).value;
+    final workSeconds = earnings?.workSeconds ?? 0;
+    final taskYen = earnings?.taskYen ?? 0;
+    final clampedYen = taskYen < 0 ? 0 : taskYen;
+    final hours = workSeconds ~/ 3600;
+    final minutes = (workSeconds % 3600) ~/ 60;
+    final headerStyle = text.labelMedium
+        ?.copyWith(fontWeight: FontWeight.w700, fontSize: 11, height: 1.1);
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 8, 6, 6),
       child: Row(
         children: [
           Icon(Icons.check_circle_outline, color: scheme.primary, size: 20),
           const SizedBox(width: 6),
-          Text(
-            'クエスト',
-            style: text.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('今日：$hours時間$minutes分', style: headerStyle),
+              Text('【$clampedYen円】', style: headerStyle),
+            ],
           ),
           const Spacer(),
           SegmentedButton<CalendarViewMode>(

@@ -99,5 +99,44 @@ void main() {
       expect(restored.pomodoro!.phaseStartedAtUtc, isNull);
       expect(restored.pomodoro!.isRunning, isFalse);
     });
+
+    test('「1日通しセット」用の追加フィールドが往復する', () {
+      final run = _samplePomodoroRun().copyWith(
+        startPhaseIndex: 5,
+        startPhaseLengthSecondsOverride: 300,
+        carriedInSeconds: 90,
+        carriedInCreditedMinutes: 4,
+        creditedMinutes: 77,
+        dateKey: '2026-07-06',
+      );
+      final timer = _baseTimer(pomodoro: run);
+      final restored = ActiveTimer.fromMap(timer.toMap());
+      final restoredRun = restored.pomodoro!;
+      expect(restoredRun.startPhaseIndex, 5);
+      expect(restoredRun.startPhaseLengthSecondsOverride, 300);
+      expect(restoredRun.carriedInSeconds, 90);
+      expect(restoredRun.carriedInCreditedMinutes, 4);
+      expect(restoredRun.creditedMinutes, 77);
+      expect(restoredRun.dateKey, '2026-07-06');
+    });
+
+    test('旧doc（新フィールド無し）は後方互換の既定値になり、'
+        'creditedMinutesはsavedWorkPhases×workMinutesで補完される', () {
+      final legacyMap = _samplePomodoroRun().toMap()
+        ..remove('startPhaseIndex')
+        ..remove('startPhaseLengthSecondsOverride')
+        ..remove('carriedInSeconds')
+        ..remove('carriedInCreditedMinutes')
+        ..remove('creditedMinutes')
+        ..remove('dateKey');
+      final restored = PomodoroRun.fromMap(legacyMap)!;
+      expect(restored.startPhaseIndex, 0);
+      expect(restored.startPhaseLengthSecondsOverride, isNull);
+      expect(restored.carriedInSeconds, 0);
+      expect(restored.carriedInCreditedMinutes, 0);
+      // savedWorkPhases=2, workMinutes=25 -> 50（旧計算 base+saved*work と同値）。
+      expect(restored.creditedMinutes, 2 * 25);
+      expect(restored.dateKey, '');
+    });
   });
 }

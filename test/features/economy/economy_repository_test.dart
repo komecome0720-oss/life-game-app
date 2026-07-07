@@ -234,5 +234,38 @@ void main() {
           .get();
       expect(days.docs, isEmpty);
     });
+
+    test('addWorkSecondsはworkSecondsへincrementする', () async {
+      await repo.addWorkSeconds(90);
+      await repo.addWorkSeconds(30);
+
+      final data = await dailyDoc();
+      expect(data?['workSeconds'], 120);
+    });
+
+    test('addWorkSecondsは0以下ならno-op（daily_earningsを作らない）', () async {
+      await repo.addWorkSeconds(0);
+      await repo.addWorkSeconds(-10);
+
+      final days = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('daily_earnings')
+          .get();
+      expect(days.docs, isEmpty);
+    });
+
+    test('addWorkSecondsはwhenで指定した日付のdocへ加算する', () async {
+      final when = DateTime(2026, 7, 5, 23, 0);
+      await repo.addWorkSeconds(60, when: when);
+
+      final doc = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('daily_earnings')
+          .doc('2026-07-05')
+          .get();
+      expect(doc.data()?['workSeconds'], 60);
+    });
   });
 }

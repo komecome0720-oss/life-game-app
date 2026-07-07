@@ -3,6 +3,9 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:task_manager/features/pomodoro/data/pomodoro_day_repository.dart';
+import 'package:task_manager/features/pomodoro/model/pomodoro_day.dart';
+import 'package:task_manager/features/pomodoro/model/pomodoro_schedule.dart';
 import 'package:task_manager/features/pomodoro/model/pomodoro_settings.dart';
 import 'package:task_manager/features/timer/data/active_timer_repository.dart';
 
@@ -80,6 +83,46 @@ void main() {
       );
       expect(second.taskId, 'task-1');
       expect(second.pomodoro!.baseActualMinutes, 0);
+    });
+
+    test('dayStartを渡すと開始位置に反映され、day docへ消化後の状態を書き戻す', () async {
+      final dayStart = PomodoroDayStart(
+        startPhaseIndex: 3,
+        startPhaseLengthSecondsOverride: 120,
+        carriedInSeconds: 30,
+        carriedInCreditedMinutes: 2,
+        dayAfter: PomodoroDay(
+          completedSetsToday: 2,
+          cycleCompletedSets: 1,
+          updatedAtUtc: clock,
+        ),
+      );
+
+      final timer = await repo.startPomodoro(
+        taskId: 'task-1',
+        isTodo: false,
+        taskTitle: 'サンプル',
+        predictedMinutes: 60,
+        settings: PomodoroSettings.defaults,
+        baseActualMinutes: 0,
+        dateKey: '2026-07-06',
+        dayStart: dayStart,
+      );
+
+      final run = timer.pomodoro!;
+      expect(run.phaseIndex, 3);
+      expect(run.startPhaseIndex, 3);
+      expect(run.startPhaseLengthSecondsOverride, 120);
+      expect(run.carriedInSeconds, 30);
+      expect(run.carriedInCreditedMinutes, 2);
+      expect(run.phaseAccumulatedSeconds, 30);
+      expect(run.dateKey, '2026-07-06');
+
+      final dayDoc =
+          await PomodoroDayRepository.docRef(firestore, uid, '2026-07-06')
+              .get();
+      expect(dayDoc.data()!['completedSetsToday'], 2);
+      expect(dayDoc.data()!['cycleCompletedSets'], 1);
     });
   });
 
@@ -240,6 +283,304 @@ void main() {
       );
       expect(ok, isFalse);
     });
+
+    test(
+        'dayDelta指定: day docはrunのdateKey・daily_earningsはnowのdateKeyへ反映する（日またぎ）',
+        () async {
+      await repo.startPomodoro(
+        taskId: 'task-1',
+        isTodo: false,
+        taskTitle: 'サンプル',
+        predictedMinutes: 60,
+        settings: PomodoroSettings.defaults,
+        baseActualMinutes: 0,
+        dateKey: '2026-07-06',
+      );
+      clock = clock.add(const Duration(hours: 20)); // 翌日 06:00 UTCへ日またぎ
+
+      final ok = await repo.commitPomodoroTransition(
+        expectedCurrentPhaseIndex: 0,
+        newPhaseIndex: 1,
+        phaseStartedAtUtc: clock,
+        newSavedWorkPhases: 1,
+        newCreditedMinutes: 25,
+        dayDelta: const PomodoroDayDelta(
+          completedWorkPhasesDelta: 1,
+          creditCycleProgress: true,
+          workSecondsDelta: 1500,
+        ),
+      );
+      expect(ok, isTrue);
+
+      final dayDoc =
+          await PomodoroDayRepository.docRef(firestore, uid, '2026-07-06')
+              .get();
+      expect(dayDoc.data()!['completedSetsToday'], 1);
+      expect(dayDoc.data()!['cycleCompletedSets'], 1);
+
+      final earningsDoc = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('daily_earnings')
+          .doc('2026-07-07')
+          .get();
+      expect(earningsDoc.data()!['workSeconds'], 1500);
+
+      final pomo = (await rawDoc())!['pomodoro'] as Map<String, dynamic>;
+      expect(pomo['creditedMinutes'], 25);
+    });
+
+    test('期待するphaseIndexと不一致ならday doc・daily_earningsも一切変更しない', () async {
+      await repo.startPomodoro(
+        taskId: 'task-1',
+        isTodo: false,
+        taskTitle: 'サンプル',
+        predictedMinutes: 60,
+        settings: PomodoroSettings.defaults,
+        baseActualMinutes: 0,
+        dateKey: '2026-07-06',
+      );
+      await repo.commitPomodoroTransition(
+        expectedCurrentPhaseIndex: 0,
+        newPhaseIndex: 1,
+        phaseStartedAtUtc: clock,
+        newSavedWorkPhases: 1,
+        newCreditedMinutes: 25,
+        dayDelta: const PomodoroDayDelta(
+          completedWorkPhasesDelta: 1,
+          creditCycleProgress: true,
+          workSecondsDelta: 1500,
+        ),
+      );
+
+      final ok = await repo.commitPomodoroTransition(
+        expectedCurrentPhaseIndex: 0, // 既に1のため不一致
+        newPhaseIndex: 1,
+        phaseStartedAtUtc: clock,
+        newSavedWorkPhases: 99,
+        newCreditedMinutes: 999,
+        dayDelta: const PomodoroDayDelta(
+          completedWorkPhasesDelta: 5,
+          creditCycleProgress: true,
+          workSecondsDelta: 300,
+        ),
+      );
+      expect(ok, isFalse);
+
+      final dayDoc =
+          await PomodoroDayRepository.docRef(firestore, uid, '2026-07-06')
+              .get();
+      expect(dayDoc.data()!['completedSetsToday'], 1); // 変わらず
+
+      final earningsDoc = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('daily_earnings')
+          .doc('2026-07-06')
+          .get();
+      expect(earningsDoc.data()!['workSeconds'], 1500); // 変わらず
+    });
+
+    test(
+        'スキップ相当（completedWorkPhasesDelta:0・creditCycleProgress:false）では'
+        'セット数が増えない', () async {
+      await repo.startPomodoro(
+        taskId: 'task-1',
+        isTodo: false,
+        taskTitle: 'サンプル',
+        predictedMinutes: 60,
+        settings: PomodoroSettings.defaults,
+        baseActualMinutes: 0,
+        dateKey: '2026-07-06',
+      );
+
+      final ok = await repo.commitPomodoroTransition(
+        expectedCurrentPhaseIndex: 0,
+        newPhaseIndex: 1, // work(0)->short(1)へ進むが、スキップなので完走扱いにしない
+        phaseStartedAtUtc: clock,
+        newSavedWorkPhases: 0, // savedWorkPhasesも増やさない（現行のスキップの意味論）
+        newCreditedMinutes: 5, // 途中分は実績へ加算されるがセット数には加算しない
+        dayDelta: const PomodoroDayDelta(
+          completedWorkPhasesDelta: 0,
+          creditCycleProgress: false,
+          workSecondsDelta: 300,
+        ),
+      );
+      expect(ok, isTrue);
+
+      final dayDoc =
+          await PomodoroDayRepository.docRef(firestore, uid, '2026-07-06')
+              .get();
+      expect(dayDoc.data()!['completedSetsToday'], 0);
+      expect(dayDoc.data()!['cycleCompletedSets'], 0);
+
+      final earningsDoc = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('daily_earnings')
+          .doc('2026-07-06')
+          .get();
+      expect(earningsDoc.data()!['workSeconds'], 300);
+
+      final pomo = (await rawDoc())!['pomodoro'] as Map<String, dynamic>;
+      expect(pomo['phaseIndex'], 1);
+      expect(pomo['savedWorkPhases'], 0);
+      expect(pomo['creditedMinutes'], 5);
+    });
+  });
+
+  group('closePomodoroRun', () {
+    test('work途中でクローズ: carryWorkを書き、daily_earningsへincrementし、docを削除する',
+        () async {
+      final timer = await repo.startPomodoro(
+        taskId: 'task-1',
+        isTodo: false,
+        taskTitle: 'サンプル',
+        predictedMinutes: 60,
+        settings: PomodoroSettings.defaults,
+        baseActualMinutes: 0,
+        dateKey: '2026-07-06',
+      );
+
+      const effective = PomodoroPhaseState(
+        phaseIndex: 0,
+        type: PomodoroPhaseType.work,
+        setNumber: 1,
+        phaseLengthSeconds: 1500,
+        elapsedSeconds: 400,
+      );
+      await repo.closePomodoroRun(
+        timer: timer,
+        effective: effective,
+        inProgressWorkSeconds: 400,
+      );
+
+      final dayDoc =
+          await PomodoroDayRepository.docRef(firestore, uid, '2026-07-06')
+              .get();
+      final carry = dayDoc.data()!['carryWork'] as Map<String, dynamic>;
+      expect(carry['elapsedSeconds'], 400);
+      expect(carry['phaseLengthSeconds'], 1500);
+      expect(carry['creditedMinutes'], (400 / 60).round());
+
+      final earningsDoc = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('daily_earnings')
+          .doc('2026-07-06')
+          .get();
+      expect(earningsDoc.data()!['workSeconds'], 400);
+
+      expect(await rawDoc(), isNull);
+    });
+
+    test('休憩途中でクローズ: pendingBreakを書く', () async {
+      final timer = await repo.startPomodoro(
+        taskId: 'task-1',
+        isTodo: false,
+        taskTitle: 'サンプル',
+        predictedMinutes: 60,
+        settings: PomodoroSettings.defaults,
+        baseActualMinutes: 0,
+        dateKey: '2026-07-06',
+      );
+
+      const effective = PomodoroPhaseState(
+        phaseIndex: 1,
+        type: PomodoroPhaseType.shortBreak,
+        setNumber: 1,
+        phaseLengthSeconds: 300,
+        elapsedSeconds: 100,
+      );
+      await repo.closePomodoroRun(
+        timer: timer,
+        effective: effective,
+        inProgressWorkSeconds: 0,
+      );
+
+      final dayDoc =
+          await PomodoroDayRepository.docRef(firestore, uid, '2026-07-06')
+              .get();
+      final pending = dayDoc.data()!['pendingBreak'] as Map<String, dynamic>;
+      expect(pending['isLong'], isFalse);
+      expect(pending['remainingSeconds'], 200); // 300-100
+      expect(await rawDoc(), isNull);
+    });
+
+    test('carry持ちで開始し経過0秒で即✕: carriedInSecondsをcarryWorkとして書き戻す（レビューC-2）',
+        () async {
+      final dayStart = PomodoroDayStart(
+        startPhaseIndex: 0,
+        startPhaseLengthSecondsOverride: 1500,
+        carriedInSeconds: 300,
+        carriedInCreditedMinutes: 3,
+        dayAfter: PomodoroDay.empty(clock),
+      );
+      final timer = await repo.startPomodoro(
+        taskId: 'task-1',
+        isTodo: false,
+        taskTitle: 'サンプル',
+        predictedMinutes: 60,
+        settings: PomodoroSettings.defaults,
+        baseActualMinutes: 0,
+        dateKey: '2026-07-06',
+        dayStart: dayStart,
+      );
+
+      // 経過0秒（このセッションでは何も進んでいない）だが carried分は持っている。
+      const effective = PomodoroPhaseState(
+        phaseIndex: 0,
+        type: PomodoroPhaseType.work,
+        setNumber: 1,
+        phaseLengthSeconds: 1500,
+        elapsedSeconds: 300,
+      );
+      await repo.closePomodoroRun(
+        timer: timer,
+        effective: effective,
+        inProgressWorkSeconds: 0,
+      );
+
+      final dayDoc =
+          await PomodoroDayRepository.docRef(firestore, uid, '2026-07-06')
+              .get();
+      final carry = dayDoc.data()!['carryWork'] as Map<String, dynamic>;
+      expect(carry['elapsedSeconds'], 300);
+      expect(carry['creditedMinutes'], 3); // carriedInCreditedMinutes + round(0/60)
+      expect(await rawDoc(), isNull);
+    });
+
+    test('作業フェーズ先頭・carried0・経過0秒でクローズ: day docへは何も書かずdocのみ削除する',
+        () async {
+      final timer = await repo.startPomodoro(
+        taskId: 'task-1',
+        isTodo: false,
+        taskTitle: 'サンプル',
+        predictedMinutes: 60,
+        settings: PomodoroSettings.defaults,
+        baseActualMinutes: 0,
+        dateKey: '2026-07-06',
+      );
+
+      const effective = PomodoroPhaseState(
+        phaseIndex: 0,
+        type: PomodoroPhaseType.work,
+        setNumber: 1,
+        phaseLengthSeconds: 1500,
+        elapsedSeconds: 0,
+      );
+      await repo.closePomodoroRun(
+        timer: timer,
+        effective: effective,
+        inProgressWorkSeconds: 0,
+      );
+
+      final dayDoc =
+          await PomodoroDayRepository.docRef(firestore, uid, '2026-07-06')
+              .get();
+      expect(dayDoc.exists, isFalse);
+      expect(await rawDoc(), isNull);
+    });
   });
 
   group('updateTaskTitle', () {
@@ -276,7 +617,8 @@ void main() {
   });
 
   group('commitPomodoroBaseActualMinutes', () {
-    test('通常更新: base = newTotal - saved*work が書かれ、戻り値のtotalMinutesが入力値と一致',
+    test(
+        '通常更新: base = newTotal - creditedMinutes が書かれ、戻り値のtotalMinutesが入力値と一致',
         () async {
       await repo.startPomodoro(
         taskId: 'task-1',
@@ -286,14 +628,17 @@ void main() {
         settings: PomodoroSettings.defaults,
         baseActualMinutes: 0,
       );
-      // savedWorkPhases=1・workMinutes=既定値 にしておく。
+      // savedWorkPhases=1・creditedMinutes=workMinutes（既定値）にしておく
+      // （レビューM-2：creditedMinutes基準。savedWorkPhases*workMinutesとは
+      // 独立に管理されるため、commit側で明示的に渡す）。
+      final workMinutes = PomodoroSettings.defaultWorkMinutes;
       await repo.commitPomodoroTransition(
         expectedCurrentPhaseIndex: 0,
         newPhaseIndex: 1,
         phaseStartedAtUtc: clock,
         newSavedWorkPhases: 1,
+        newCreditedMinutes: workMinutes,
       );
-      final workMinutes = PomodoroSettings.defaultWorkMinutes;
       final newTotal = workMinutes + 20;
 
       final result = await repo.commitPomodoroBaseActualMinutes(
@@ -311,7 +656,7 @@ void main() {
       expect(pomo['savedWorkPhases'], 1);
     });
 
-    test('0クランプ: newTotal < saved*work のとき base=0、totalMinutesはsaved*work',
+    test('0クランプ: newTotal < creditedMinutes のとき base=0、totalMinutesはcreditedMinutes',
         () async {
       await repo.startPomodoro(
         taskId: 'task-1',
@@ -321,13 +666,14 @@ void main() {
         settings: PomodoroSettings.defaults,
         baseActualMinutes: 0,
       );
+      final workMinutes = PomodoroSettings.defaultWorkMinutes;
       await repo.commitPomodoroTransition(
         expectedCurrentPhaseIndex: 0,
         newPhaseIndex: 1,
         phaseStartedAtUtc: clock,
         newSavedWorkPhases: 1,
+        newCreditedMinutes: workMinutes,
       );
-      final workMinutes = PomodoroSettings.defaultWorkMinutes;
 
       final result = await repo.commitPomodoroBaseActualMinutes(
         newTotalMinutes: workMinutes - 5,
@@ -340,6 +686,33 @@ void main() {
       final data = await rawDoc();
       final pomo = data!['pomodoro'] as Map<String, dynamic>;
       expect(pomo['baseActualMinutes'], 0);
+    });
+
+    test('savedWorkPhases*workMinutesとcreditedMinutesが乖離していてもcreditedMinutes基準になる'
+        '（スキップ相当の状況を再現）', () async {
+      await repo.startPomodoro(
+        taskId: 'task-1',
+        isTodo: false,
+        taskTitle: 'サンプル',
+        predictedMinutes: 60,
+        settings: PomodoroSettings.defaults,
+        baseActualMinutes: 0,
+      );
+      // savedWorkPhasesは0のまま（スキップは完走ではないため加算しない）が
+      // creditedMinutesだけ進む状況を模す。
+      await repo.commitPomodoroTransition(
+        expectedCurrentPhaseIndex: 0,
+        newPhaseIndex: 1,
+        phaseStartedAtUtc: clock,
+        newSavedWorkPhases: 0,
+        newCreditedMinutes: 12,
+      );
+
+      final result =
+          await repo.commitPomodoroBaseActualMinutes(newTotalMinutes: 30);
+
+      expect(result!.baseActualMinutes, 18); // 30-12
+      expect(result.totalMinutes, 30);
     });
 
     test('docなしのときnullを返し何も書かない', () async {

@@ -12,6 +12,10 @@ PomodoroRun _run({
   int phaseAccumulatedSeconds = 0,
   int savedWorkPhases = 0,
   int baseActualMinutes = 0,
+  int startPhaseIndex = 0,
+  int? startPhaseLengthSecondsOverride,
+  int carriedInSeconds = 0,
+  int carriedInCreditedMinutes = 0,
 }) {
   return PomodoroRun(
     workMinutes: workMinutes,
@@ -29,6 +33,10 @@ PomodoroRun _run({
     phaseAccumulatedSeconds: phaseAccumulatedSeconds,
     savedWorkPhases: savedWorkPhases,
     baseActualMinutes: baseActualMinutes,
+    startPhaseIndex: startPhaseIndex,
+    startPhaseLengthSecondsOverride: startPhaseLengthSecondsOverride,
+    carriedInSeconds: carriedInSeconds,
+    carriedInCreditedMinutes: carriedInCreditedMinutes,
   );
 }
 
@@ -249,6 +257,131 @@ void main() {
       expect(result.run.phaseIndex, 0);
       expect(result.run.isRunning, isFalse);
       expect(result.completedWorkPhases, 0);
+    });
+  });
+
+  group('phaseLengthSecondsAt: 開始フェーズの長さ上書き', () {
+    test('startPhaseIndexかつoverride指定ありならそちらを優先する', () {
+      final run = _run(
+        phaseIndex: 0,
+        startPhaseIndex: 0,
+        startPhaseLengthSecondsOverride: 300,
+      );
+      final schedule = PomodoroSchedule(run);
+      expect(schedule.phaseLengthSecondsAt(0), 300);
+      // 他のフェーズは通常どおり（設定値）。
+      expect(schedule.phaseLengthSecondsAt(1), 5 * 60);
+    });
+
+    test('override が null なら通常どおりの長さ', () {
+      final run = _run(phaseIndex: 0, startPhaseIndex: 0);
+      final schedule = PomodoroSchedule(run);
+      expect(schedule.phaseLengthSecondsAt(0), 25 * 60);
+    });
+  });
+
+  group('inProgressSessionSeconds', () {
+    test('開始フェーズ（work）: carriedInSecondsを差し引く', () {
+      final run = _run(startPhaseIndex: 0, carriedInSeconds: 300);
+      final schedule = PomodoroSchedule(run);
+      final state = PomodoroPhaseState(
+        phaseIndex: 0,
+        type: PomodoroPhaseType.work,
+        setNumber: 1,
+        phaseLengthSeconds: 1500,
+        elapsedSeconds: 400,
+      );
+      expect(schedule.inProgressSessionSeconds(state), 100);
+    });
+
+    test('通常フェーズ（開始フェーズでない）: そのまま返る', () {
+      final run = _run(startPhaseIndex: 0, carriedInSeconds: 300);
+      final schedule = PomodoroSchedule(run);
+      final state = PomodoroPhaseState(
+        phaseIndex: 2,
+        type: PomodoroPhaseType.work,
+        setNumber: 2,
+        phaseLengthSeconds: 1500,
+        elapsedSeconds: 200,
+      );
+      expect(schedule.inProgressSessionSeconds(state), 200);
+    });
+
+    test('work以外は常に0', () {
+      final run = _run(startPhaseIndex: 1, carriedInSeconds: 0);
+      final schedule = PomodoroSchedule(run);
+      final state = PomodoroPhaseState(
+        phaseIndex: 1,
+        type: PomodoroPhaseType.shortBreak,
+        setNumber: 1,
+        phaseLengthSeconds: 300,
+        elapsedSeconds: 100,
+      );
+      expect(schedule.inProgressSessionSeconds(state), 0);
+    });
+
+    test('経過秒がcarriedInSeconds未満でも負値にならない（下限0）', () {
+      final run = _run(startPhaseIndex: 0, carriedInSeconds: 300);
+      final schedule = PomodoroSchedule(run);
+      final state = PomodoroPhaseState(
+        phaseIndex: 0,
+        type: PomodoroPhaseType.work,
+        setNumber: 1,
+        phaseLengthSeconds: 1500,
+        elapsedSeconds: 100,
+      );
+      expect(schedule.inProgressSessionSeconds(state), 0);
+    });
+  });
+
+  group('creditForRange（完走扱いにする範囲の差分計算）', () {
+    test('開始フェーズが範囲内: carriedInCreditedMinutes/carriedInSecondsを控除する', () {
+      final run = _run(
+        startPhaseIndex: 0,
+        startPhaseLengthSecondsOverride: 1500,
+        carriedInSeconds: 300,
+        carriedInCreditedMinutes: 3,
+      );
+      final schedule = PomodoroSchedule(run);
+      final result = schedule.creditForRange(0, 1);
+      expect(result.completedWorkPhases, 1);
+      expect(result.creditedMinutes, 25 - 3);
+      expect(result.workSeconds, 1500 - 300);
+    });
+
+    test('控除がフェーズ分を超えるなら0にクランプする', () {
+      final run = _run(
+        startPhaseIndex: 0,
+        startPhaseLengthSecondsOverride: 60,
+        carriedInCreditedMinutes: 5,
+      );
+      final schedule = PomodoroSchedule(run);
+      final result = schedule.creditForRange(0, 1);
+      expect(result.creditedMinutes, 0);
+    });
+
+    test('複数フェーズ（開始フェーズ＋通常フェーズ）を合算する', () {
+      final run = _run(
+        startPhaseIndex: 0,
+        startPhaseLengthSecondsOverride: 1500,
+        carriedInSeconds: 300,
+        carriedInCreditedMinutes: 3,
+      );
+      final schedule = PomodoroSchedule(run);
+      // 0=work(開始, 控除あり) 1=short(対象外) 2=work(通常)
+      final result = schedule.creditForRange(0, 3);
+      expect(result.completedWorkPhases, 2);
+      expect(result.creditedMinutes, (25 - 3) + 25);
+      expect(result.workSeconds, (1500 - 300) + 1500);
+    });
+
+    test('スキップは使わない前提: 範囲が空なら全て0', () {
+      final run = _run();
+      final schedule = PomodoroSchedule(run);
+      final result = schedule.creditForRange(0, 0);
+      expect(result.completedWorkPhases, 0);
+      expect(result.creditedMinutes, 0);
+      expect(result.workSeconds, 0);
     });
   });
 }
