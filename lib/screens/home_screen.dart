@@ -10,6 +10,7 @@ import 'package:task_manager/features/calendar_sync/model/google_calendar_source
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
 import 'package:task_manager/features/economy/model/reward_calculator.dart';
 import 'package:task_manager/features/economy/providers/economy_providers.dart';
+import 'package:task_manager/features/economy/viewmodel/economy_fast_complete_service.dart';
 import 'package:task_manager/features/health/model/health_category.dart';
 import 'package:task_manager/features/onboarding/onboarding_keys.dart';
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
@@ -330,8 +331,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         );
         try {
           final result = await ref
-              .read(economyRepositoryProvider)
-              .completeTask(
+              .read(economyFastCompleteServiceProvider)
+              .completeTaskFast(
                 taskId: taskId,
                 title: task.title,
                 rewardYen: reward,

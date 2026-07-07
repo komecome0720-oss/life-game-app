@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
 import 'package:task_manager/features/economy/model/reward_calculator.dart';
-import 'package:task_manager/features/economy/providers/economy_providers.dart';
+import 'package:task_manager/features/economy/viewmodel/economy_fast_complete_service.dart';
 import 'package:task_manager/features/roulette/model/roulette_outcome.dart';
 import 'package:task_manager/features/roulette/providers/roulette_providers.dart';
 import 'package:task_manager/features/todo/providers/todo_providers.dart';
@@ -99,7 +99,9 @@ class TimerActions {
             );
       }
 
-      final result = await _ref.read(economyRepositoryProvider).completeTask(
+      final result = await _ref
+          .read(economyFastCompleteServiceProvider)
+          .completeTaskFast(
             taskId: task.id,
             title: task.title,
             rewardYen: rewardYen,

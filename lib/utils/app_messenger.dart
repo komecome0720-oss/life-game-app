@@ -4,6 +4,12 @@ import 'package:flutter/material.dart';
 /// `MessageGuard` がこの値を監視してタップバリアの表示を切り替える。
 final ValueNotifier<bool> messageVisibleNotifier = ValueNotifier<bool>(false);
 
+/// `MaterialApp.navigatorKey` に設定する。元の呼び出し元の `BuildContext` が
+/// 破棄された後（バックグラウンド処理の事後通知など）でも、ここから取得した
+/// context を既存の [showAppSnackBar] にそのまま渡すことで、ルートの
+/// `ScaffoldMessenger` へアクセスできる（新しいSnackBar表示経路は増やさない）。
+final navigatorKey = GlobalKey<NavigatorState>();
+
 int _currentToken = 0;
 
 /// アプリ全体で利用する SnackBar 表示ヘルパー。

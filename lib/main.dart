@@ -23,6 +23,7 @@ import 'package:task_manager/features/wish_list/view/wish_list_screen.dart';
 import 'package:task_manager/firebase_options.dart';
 import 'package:task_manager/screens/home_screen.dart';
 import 'package:task_manager/theme/app_tokens.dart';
+import 'package:task_manager/utils/app_messenger.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -56,6 +57,7 @@ class TaskManagerApp extends ConsumerWidget {
       userSettingsProvider.select((s) => s.settings.themeMode),
     );
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: '人生ゲーム化',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: _seedColor),

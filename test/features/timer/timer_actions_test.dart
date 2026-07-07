@@ -1,8 +1,10 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:task_manager/features/auth/providers/auth_providers.dart';
 import 'package:task_manager/features/calendar_sync/data/calendar_task_sync_repository.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
 import 'package:task_manager/features/economy/data/economy_repository.dart';
@@ -62,8 +64,13 @@ class _FakeUserSettingsNotifier extends UserSettingsViewModel {
   _FakeUserSettingsNotifier(this._settings);
   final UserSettings _settings;
 
+  // isLoading:true にして completeTaskFast() を常にフォールバック経路
+  // （economyRepo.completeTask を直接 await する安全な経路）に通す。
+  // これらのテストはローカルファースト機能自体の検証対象ではないため、
+  // モックの戻り値がそのまま結果に反映されるという既存の前提を保つ。
   @override
-  UserSettingsState build() => UserSettingsState(settings: _settings);
+  UserSettingsState build() =>
+      UserSettingsState(settings: _settings, isLoading: true);
 }
 
 void main() {
@@ -86,6 +93,10 @@ void main() {
         economyRepositoryProvider.overrideWithValue(economyRepo),
         todoRepositoryProvider.overrideWithValue(todoRepo),
         rouletteServiceProvider.overrideWithValue(rouletteService),
+        // completeTaskFast() 経由で PendingTaskCompletionsNotifier.build() が
+        // authStateProvider を watch するため、実FirebaseAuthへの接続を避ける
+        // ためにoverrideする（値自体はこのテストの検証対象ではない）。
+        authStateProvider.overrideWith((ref) => Stream<User?>.value(null)),
         userSettingsProvider.overrideWith(
           () => _FakeUserSettingsNotifier(
             UserSettings(monthlyBudget: (hourlyRate * 100).round(), monthlyQuestDays: 20, dailyQuestMinutes: 300),

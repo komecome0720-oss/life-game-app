@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/economy/model/reward_calculator.dart';
-import 'package:task_manager/features/economy/providers/economy_providers.dart';
+import 'package:task_manager/features/economy/viewmodel/economy_fast_complete_service.dart';
 import 'package:task_manager/features/pomodoro/view/pomodoro_settings_screen.dart';
 import 'package:task_manager/features/roulette/model/roulette_outcome.dart';
 import 'package:task_manager/features/roulette/providers/roulette_providers.dart';
@@ -248,13 +248,15 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
 
     // 3. 報酬付与
     try {
-      final result = await ref.read(economyRepositoryProvider).completeTask(
-        taskId: widget.task.id,
-        title: title,
-        rewardYen: reward,
-        predictedMinutes: _estimatedMinutes,
-        actualMinutes: actual,
-      );
+      final result = await ref
+          .read(economyFastCompleteServiceProvider)
+          .completeTaskFast(
+            taskId: widget.task.id,
+            title: title,
+            rewardYen: reward,
+            predictedMinutes: _estimatedMinutes,
+            actualMinutes: actual,
+          );
       if (!result.applied) {
         if (mounted) {
           Navigator.of(context).pop();
