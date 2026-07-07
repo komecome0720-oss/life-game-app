@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/auth/providers/auth_providers.dart';
 import 'package:task_manager/utils/app_messenger.dart';
 import 'package:task_manager/widgets/message_guard.dart';
+import 'package:task_manager/widgets/heart_gamepad_icon.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -97,7 +98,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.videogame_asset, size: 64, color: color.primary),
+                const HeartGamepadIcon(size: 64),
                 const SizedBox(height: 8),
                 Text('人生ゲーム化', style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold, color: color.primary)),
                 const SizedBox(height: 40),
