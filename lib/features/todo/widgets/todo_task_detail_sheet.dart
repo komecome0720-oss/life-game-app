@@ -272,42 +272,31 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
     if (!mounted) return;
     setState(() => _isCompleting = true);
 
-    // 1. 編集内容を先に保存（タイトル・description・象限・所要時間）
+    // 1. 編集内容の保存とカレンダー変換を1回の書き込みにまとめる
     final title = _titleCtrl.text.trim().isNotEmpty
         ? _titleCtrl.text.trim()
         : widget.task.title;
-    try {
-      final updated = widget.task.copyWith(
-        title: title,
-        urgency: _urgency,
-        importance: _importance,
-        estimatedMinutes: _estimatedMinutes,
-        description: _descCtrl.text.trim(),
-      );
-      await ref.read(todoRepositoryProvider).upsert(updated);
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isCompleting = false);
-        showAppSnackBar(context, SnackBar(content: Text('保存エラー: $e')));
-      }
-      return;
-    }
-
-    // 2. カレンダーイベントに変換（end=now, start=now-duration）
     final now = DateTime.now();
     final actual = hasActual ? fieldMinutes : null;
     final durationMinutes = actual ?? _estimatedMinutes;
     final start = now.subtract(Duration(minutes: durationMinutes));
+    final updated = widget.task.copyWith(
+      title: title,
+      urgency: _urgency,
+      importance: _importance,
+      estimatedMinutes: _estimatedMinutes,
+      description: _descCtrl.text.trim(),
+    );
     try {
-      await ref.read(todoRepositoryProvider).convertToCalendarEvent(
-        taskId: widget.task.id,
+      await ref.read(todoRepositoryProvider).upsertAndConvertToCalendarEvent(
+        task: updated,
         start: start,
         end: now,
       );
     } catch (e) {
       if (mounted) {
         setState(() => _isCompleting = false);
-        showAppSnackBar(context, SnackBar(content: Text('カレンダー変換エラー: $e')));
+        showAppSnackBar(context, SnackBar(content: Text('保存エラー: $e')));
       }
       return;
     }

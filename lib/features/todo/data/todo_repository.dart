@@ -146,6 +146,30 @@ class TodoRepository {
     });
   }
 
+  /// 完了処理専用：編集内容の保存とカレンダー変換を1回の書き込みにまとめる
+  /// （タスク完了→ルーレット画面遷移を待たせないため）。
+  Future<void> upsertAndConvertToCalendarEvent({
+    required CalendarTask task,
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    final uid = _uid;
+    if (uid == null) throw Exception('Not authenticated');
+    await _col(uid).doc(task.id).update({
+      'title': task.title,
+      'urgency': task.urgency,
+      'importance': task.importance,
+      'orderIndex': task.orderIndex,
+      'estimatedMinutes': task.estimatedMinutes,
+      'note': task.note,
+      'description': task.description ?? '',
+      'isTodo': false,
+      'startAtUtc': Timestamp.fromDate(start.toUtc()),
+      'endAtUtc': Timestamp.fromDate(end.toUtc()),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   Future<void> delete(String taskId) async {
     final uid = _uid;
     if (uid == null) throw Exception('Not authenticated');

@@ -77,6 +77,7 @@ class RouletteOutcome {
   final String? rewardName;
 
   /// 中/大でチケットを在庫に発行したか。小（即時許可）や他種別では false。
+  /// 発行はfire-and-forgetのため、この値は発行の完了・成功までは保証しない。
   final bool banked;
 
   bool get isWin => kind == RouletteOutcomeKind.win;

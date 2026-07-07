@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:task_manager/features/roulette/data/roulette_repository.dart';
@@ -25,6 +26,7 @@ class RouletteService {
       weeklyTaskCount: settings.weeklyTaskCount,
       weeklyJackpotCount: settings.weeklyJackpotCount,
       weeklyChuCount: settings.weeklyChuCount,
+      weeklyShoCount: settings.weeklyShoCount,
     );
     if (invalid != null) {
       return const RouletteOutcome.invalidConfig();
@@ -34,6 +36,7 @@ class RouletteService {
       weeklyTaskCount: settings.weeklyTaskCount,
       weeklyJackpotCount: settings.weeklyJackpotCount,
       weeklyChuCount: settings.weeklyChuCount,
+      weeklyShoCount: settings.weeklyShoCount,
     );
     final drawn = RewardConfig.categoryForRoll(_random.nextDouble(), probs);
 
@@ -59,11 +62,16 @@ class RouletteService {
     final rewardName = rewards[_random.nextInt(rewards.length)];
 
     // 中/大はチケットを在庫に発行。小は即時許可なのでバンクしない。
+    // チケット発行の書き込み完了は待たない（fire-and-forget、冪等IDのためリトライ不要）。
     if (tier.banksTicket) {
-      await _repo.issueTicket(
-        completionId: completionId,
-        tier: tier,
-        rewardName: rewardName,
+      unawaited(
+        _repo
+            .issueTicket(
+              completionId: completionId,
+              tier: tier,
+              rewardName: rewardName,
+            )
+            .catchError((Object _) {}),
       );
     }
 
