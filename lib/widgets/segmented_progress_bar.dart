@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:task_manager/features/economy/model/budget_split.dart';
 import 'package:task_manager/utils/health_goal.dart';
 
 /// 0〜[maxScore] を [segments] 個のブロックで表す（MVP: 各項目は max 10）
@@ -61,10 +62,10 @@ class TotalSegmentedProgressBar extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final brightness = Theme.of(context).brightness;
     final clamped = totalScore.clamp(0, maxTotal);
-    final raw = maxTotal == 0 ? 0.0 : clamped / maxTotal;
+    final raw = maxTotal <= 0 ? 0.0 : clamped / maxTotal;
     // 0点は空、1点以上は最低4%の下駄を履かせて視認できるようにする
     final factor = raw == 0 ? 0.0 : raw.clamp(0.04, 1.0);
-    final color = healthTotalColor(totalScore, brightness);
+    final color = healthTotalColor(raw, brightness);
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(4),
@@ -83,15 +84,16 @@ class TotalSegmentedProgressBar extends StatelessWidget {
                 color: color,
               ),
             ),
-            for (final g in healthGoals)
+            // ゲージ区切り線は達成率(kHealthGaugeRatios)基準。§5-B。
+            for (final g in kHealthGaugeRatios)
               Align(
-                alignment: Alignment(g / maxTotal * 2 - 1, 0),
+                alignment: Alignment(g * 2 - 1, 0),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 300),
                   width: 2,
                   height: height,
                   color: scheme.onSurface.withValues(
-                    alpha: totalScore >= g ? 0.15 : 0.55,
+                    alpha: raw >= g ? 0.15 : 0.55,
                   ),
                 ),
               ),
@@ -102,16 +104,26 @@ class TotalSegmentedProgressBar extends StatelessWidget {
   }
 }
 
-/// 合計点に連動して色が変わるハートアイコン（300msで色が遷移）
+/// 合計点(達成率)に連動して色が変わるハートアイコン（300msで色が遷移）。
+/// [maxTotal] は満点（瞑想ON=100 / OFF=80）。呼び出し側から渡す。
 class AnimatedHealthHeart extends StatelessWidget {
-  const AnimatedHealthHeart({super.key, required this.totalScore, this.size = 16});
+  const AnimatedHealthHeart({
+    super.key,
+    required this.totalScore,
+    this.maxTotal = 100,
+    this.size = 16,
+  });
 
   final int totalScore;
+  final int maxTotal;
   final double size;
 
   @override
   Widget build(BuildContext context) {
-    final color = healthTotalColor(totalScore, Theme.of(context).brightness);
+    final percent = maxTotal <= 0
+        ? 0.0
+        : (totalScore / maxTotal).clamp(0.0, 1.0);
+    final color = healthTotalColor(percent, Theme.of(context).brightness);
     return TweenAnimationBuilder<Color?>(
       tween: ColorTween(end: color),
       duration: const Duration(milliseconds: 300),

@@ -164,55 +164,35 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
     final fieldMinutes = int.tryParse(fieldText);
     final hasActual = fieldMinutes != null && fieldMinutes > 0;
 
+    if (!hasActual) {
+      showAppSnackBar(context, const SnackBar(content: Text('実績時間を入力してください')));
+      return;
+    }
+
     final settings = ref.read(userSettingsProvider).settings;
-    final minutesForReward = hasActual ? fieldMinutes : _estimatedMinutes;
-    final reward = settings.hourlyRate > 0
-        ? rewardYenFor(hourlyRate: settings.hourlyRate, minutes: minutesForReward)
+    final minutesForReward = fieldMinutes;
+    final reward = settings.taskHourlyRate > 0
+        ? rewardYenFor(hourlyRate: settings.taskHourlyRate, minutes: minutesForReward)
         : widget.task.rewardYen;
 
-    if (!hasActual) {
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('時間ログなしで完了しますか？'),
-          content: Text(
-            '「現状」の入力がありません。'
-            '入力すると予測精度の計測ができます。\n'
-            '完了すると ¥$reward が付与されカレンダーに記録されます。',
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('完了しますか？'),
+        content: Text('¥$reward を獲得し、完了として記録します。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('キャンセル'),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('キャンセル'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('完了する'),
-            ),
-          ],
-        ),
-      );
-      if (ok != true) return;
-    } else {
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('完了しますか？'),
-          content: Text('¥$reward を獲得し、完了として記録します。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('キャンセル'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('完了する'),
-            ),
-          ],
-        ),
-      );
-      if (ok != true) return;
-    }
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('完了する'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
 
     if (!mounted) return;
     setState(() => _isCompleting = true);
@@ -222,9 +202,11 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
         ? _titleCtrl.text.trim()
         : widget.task.title;
     final now = DateTime.now();
-    final actual = hasActual ? fieldMinutes : null;
-    final durationMinutes = actual ?? _estimatedMinutes;
-    final start = now.subtract(Duration(minutes: durationMinutes));
+    final actual = fieldMinutes;
+    final durationMinutes = actual;
+    var start = now.subtract(Duration(minutes: durationMinutes));
+    final dayStart = DateTime(now.year, now.month, now.day);
+    if (start.isBefore(dayStart)) start = dayStart; // 日またぎ丸め（仕様5）
     final updated = widget.task.copyWith(
       title: title,
       urgency: _urgency,
@@ -407,8 +389,8 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
 
     // 報酬プレビュー
     final settings = ref.read(userSettingsProvider).settings;
-    final rewardYen = settings.hourlyRate > 0
-        ? rewardYenFor(hourlyRate: settings.hourlyRate, minutes: _estimatedMinutes)
+    final rewardYen = settings.taskHourlyRate > 0
+        ? rewardYenFor(hourlyRate: settings.taskHourlyRate, minutes: _estimatedMinutes)
         : widget.task.rewardYen;
 
     return PopScope(

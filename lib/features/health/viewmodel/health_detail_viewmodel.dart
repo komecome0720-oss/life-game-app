@@ -6,10 +6,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/auth/providers/auth_providers.dart';
 import 'package:task_manager/features/economy/data/economy_repository.dart';
 import 'package:task_manager/features/economy/providers/economy_providers.dart';
+import 'package:task_manager/features/health/data/health_streak_repository.dart';
 import 'package:task_manager/features/health/model/health_category.dart';
 import 'package:task_manager/features/health/model/health_log.dart';
 import 'package:task_manager/features/health/model/health_rollover.dart';
 import 'package:task_manager/features/health/model/health_scoring.dart';
+import 'package:task_manager/features/health/model/health_streak_engine.dart';
+import 'package:task_manager/features/health/model/health_streak_state.dart';
+import 'package:task_manager/features/health/providers/health_streak_providers.dart';
 import 'package:task_manager/features/user_settings/model/user_settings.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 
@@ -19,13 +23,14 @@ class HealthDetailState {
     this.isLoading = false,
     this.isEditableNow = true,
     this.errorMessage,
-    this.lastSavedProvisionalYen = 0,
     List<HealthLog> historyLogs = const [],
     bool isHistoryLoading = false,
     String? historyErrorMessage,
+    HealthStreakState? streakState,
   }) : _historyLogs = historyLogs,
        _isHistoryLoading = isHistoryLoading,
-       _historyErrorMessage = historyErrorMessage;
+       _historyErrorMessage = historyErrorMessage,
+       _streakState = streakState;
 
   final HealthLog log;
   final bool isLoading;
@@ -35,41 +40,41 @@ class HealthDetailState {
 
   final String? errorMessage;
 
-  /// 直近の Firestore 書き込み時点の provisional。totalEarned 差分計算に使用。
-  final int lastSavedProvisionalYen;
-
   // Hot reload直後の古いStateインスタンスでも安全に読めるよう、
   // 追加フィールドはnullableで保持しつつ公開getterで既定値に寄せる。
   final List<HealthLog>? _historyLogs;
   final bool? _isHistoryLoading;
   final String? _historyErrorMessage;
+  final HealthStreakState? _streakState;
 
   List<HealthLog> get historyLogs => _historyLogs ?? const [];
   bool get isHistoryLoading => _isHistoryLoading ?? false;
   String? get historyErrorMessage => _historyErrorMessage;
+
+  /// ストリーク現況（連続日数・称号・フリーズ残）。非現金。
+  HealthStreakState get streakState => _streakState ?? const HealthStreakState();
 
   HealthDetailState copyWith({
     HealthLog? log,
     bool? isLoading,
     bool? isEditableNow,
     String? errorMessage,
-    int? lastSavedProvisionalYen,
     List<HealthLog>? historyLogs,
     bool? isHistoryLoading,
     Object? historyErrorMessage = _unset,
+    HealthStreakState? streakState,
   }) {
     return HealthDetailState(
       log: log ?? this.log,
       isLoading: isLoading ?? this.isLoading,
       isEditableNow: isEditableNow ?? this.isEditableNow,
       errorMessage: errorMessage,
-      lastSavedProvisionalYen:
-          lastSavedProvisionalYen ?? this.lastSavedProvisionalYen,
       historyLogs: historyLogs ?? this.historyLogs,
       isHistoryLoading: isHistoryLoading ?? this.isHistoryLoading,
       historyErrorMessage: identical(historyErrorMessage, _unset)
           ? this.historyErrorMessage
           : historyErrorMessage as String?,
+      streakState: streakState ?? this.streakState,
     );
   }
 
@@ -90,9 +95,14 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
   /// settle をどの経路からでも同じ参照で呼べるよう保持する。
   late EconomyRepository _economyRepo;
 
+  /// ストリーク状態（`users/{uid}/healthState/streak`）の read/write。
+  /// お金に触れない（非現金）ため economy のトランザクションとは独立。
+  late HealthStreakRepository _streakRepo;
+
   @override
   HealthDetailState build() {
     _economyRepo = ref.read(economyRepositoryProvider);
+    _streakRepo = ref.read(healthStreakRepositoryProvider);
     ref.onDispose(() {
       _midnightTimer?.cancel();
       // PopScope／ライフサイクル監視を経由せず破棄された場合の保険。
@@ -130,6 +140,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
         a.sleepGoalHours != b.sleepGoalHours ||
         a.sleepGoalMinutesExtra != b.sleepGoalMinutesExtra ||
         a.meditationGoalMinutes != b.meditationGoalMinutes ||
+        a.meditationEnabled != b.meditationEnabled ||
         a.hourlyRate != b.hourlyRate;
   }
 
@@ -181,10 +192,17 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
 
   Future<void> _load(String uid) async {
     final loadGeneration = ++_stateGeneration;
-    final todayKey = HealthRollover.dateKey(DateTime.now());
     try {
+      // C-1対策：旧モデル（日中に残高反映）からの移行スイープを最初に一度だけ実行。
+      // 冪等（healthMigratedV2 フラグ）なので毎回awaitして問題ない。
+      await _economyRepo.migrateHealthBalanceV2();
+      if (_uid != uid || loadGeneration != _stateGeneration) return;
+      final todayKey = HealthRollover.dateKey(DateTime.now());
       final col = _db.collection('users').doc(uid).collection('healthLogs');
       final pastResult = await _fetchPastLogs(col, todayKey);
+      // finalize後にストリークを前進させる（Step14）。
+      final streakState = await _advanceStreakIfNeeded(uid);
+      if (_uid != uid || loadGeneration != _stateGeneration) return;
 
       final doc = await col.doc(todayKey).get();
       // ロード中にユーザーが切り替わった場合は破棄
@@ -205,12 +223,10 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
         isLoading: false,
         isEditableNow: true,
         errorMessage: pastResult.error,
-        // baseline は totalEarned に反映済みの額＝ディスクから読んだ値（sync前）。
-        // sync で値が変わっても totalEarned は動いていないため recomputed 値は使わない。
-        lastSavedProvisionalYen: loadedLog.provisionalEarnedYen,
         historyLogs: pastResult.logs.take(14).toList(growable: false),
         isHistoryLoading: false,
         historyErrorMessage: null,
+        streakState: streakState,
       );
     } catch (e) {
       if (_uid != uid || loadGeneration != _stateGeneration) return;
@@ -223,8 +239,8 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     }
   }
 
-  /// 過去ログを最大20件フェッチし、未確定ログをWriteBatchで一括確定させる。
-  /// FieldPath.documentId の降順 orderBy は __name__ DESC の手動インデックスが必要。
+  /// 過去ログを最大20件フェッチし、未確定ログを [EconomyRepository.finalizeHealthLog]
+  /// で1日ずつ確定させる（Design A：ここで初めて残高へ加算される）。
   /// dateKey は常にドキュメントIDと同値で、自動の単一フィールドインデックスで足りる。
   Future<({List<HealthLog> logs, String? error})> _fetchPastLogs(
     CollectionReference<Map<String, dynamic>> col,
@@ -237,46 +253,148 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
           .limit(20)
           .get();
 
-      final batch = _db.batch();
-      var hasBatchWrites = false;
-
-      final logs = snaps.docs.map((doc) {
-        final log = HealthLog.fromFirestore(doc);
-        if (log.isFinalized) return log;
-        final finalized = log.copyWith(
-          isFinalized: true,
-          finalizedEarnedYen: log.provisionalEarnedYen,
-          finalizedAt: DateTime.now(),
-        );
-        batch.set(doc.reference, finalized.toFirestore(), SetOptions(merge: true));
-        hasBatchWrites = true;
-        return finalized;
-      }).toList(growable: false);
-
-      if (hasBatchWrites) await batch.commit();
+      final logs = <HealthLog>[];
+      for (final doc in snaps.docs) {
+        var log = HealthLog.fromFirestore(doc);
+        if (!log.isFinalized) {
+          await _economyRepo.finalizeHealthLog(dateKey: log.dateKey);
+          // 再フェッチせず、確定後の状態をローカルで反映する（finalizeHealthLogと同じ計算）。
+          final add = (log.provisionalEarnedYen - log.balanceAppliedYen) > 0
+              ? log.provisionalEarnedYen - log.balanceAppliedYen
+              : 0;
+          log = log.copyWith(
+            isFinalized: true,
+            finalizedEarnedYen: log.provisionalEarnedYen,
+            balanceAppliedYen: log.balanceAppliedYen + add,
+            finalizedAt: DateTime.now(),
+          );
+        }
+        logs.add(log);
+      }
       return (logs: logs, error: null);
     } catch (e) {
       return (logs: <HealthLog>[], error: '過去の健康ログ確定に失敗しました: $e');
     }
   }
 
-  Future<void> _finalizeSavedLogForDate({
-    required CollectionReference<Map<String, dynamic>> col,
-    required String dateKey,
-  }) async {
-    final doc = await col.doc(dateKey).get();
-    final log = doc.exists
-        ? HealthLog.fromFirestore(doc)
-        : HealthLog(dateKey: dateKey);
-    if (log.isFinalized) return;
-    final finalized = log.copyWith(
-      isFinalized: true,
-      finalizedEarnedYen: log.provisionalEarnedYen,
-      finalizedAt: DateTime.now(),
+  /// ストリーク（連続達成）を前進させる。finalize後（過去ログ確定後）に呼ぶ。
+  /// お金には一切触れない（非現金：称号＋フリーズのみ）。
+  ///
+  /// - 初回（`lastProcessedDateKey==null`）は遡及しない：ベースラインを昨日に設定して終了（§10）。
+  /// - 長期放置（from < 昨日-90日）も遡及しない：ベースラインを昨日に再設定する（M-1ガード）。
+  /// - それ以外は `from+1 .. 昨日` を1日ずつ列挙し、各日の healthLog（無ければ ratio=0）で
+  ///   [advanceOneDay] を適用する。ログ取得は `_fetchPastLogs`（表示用20件）に依存せず、
+  ///   dateKey の専用レンジクエリで対象範囲の全ログを取る（M-1対策）。
+  /// - 各日の outcome は対応する healthLog（無ければスタブ）へ書き込む。
+  Future<HealthStreakState> _advanceStreakIfNeeded(String uid) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final yesterdayKey = HealthRollover.dateKey(yesterday);
+    final todayKey = HealthRollover.dateKey(today);
+
+    var streak = await _streakRepo.load();
+
+    final lastProcessed = streak.lastProcessedDateKey;
+    if (lastProcessed == null) {
+      // 初回は遡及しない。ベースラインだけ設定して終了。
+      streak = streak.copyWith(lastProcessedDateKey: yesterdayKey);
+      await _streakRepo.save(streak);
+      return streak;
+    }
+
+    if (lastProcessed.compareTo(yesterdayKey) >= 0) {
+      // 既に前進済み（同日内の複数回呼び出し等）。冪等に何もしない。
+      return streak;
+    }
+
+    final fromDate = _parseDateKey(lastProcessed).add(const Duration(days: 1));
+    final guardDate = today.subtract(const Duration(days: 91));
+    if (fromDate.isBefore(guardDate)) {
+      // M-1：長期放置は遡及せずベースラインを再設定する（streakは据え置き）。
+      streak = streak.copyWith(lastProcessedDateKey: yesterdayKey);
+      await _streakRepo.save(streak);
+      return streak;
+    }
+
+    final fromKey = HealthRollover.dateKey(fromDate);
+    final col = _db.collection('users').doc(uid).collection('healthLogs');
+    final snaps = await col
+        .where('dateKey', isGreaterThanOrEqualTo: fromKey)
+        .where('dateKey', isLessThan: todayKey)
+        .get();
+    final logsByKey = {
+      for (final d in snaps.docs) d.id: HealthLog.fromFirestore(d),
+    };
+
+    final outcomes = <String, String>{};
+    var cursor = fromDate;
+    while (!cursor.isAfter(yesterday)) {
+      final dateKey = HealthRollover.dateKey(cursor);
+      final monthKey =
+          '${cursor.year.toString().padLeft(4, '0')}-${cursor.month.toString().padLeft(2, '0')}';
+      final log = logsByKey[dateKey];
+      final ratio = log?.achievedPercent ?? 0.0;
+      final isPerfect = ratio >= 1.0;
+      final result = advanceOneDay(
+        streak,
+        DayInput(
+          dateKey: dateKey,
+          ratio: ratio,
+          isPerfect: isPerfect,
+          monthKey: monthKey,
+        ),
+      );
+      streak = result.state;
+      outcomes[dateKey] = result.outcome;
+      cursor = cursor.add(const Duration(days: 1));
+    }
+
+    streak = streak.copyWith(lastProcessedDateKey: yesterdayKey);
+    await _streakRepo.save(streak);
+    await _writeDayOutcomes(uid, outcomes);
+    return streak;
+  }
+
+  /// 各日の outcome を対応する healthLog へ書き込む（無ければスタブ log を作成）。
+  /// merge のため既存フィールド（achievedPercent 等）は上書きしない。
+  Future<void> _writeDayOutcomes(String uid, Map<String, String> outcomes) async {
+    if (outcomes.isEmpty) return;
+    final col = _db.collection('users').doc(uid).collection('healthLogs');
+    final batch = _db.batch();
+    outcomes.forEach((dateKey, outcome) {
+      batch.set(col.doc(dateKey), {
+        'dateKey': dateKey,
+        'dayOutcome': outcome,
+      }, SetOptions(merge: true));
+    });
+    await batch.commit();
+  }
+
+  DateTime _parseDateKey(String key) {
+    final parts = key.split('-');
+    return DateTime(
+      int.parse(parts[0]),
+      int.parse(parts[1]),
+      int.parse(parts[2]),
     );
-    await col
-        .doc(dateKey)
-        .set(finalized.toFirestore(), SetOptions(merge: true));
+  }
+
+  /// カレンダー表示用：[monthAnchor] の年月に属する healthLogs を
+  /// dateKey → HealthLog のマップで返す。
+  Future<Map<String, HealthLog>> fetchMonthLogs(DateTime monthAnchor) async {
+    final uid = _uid;
+    if (uid == null) return {};
+    final start = DateTime(monthAnchor.year, monthAnchor.month, 1);
+    final end = DateTime(monthAnchor.year, monthAnchor.month + 1, 1);
+    final startKey = HealthRollover.dateKey(start);
+    final endKey = HealthRollover.dateKey(end);
+    final col = _db.collection('users').doc(uid).collection('healthLogs');
+    final snaps = await col
+        .where('dateKey', isGreaterThanOrEqualTo: startKey)
+        .where('dateKey', isLessThan: endKey)
+        .get();
+    return {for (final d in snaps.docs) d.id: HealthLog.fromFirestore(d)};
   }
 
   Future<void> refreshForToday() async {
@@ -289,16 +407,19 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       while (_activeSaves.isNotEmpty) {
         await Future.wait(_activeSaves.toList());
       }
-      // finalize の前に未確定の差分を totalEarned＋台帳へ確定させる。
-      // これを飛ばすと finalizedEarnedYen(=provisional) と totalEarned が食い違う。
+      // Design A：日中は残高に触れない。settlePendingLedgerは値の保存のみ（no-op寄り）。
       await settlePendingLedger();
       final todayKey = HealthRollover.dateKey(DateTime.now());
       final col = _db.collection('users').doc(uid).collection('healthLogs');
       final currentDateKey = state.log.dateKey;
       if (HealthRollover.isPastDateKey(currentDateKey, todayKey)) {
-        await _finalizeSavedLogForDate(col: col, dateKey: currentDateKey);
+        // 過去日となった当日ログを確定（ここで初めて残高へ加算される）。
+        await _economyRepo.finalizeHealthLog(dateKey: currentDateKey);
       }
       final pastResult = await _fetchPastLogs(col, todayKey);
+      // finalize後にストリークを前進させる（Step14）。
+      final streakState = await _advanceStreakIfNeeded(uid);
+      if (_uid != uid || loadGeneration != _stateGeneration) return;
       final doc = await col.doc(todayKey).get();
       if (_uid != uid || loadGeneration != _stateGeneration) return;
       final loadedLog = doc.exists
@@ -316,11 +437,10 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
         isLoading: false,
         isEditableNow: true,
         errorMessage: pastResult.error,
-        // baseline はロードした値（sync前）＝totalEarned 反映済みの額。
-        lastSavedProvisionalYen: loadedLog.provisionalEarnedYen,
         historyLogs: pastResult.logs.take(14).toList(growable: false),
         isHistoryLoading: false,
         historyErrorMessage: null,
+        streakState: streakState,
       );
     } catch (e) {
       if (_uid == uid && loadGeneration == _stateGeneration) {
@@ -386,8 +506,9 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
   }
 
   /// 退出（戻る／バックグラウンド／日付切替／破棄）時に呼ぶ。
-  /// この滞在中に生じた provisional の正味差分を totalEarned に反映し、
-  /// 冒険の記録（adventure_entries）へ**1件だけ**書き込む。差分が無ければ何もしない。
+  /// Design A：日中は残高・台帳に一切触れない。previewValue（ドラッグ中プレビュー）が
+  /// 未保存のまま画面が破棄された場合に備え、現在の値だけを deltaYen:0 で保存する
+  /// （commitValueで既に保存済みなら実質的に冪等な上書き）。
   Future<void> settlePendingLedger() async {
     final uid = _uid;
     if (uid == null) return;
@@ -399,19 +520,15 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       return;
     }
     if (current.log.isFinalized) return;
-    final delta =
-        current.log.provisionalEarnedYen - current.lastSavedProvisionalYen;
-    if (delta == 0) return;
     final saveDateKey = current.log.dateKey;
     final saveGeneration = _stateGeneration;
     final logData = current.log.toFirestore();
-    final settledProvisional = current.log.provisionalEarnedYen;
     try {
       await _trackActiveSave(
         _economyRepo.saveHealthLogAndAdjust(
           dateKey: saveDateKey,
           healthLogData: logData,
-          deltaYen: delta,
+          deltaYen: 0,
         ),
       );
     } catch (e) {
@@ -421,13 +538,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
           state = state.copyWith(errorMessage: '保存に失敗しました: $e');
         }
       } catch (_) {}
-      return;
     }
-    try {
-      if (_shouldApplySaveResult(uid, saveDateKey, saveGeneration)) {
-        state = state.copyWith(lastSavedProvisionalYen: settledProvisional);
-      }
-    } catch (_) {}
   }
 
   // ── helpers ───────────────────────────────────────────────
@@ -522,10 +633,17 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       s.meditationGoalMinutes,
       2,
     );
-    final totalScore = mealScore + sleepScore + exerciseScore + meditationScore;
-    final provisional = HealthScoring.earningsForPoints(
+    // 瞑想OFF時は合計・達成率・満点から瞑想を除外する（meditationScore自体は保存する）。
+    final totalScore =
+        mealScore + sleepScore + exerciseScore +
+        (s.meditationEnabled ? meditationScore : 0);
+    final achievedPercent = HealthScoring.achievementRatio(
       totalScore,
-      s.hourlyRate,
+      s.maxActiveHealthScore,
+    );
+    final provisional = HealthScoring.earningsForRatio(
+      ratio: achievedPercent,
+      dailyCapYen: s.healthDailyCapYen,
     );
 
     return log.copyWith(
@@ -536,6 +654,8 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       totalScore: totalScore,
       provisionalEarnedYen: provisional,
       updatedAt: DateTime.now(),
+      achievedPercent: achievedPercent,
+      meditationEnabledSnapshot: s.meditationEnabled,
     );
   }
 }

@@ -21,6 +21,7 @@ import 'package:task_manager/features/roulette/providers/roulette_providers.dart
 import 'package:task_manager/features/roulette/view/roulette_settings_screen.dart';
 import 'package:task_manager/features/timer/model/task_sheet_result.dart';
 import 'package:task_manager/features/timer/view/timer_lock_launcher.dart';
+import 'package:task_manager/features/timer/viewmodel/timer_actions.dart';
 import 'package:task_manager/features/todo/providers/todo_providers.dart';
 import 'package:task_manager/features/todo/widgets/todo_drop_bar.dart';
 import 'package:task_manager/features/user_settings/view/settings_screen.dart';
@@ -232,7 +233,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final settings = ref.read(userSettingsProvider).settings;
     final predictedMinutes = _predictedMinutesFor(task);
     final expectedReward = _calcReward(
-      hourlyRate: settings.hourlyRate,
+      hourlyRate: settings.taskHourlyRate,
       minutes: predictedMinutes,
       fallbackYen: task.rewardYen,
     );
@@ -246,7 +247,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       calcReward: (minutes) {
         final s = ref.read(userSettingsProvider).settings;
         return _calcReward(
-          hourlyRate: s.hourlyRate,
+          hourlyRate: s.taskHourlyRate,
           minutes: minutes,
           fallbackYen: task.rewardYen,
         );
@@ -325,25 +326,34 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         final latestSettings = ref.read(userSettingsProvider).settings;
         final minutesForReward = actualMinutes ?? predictedMinutes;
         final reward = _calcReward(
-          hourlyRate: latestSettings.hourlyRate,
+          hourlyRate: latestSettings.taskHourlyRate,
           minutes: minutesForReward,
           fallbackYen: task.rewardYen,
         );
         try {
+          final placement =
+              await ref.read(timerActionsProvider).placeForCompletion(
+                    taskId: taskId,
+                    isTodo: task.isTodo,
+                    isAllDay: task.isAllDay,
+                    title: task.title,
+                    minutesForPlacement: minutesForReward,
+                    colorId: task.colorId,
+                  );
           final result = await ref
               .read(economyFastCompleteServiceProvider)
               .completeTaskFast(
-                taskId: taskId,
+                taskId: placement.taskId,
                 title: task.title,
                 rewardYen: reward,
-                predictedMinutes: predictedMinutes,
+                predictedMinutes: placement.predictedOverride ?? predictedMinutes,
                 actualMinutes: actualMinutes,
               );
           if (!result.applied) return;
           RouletteOutcome? outcome;
           try {
             outcome = await ref.read(rouletteServiceProvider).spin(
-                  completionId: taskId,
+                  completionId: placement.taskId,
                   settings: latestSettings,
                 );
           } catch (_) {
@@ -360,7 +370,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 outcome: outcome,
                 cumulativeTaskCountBefore: result.cumulativeTaskCountBefore,
                 cumulativeTaskCountAfter: result.cumulativeTaskCountAfter,
-                predictedMinutes: predictedMinutes,
+                predictedMinutes: placement.predictedOverride ?? predictedMinutes,
                 actualMinutes: actualMinutes,
               ),
             ),
@@ -1465,6 +1475,7 @@ class _HealthPanelConnector extends ConsumerWidget {
       sleep: HealthCategory.sleep.level(log, settings),
       exercise: HealthCategory.exercise.level(log, settings),
       meditation: HealthCategory.meditation.level(log, settings),
+      meditationEnabled: settings.meditationEnabled,
     );
     return HealthPanel(
       scores: scores,

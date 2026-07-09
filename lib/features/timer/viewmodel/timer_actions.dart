@@ -71,8 +71,51 @@ class TimerActions {
     }
   }
 
+  /// 完了時のカレンダー配置を実績ベースに置き直し、実際に完了させる taskId と
+  /// 精度除外用の predicted 上書き値を返す。
+  /// 日またぎは完了日0:00に丸める（表示のみ、分数は保持）。
+  /// minutesForPlacement は呼び出し側で actualMinutes ?? predictedMinutes を渡す（>0前提だが
+  /// null 安全のためこの形。UI層で実績必須を担保済み）。
+  Future<({String taskId, int? predictedOverride})> placeForCompletion({
+    required String taskId,
+    required bool isTodo,
+    required bool isAllDay,
+    required String title,
+    required int minutesForPlacement,
+    String? colorId,
+  }) async {
+    final now = DateTime.now();
+    final dayStart = DateTime(now.year, now.month, now.day);
+    var start = now.subtract(Duration(minutes: minutesForPlacement));
+    if (start.isBefore(dayStart)) start = dayStart; // 日またぎ丸め（仕様5）
+    final calRepo = _ref.read(calendarTaskSyncRepositoryProvider);
+    if (isAllDay) {
+      // 原本の終日予定は無変更・未完了のまま。新ブロックだけ生成して完了させる。
+      final newId = await calRepo.createTaskFull(
+        title: title,
+        start: start,
+        end: now,
+        colorId: colorId,
+      );
+      return (taskId: newId, predictedOverride: 0); // predicted=0 で精度統計から除外
+    }
+    if (isTodo) {
+      // 現状どおり todoRepository を使う（リポジトリ切替なし＝既存テスト温存）。
+      // convertToCalendarEvent 側で repositioned:true を立てる。
+      await _ref.read(todoRepositoryProvider).convertToCalendarEvent(
+            taskId: taskId,
+            start: start,
+            end: now,
+          );
+      return (taskId: taskId, predictedOverride: null);
+    }
+    // 時間指定タスク：その場で start/end 上書き＋repositioned:true。
+    await calRepo.moveTaskById(taskId: taskId, newStart: start, newEnd: now);
+    return (taskId: taskId, predictedOverride: null);
+  }
+
   /// タスクを完了させる（報酬付与 → ルーレット抽選）。
-  /// [task.isTodo] ならカレンダーイベントへの変換を先に行う。
+  /// カレンダー配置は [placeForCompletion] により実績ベースへ置き直してから完了させる。
   /// 失敗時（報酬付与が適用されなかった場合を含む）は null を返す。
   Future<CompletionOutcome?> complete({
     required CalendarTask task,
@@ -82,30 +125,28 @@ class TimerActions {
     final settings = _ref.read(userSettingsProvider).settings;
     final minutesForReward = actualMinutes ?? predictedMinutes;
     final rewardYen = calcReward(
-      hourlyRate: settings.hourlyRate,
+      hourlyRate: settings.taskHourlyRate,
       minutes: minutesForReward,
       fallbackYen: task.rewardYen,
     );
 
     try {
-      if (task.isTodo) {
-        final now = DateTime.now();
-        final durationMinutes = actualMinutes ?? predictedMinutes;
-        final start = now.subtract(Duration(minutes: durationMinutes));
-        await _ref.read(todoRepositoryProvider).convertToCalendarEvent(
-              taskId: task.id,
-              start: start,
-              end: now,
-            );
-      }
+      final placement = await placeForCompletion(
+        taskId: task.id,
+        isTodo: task.isTodo,
+        isAllDay: task.isAllDay,
+        title: task.title,
+        minutesForPlacement: actualMinutes ?? predictedMinutes,
+        colorId: task.colorId,
+      );
 
       final result = await _ref
           .read(economyFastCompleteServiceProvider)
           .completeTaskFast(
-            taskId: task.id,
+            taskId: placement.taskId,
             title: task.title,
             rewardYen: rewardYen,
-            predictedMinutes: predictedMinutes,
+            predictedMinutes: placement.predictedOverride ?? predictedMinutes,
             actualMinutes: actualMinutes,
           );
       if (!result.applied) return null;
@@ -113,7 +154,7 @@ class TimerActions {
       RouletteOutcome? outcome;
       try {
         outcome = await _ref.read(rouletteServiceProvider).spin(
-              completionId: task.id,
+              completionId: placement.taskId,
               settings: settings,
             );
       } catch (_) {

@@ -565,19 +565,17 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     final inProgressWorkSeconds = schedule.inProgressSessionSeconds(effective);
     final addedMinutes = newCreditedMinutes + (inProgressWorkSeconds / 60).round();
     final total = run.baseActualMinutes + addedMinutes;
-    final actualMinutes = total > 0 ? total : null;
+    if (total <= 0) {
+      showAppSnackBar(context, const SnackBar(content: Text('実績時間を入力してください')));
+      return;
+    }
+    final actualMinutes = total;
 
     final bool confirmed;
     if (task.isTodo) {
       confirmed = await _confirmComplete(
             title: '完了しますか？',
-            content: actualMinutes == null ? '時間ログなしで完了します。' : '完了として記録します。',
-          ) ==
-          true;
-    } else if (actualMinutes == null) {
-      confirmed = await _confirmComplete(
-            title: '時間ログなしで完了しますか？',
-            content: '時間予測ログが残りませんがよろしいですか？',
+            content: '完了として記録します。',
           ) ==
           true;
     } else {
@@ -631,9 +629,18 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
   /// レビューC-2：早期return（addedMinutes==0）は「タスク保存のスキップ」に
   /// 限定し、day doc への書き戻し（carryWork/pendingBreak）は必ず行う
   /// （carry持ちで開始して即✕なら carriedInSeconds を失わずに書き戻す）。
-  Future<void> _onTapClose(ActiveTimer timer) async {
+  Future<void> _onTapClose() async {
     // 動作中は閉じられないガードは flush 前に行う（flush は閉じ操作ではない）。
-    final runBeforeFlush = timer.pomodoro!;
+    // _lastTimer は常に pomodoro を保持する（ref.listen/build がいずれも
+    // pomodoro == null の値では更新しないため）。ただし相手端末が同じ doc を
+    // 通常タイマー等へ差し替えた直後の競合に備え、念のため null 安全に扱う。
+    final current0 = _lastTimer;
+    final runBeforeFlush = current0.pomodoro;
+    if (runBeforeFlush == null) {
+      // 相手端末が doc を通常タイマー等へ差し替えた競合。閉じるだけにする。
+      if (mounted) await Navigator.of(context).maybePop();
+      return;
+    }
     if (runBeforeFlush.isRunning) {
       showAnchoredFlash(
         context,
@@ -646,7 +653,11 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     await _flushPendingEdits();
     if (!mounted) return;
     final current = _lastTimer;
-    final run = current.pomodoro!;
+    final run = current.pomodoro;
+    if (run == null) {
+      if (mounted) await Navigator.of(context).maybePop();
+      return;
+    }
     final schedule = _scheduleFor(current);
     final effective = schedule.currentPhase(DateTime.now());
     final credit = schedule.creditForRange(run.phaseIndex, effective.phaseIndex);
@@ -777,8 +788,7 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
-        final timer = asyncTimer.asData?.value ?? _lastTimer;
-        await _onTapClose(timer);
+        await _onTapClose();
       },
       child: Scaffold(
         body: MessageGuard(
@@ -845,7 +855,7 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
                         children: [
                           IconButton(
                             key: _closeButtonKey,
-                            onPressed: () => _onTapClose(timer),
+                            onPressed: () => _onTapClose(),
                             icon: const Icon(Icons.close),
                             tooltip: '閉じる',
                           ),

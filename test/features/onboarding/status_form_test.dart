@@ -32,7 +32,9 @@ void main() {
     expect(find.text('名前を入力してください'), findsOneWidget);
   });
 
-  testWidgets('予算30000・日数20・時間60を入力すると時間単価1,500円/時間が表示される', (tester) async {
+  testWidgets('予算30000・日数20・時間60を入力するとタスク時間単価1,050円/時間（70%枠）が表示される', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       _host(
         StatusForm(
@@ -47,7 +49,8 @@ void main() {
     await tester.enterText(find.widgetWithText(TextFormField, '③ 1日の想定クエスト時間'), '60');
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('1,500'), findsOneWidget);
+    // hourlyRate=1500 × kTaskBudgetRatio(0.70) = 1050（タスクは30%が健康枠に回る）。
+    expect(find.textContaining('1,050'), findsOneWidget);
   });
 
   testWidgets('正しい入力で onSubmit が正しい値で呼ばれる', (tester) async {

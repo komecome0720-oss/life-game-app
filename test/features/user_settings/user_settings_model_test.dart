@@ -81,4 +81,66 @@ void main() {
       expect(settings.onboardingCompleted, isTrue);
     });
   });
+
+  group('UserSettings meditationEnabled', () {
+    test('default で true を持つ', () {
+      const settings = UserSettings();
+      expect(settings.meditationEnabled, isTrue);
+    });
+
+    test('copyWith で false に更新できる', () {
+      const settings = UserSettings();
+      final updated = settings.copyWith(meditationEnabled: false);
+      expect(updated.meditationEnabled, isFalse);
+      expect(settings.meditationEnabled, isTrue);
+    });
+
+    test('toFirestore に meditationEnabled を含める（round-trip）', () {
+      const settings = UserSettings(meditationEnabled: false);
+      final data = settings.toFirestore();
+      expect(data['meditationEnabled'], isFalse);
+    });
+
+    test('fromFirestore: キー無しなら既定 true', () async {
+      final firestore = FakeFirebaseFirestore();
+      final ref = firestore.collection('users').doc('u1');
+      await ref.set({'displayName': 'たろう'});
+      final doc = await ref.get();
+      final settings = UserSettings.fromFirestore(doc);
+      expect(settings.meditationEnabled, isTrue);
+    });
+
+    test('fromFirestore: false が保存されていれば false', () async {
+      final firestore = FakeFirebaseFirestore();
+      final ref = firestore.collection('users').doc('u1');
+      await ref.set({'meditationEnabled': false});
+      final doc = await ref.get();
+      final settings = UserSettings.fromFirestore(doc);
+      expect(settings.meditationEnabled, isFalse);
+    });
+  });
+
+  group('UserSettings taskHourlyRate / healthDailyCapYen / maxActiveHealthScore', () {
+    test('taskHourlyRate は hourlyRate の70%', () {
+      const settings = UserSettings(
+        monthlyBudget: 30000,
+        monthlyQuestDays: 20,
+        dailyQuestMinutes: 60,
+      );
+      expect(settings.hourlyRate, 1500.0);
+      expect(settings.taskHourlyRate, 1050.0);
+    });
+
+    test('healthDailyCapYen は monthlyBudget×30%÷30日', () {
+      const settings = UserSettings(monthlyBudget: 30000);
+      expect(settings.healthDailyCapYen, 300);
+    });
+
+    test('maxActiveHealthScore は瞑想ON=100 / OFF=80', () {
+      const on = UserSettings(meditationEnabled: true);
+      const off = UserSettings(meditationEnabled: false);
+      expect(on.maxActiveHealthScore, 100);
+      expect(off.maxActiveHealthScore, 80);
+    });
+  });
 }

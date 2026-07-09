@@ -193,6 +193,30 @@ class UserSettingsViewModel extends Notifier<UserSettingsState> {
     }
   }
 
+  /// 瞑想トグルのみを部分的に永続化する（永続設定・日替り切替不可）。
+  /// 全体 [save] と違い他フィールドを書き戻さないため、フォーム入力中でも安全に呼べる。
+  Future<bool> saveMeditationEnabled(bool enabled) async {
+    final uid = _uid;
+    if (uid == null) return false;
+    state = state.copyWith(isSaving: true);
+    try {
+      await _db.collection('users').doc(uid).set(
+        {
+          'meditationEnabled': enabled,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      ).timeout(const Duration(seconds: 15));
+      final updated = state.settings.copyWith(meditationEnabled: enabled);
+      _cachedSettings = updated;
+      state = state.copyWith(settings: updated, isSaving: false);
+      return true;
+    } catch (e) {
+      state = state.copyWith(isSaving: false, errorMessage: '保存に失敗しました: $e');
+      return false;
+    }
+  }
+
   /// オンボーディング完了フラグのみを部分的に永続化する。
   /// 全体 [save] と違い他フィールドを書き戻さないため、ウィザードや設定画面の保存で
   /// このフラグを stale 値に巻き戻さない。

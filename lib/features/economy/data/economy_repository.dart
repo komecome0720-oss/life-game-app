@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:task_manager/features/adventure_log/model/adventure_log_entry.dart';
+import 'package:task_manager/features/health/model/health_log.dart';
 
 class BalanceLedgerResult {
   const BalanceLedgerResult({
@@ -71,6 +72,16 @@ class EconomyRepository {
     final local = date.toLocal();
     String pad2(int v) => v.toString().padLeft(2, '0');
     return '${local.year.toString().padLeft(4, '0')}-${pad2(local.month)}-${pad2(local.day)}';
+  }
+
+  /// 'yyyy-MM-dd' → その日のローカル正午 DateTime。
+  /// 日次収支グラフの帰属日など、範囲の境界に依存しない安全な代表時刻として使う。
+  DateTime _dateFromKey(String dateKey) {
+    final parts = dateKey.split('-');
+    final year = int.parse(parts[0]);
+    final month = int.parse(parts[1]);
+    final day = int.parse(parts[2]);
+    return DateTime(year, month, day, 12);
   }
 
   /// wish系タイプは何もしない。日次集計コレクション `daily_earnings` へ
@@ -532,5 +543,89 @@ class EconomyRepository {
         balanceAfterYen: after,
       );
     });
+  }
+
+  /// 指定日の健康ログを確定させる（Design A：深夜/次回起動確定）。
+  /// 冪等（`isFinalized` なら即return）。既に残高へ反映済みの額（[HealthLog.balanceAppliedYen]）
+  /// を差し引き、超過分だけ `totalEarned` へ加算する（移行時の二重加算防止＝C-1）。
+  /// ログが存在しない日は未達（0円）として何もしない。
+  Future<void> finalizeHealthLog({required String dateKey}) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) throw Exception('Not authenticated');
+    await _db.runTransaction((tx) async {
+      final userRef = _userRef(uid);
+      final logRef = userRef.collection('healthLogs').doc(dateKey);
+      // --- 全read先に ---
+      final logDoc = await tx.get(logRef);
+      if (!logDoc.exists) return; // ログ無し日は何もしない（未達扱い＝0）
+      final log = HealthLog.fromFirestore(logDoc);
+      if (log.isFinalized) return; // 冪等：二重確定・二重加算を防ぐ
+      final userDoc = await tx.get(userRef);
+      final before = _balanceFrom(userDoc);
+      final earned = log.provisionalEarnedYen; // 新式で既にゲート済み(0 or round(cap×p))
+      // 既に残高へ反映済みの額(balanceAppliedYen)を差し引き、超過分だけ加算。
+      final delta = earned - log.balanceAppliedYen;
+      final add = delta > 0 ? delta : 0;
+      // --- write ---
+      tx.set(logRef, {
+        'isFinalized': true,
+        'finalizedEarnedYen': earned,
+        'balanceAppliedYen': log.balanceAppliedYen + add,
+        'finalizedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      if (add > 0) {
+        final after = before + add;
+        tx.set(userRef, {
+          'totalEarned': after,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+        tx.set(
+          _entriesCol(uid).doc(),
+          _entryData(
+            type: AdventureEntryType.healthAdjusted,
+            title: '健康スコア',
+            deltaYen: add,
+            balanceBeforeYen: before,
+            balanceAfterYen: after,
+            sourceId: dateKey,
+            occurredAt: _dateFromKey(dateKey), // 帰属日をログの日付に
+          ),
+        );
+        _applyDailyEarning(
+          tx,
+          uid,
+          AdventureEntryType.healthAdjusted,
+          add,
+          _dateFromKey(dateKey),
+        );
+      }
+    });
+  }
+
+  /// 旧モデル（日中に残高反映）→新モデル（Design A：深夜確定）移行の一回限りスイープ。
+  /// `healthMigratedV2` フラグで冪等。未確定ログに「旧モデルで既に反映済みの額
+  /// （＝旧 provisional）」を `balanceAppliedYen` として封印し、[finalizeHealthLog] の
+  /// 差分加算で二重加算されないようにする（C-1）。
+  Future<void> migrateHealthBalanceV2() async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) return;
+    final userRef = _userRef(uid);
+    final userDoc = await userRef.get();
+    if ((userDoc.data()?['healthMigratedV2'] as bool?) ?? false) return; // 冪等
+    final snaps = await userRef
+        .collection('healthLogs')
+        .where('isFinalized', isEqualTo: false)
+        .get();
+    final batch = _db.batch();
+    for (final d in snaps.docs) {
+      final log = HealthLog.fromFirestore(d);
+      batch.set(d.reference, {
+        'balanceAppliedYen': log.provisionalEarnedYen,
+      }, SetOptions(merge: true));
+    }
+    batch.set(userRef, {
+      'healthMigratedV2': true,
+    }, SetOptions(merge: true));
+    await batch.commit();
   }
 }

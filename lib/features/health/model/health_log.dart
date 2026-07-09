@@ -18,6 +18,10 @@ class HealthLog {
     this.isFinalized = false,
     this.updatedAt,
     this.finalizedAt,
+    this.achievedPercent = 0.0,
+    this.meditationEnabledSnapshot = true,
+    this.dayOutcome,
+    this.balanceAppliedYen = 0,
   });
 
   final String dateKey;
@@ -42,6 +46,18 @@ class HealthLog {
   final DateTime? updatedAt;
   final DateTime? finalizedAt;
 
+  /// 達成率（0.0〜1.0）。_recompute で算出して保存。カレンダー/finalizeの安定描画用。
+  final double achievedPercent;
+
+  /// 保存時点の瞑想トグル設定のスナップショット。
+  final bool meditationEnabledSnapshot;
+
+  /// ストリーク前進が書き込む結果種別。'qualified' | 'perfect' | 'frozen' | 'broken' | null。
+  final String? dayOutcome;
+
+  /// このログが既に totalEarned へ反映済みの額（移行時の二重加算防止に使用）。
+  final int balanceAppliedYen;
+
   HealthLog copyWith({
     String? dateKey,
     double? mealGrams,
@@ -58,6 +74,10 @@ class HealthLog {
     bool? isFinalized,
     DateTime? updatedAt,
     DateTime? finalizedAt,
+    double? achievedPercent,
+    bool? meditationEnabledSnapshot,
+    String? dayOutcome,
+    int? balanceAppliedYen,
   }) {
     return HealthLog(
       dateKey: dateKey ?? this.dateKey,
@@ -75,6 +95,11 @@ class HealthLog {
       isFinalized: isFinalized ?? this.isFinalized,
       updatedAt: updatedAt ?? this.updatedAt,
       finalizedAt: finalizedAt ?? this.finalizedAt,
+      achievedPercent: achievedPercent ?? this.achievedPercent,
+      meditationEnabledSnapshot:
+          meditationEnabledSnapshot ?? this.meditationEnabledSnapshot,
+      dayOutcome: dayOutcome ?? this.dayOutcome,
+      balanceAppliedYen: balanceAppliedYen ?? this.balanceAppliedYen,
     );
   }
 
@@ -99,6 +124,11 @@ class HealthLog {
       isFinalized: data['isFinalized'] as bool? ?? false,
       updatedAt: ts(data['updatedAt']),
       finalizedAt: ts(data['finalizedAt']),
+      achievedPercent: decimal(data['achievedPercent']),
+      meditationEnabledSnapshot:
+          data['meditationEnabledSnapshot'] as bool? ?? true,
+      dayOutcome: data['dayOutcome'] as String?,
+      balanceAppliedYen: (data['balanceAppliedYen'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -119,6 +149,10 @@ class HealthLog {
       'isFinalized': isFinalized,
       'updatedAt': FieldValue.serverTimestamp(),
       if (finalizedAt != null) 'finalizedAt': Timestamp.fromDate(finalizedAt!),
+      'achievedPercent': achievedPercent,
+      'meditationEnabledSnapshot': meditationEnabledSnapshot,
+      if (dayOutcome != null) 'dayOutcome': dayOutcome,
+      'balanceAppliedYen': balanceAppliedYen,
     };
   }
 }

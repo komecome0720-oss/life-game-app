@@ -46,7 +46,13 @@ class PomodoroSchedule {
 
   final PomodoroRun run;
 
-  int get _cycleLength => run.setCount * 2;
+  /// 壊れたデータ（相手端末の旧版・不正データ）で `setCount <= 0` が来ても
+  /// ゼロ除算（`phaseIndex % _cycleLength`）で落ちないよう、1セット扱いに丸める。
+  /// 正常系（setCount >= 1）の挙動は変えない。
+  int get _cycleLength {
+    final sets = run.setCount <= 0 ? 1 : run.setCount;
+    return sets * 2;
+  }
 
   /// 絶対フェーズ番号 [phaseIndex] の種別を返す。
   PomodoroPhaseType phaseTypeAt(int phaseIndex) {
@@ -71,17 +77,22 @@ class PomodoroSchedule {
   /// それを優先する（やりかけフェーズ再開・未消化休憩の残秒引き継ぎ用）。
   int phaseLengthSecondsAt(int phaseIndex) {
     final override = run.startPhaseLengthSecondsOverride;
-    if (phaseIndex == run.startPhaseIndex && override != null) {
-      return override;
-    }
-    switch (phaseTypeAt(phaseIndex)) {
-      case PomodoroPhaseType.work:
-        return run.workMinutes * 60;
-      case PomodoroPhaseType.shortBreak:
-        return run.shortBreakMinutes * 60;
-      case PomodoroPhaseType.longBreak:
-        return run.longBreakMinutes * 60;
-    }
+    final len = () {
+      if (phaseIndex == run.startPhaseIndex && override != null) {
+        return override;
+      }
+      switch (phaseTypeAt(phaseIndex)) {
+        case PomodoroPhaseType.work:
+          return run.workMinutes * 60;
+        case PomodoroPhaseType.shortBreak:
+          return run.shortBreakMinutes * 60;
+        case PomodoroPhaseType.longBreak:
+          return run.longBreakMinutes * 60;
+      }
+    }();
+    // 壊れたデータ（0分設定・override 0 等）で `while (elapsed >= length)` が
+    // 無限ループしないよう、最低1秒に丸める。正常系（分×60、必ず>=60）は不変。
+    return len <= 0 ? 1 : len;
   }
 
   /// [phaseStartedAtUtc]==null（一時停止）なら現フェーズ内で凍結した状態を返す。

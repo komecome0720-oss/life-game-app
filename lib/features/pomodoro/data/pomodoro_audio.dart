@@ -70,13 +70,20 @@ class JustAudioPomodoroAudio implements PomodoroAudio {
   }) async {
     await _ensureSessionConfigured();
     _pausedByUser = false;
-    if (chime != null) {
-      await _sfxPlayer.setAsset(chime.assetPath);
+    if (chime != null && chime.assetPath != null) {
+      await _sfxPlayer.setAsset(chime.assetPath!);
       unawaited(_sfxPlayer.play());
     }
-    if (_currentBgmAsset != bgm.assetPath) {
-      _currentBgmAsset = bgm.assetPath;
-      await _bgmPlayer.setAsset(bgm.assetPath);
+    final bgmAssetPath = bgm.assetPath;
+    if (bgmAssetPath == null) {
+      // 「なし」選択時：直前のBGMが鳴り続けないよう停止し、ロードもスキップする。
+      _currentBgmAsset = null;
+      await _bgmPlayer.stop();
+      return;
+    }
+    if (_currentBgmAsset != bgmAssetPath) {
+      _currentBgmAsset = bgmAssetPath;
+      await _bgmPlayer.setAsset(bgmAssetPath);
       await _bgmPlayer.setLoopMode(LoopMode.one);
     }
     // just_audio の play() はループ再生では永遠に完了しないため await しない
@@ -92,6 +99,7 @@ class JustAudioPomodoroAudio implements PomodoroAudio {
 
   @override
   Future<void> resume() async {
+    if (_currentBgmAsset == null) return;
     await _ensureSessionConfigured();
     _pausedByUser = false;
     unawaited(_bgmPlayer.play());

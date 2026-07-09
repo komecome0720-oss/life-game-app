@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:task_manager/features/economy/model/budget_split.dart';
 import 'package:task_manager/features/user_settings/model/user_settings.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 import 'package:task_manager/features/user_settings/widgets/hourly_rate_display.dart';
@@ -29,13 +30,14 @@ class _UserSettingsScreenState extends ConsumerState<UserSettingsScreen> {
   int? _pendingPresetIndex;
   bool _initialized = false;
 
+  /// タスク時間単価（自動計算）。月予算の70%枠を反映した表示値。
   double get _localHourlyRate {
     final budget = int.tryParse(_budgetCtrl.text) ?? 0;
     final days = int.tryParse(_daysCtrl.text) ?? 0;
     final mins = int.tryParse(_minutesCtrl.text) ?? 0;
     final totalMins = days * mins;
     if (totalMins <= 0) return 0;
-    return budget / (totalMins / 60);
+    return budget / (totalMins / 60) * kTaskBudgetRatio;
   }
 
   @override

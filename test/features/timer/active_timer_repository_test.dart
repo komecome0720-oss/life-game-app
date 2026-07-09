@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:task_manager/features/timer/data/active_timer_repository.dart';
+import 'package:task_manager/features/timer/model/active_timer.dart';
 
 class _MockFirebaseAuth extends Mock implements FirebaseAuth {}
 
@@ -210,6 +211,63 @@ void main() {
       final value = await repo.watch().first;
       expect(value, isNotNull);
       expect(value!.taskId, 'task-1');
+    });
+  });
+
+  group('doc不在時の防御（2台同時利用で相手端末が削除した後の競合）', () {
+    // 前提：fake_cloud_firestore 4.1.0+1 では不在 doc への update() が
+    // FirebaseException(code: 'not-found') を返す。この分岐に依存しているため、
+    // 将来 fake_cloud_firestore を更新して挙動が変わった場合はこのテストが
+    // 検知できるようにコメントで明記しておく。
+    ActiveTimer buildDummyTimer() => ActiveTimer(
+          taskId: 'task-1',
+          isTodo: false,
+          taskTitle: 'サンプル',
+          predictedMinutes: 60,
+          startedAtUtc: null,
+          accumulatedSeconds: 0,
+          updatedAtUtc: clock,
+        );
+
+    test('pause: doc削除済みでも例外を投げない', () async {
+      final started = buildDummyTimer().copyWith(startedAtUtc: clock);
+      await expectLater(repo.pause(started), completes);
+    });
+
+    test('resume: doc削除済みでも例外を投げない', () async {
+      await expectLater(repo.resume(buildDummyTimer()), completes);
+    });
+
+    test('resetToZero: doc削除済みでも例外を投げない', () async {
+      await expectLater(repo.resetToZero(), completes);
+    });
+
+    test('pausePomodoro: doc削除済みでも例外を投げない', () async {
+      await expectLater(repo.pausePomodoro(buildDummyTimer(), 30), completes);
+    });
+
+    test('resumePomodoro: doc削除済みでも例外を投げない', () async {
+      await expectLater(repo.resumePomodoro(), completes);
+    });
+
+    test('updateTaskTitle: doc削除済みでも例外を投げない', () async {
+      await expectLater(repo.updateTaskTitle('別タイトル'), completes);
+    });
+
+    test('updatePredictedMinutes: doc削除済みでも例外を投げない', () async {
+      await expectLater(repo.updatePredictedMinutes(30), completes);
+    });
+
+    test('doc が存在する場合は従来通り更新される（_safeUpdateの正常系）', () async {
+      await repo.start(
+        taskId: 'task-1',
+        isTodo: false,
+        taskTitle: 'サンプル',
+        predictedMinutes: 60,
+      );
+      await repo.updateTaskTitle('更新後タイトル');
+      final data = await rawDoc();
+      expect(data!['taskTitle'], '更新後タイトル');
     });
   });
 }

@@ -18,23 +18,38 @@ void main() {
       expect(HealthScoring.score(450, 300, 3), 30);
     });
 
-    // earningsForPoints は (hourlyRate * 3 * points / 100).round() で四捨五入する仕様。
-    // 過去の残高と不整合が出るため挙動を変えてはならない。
-    test('earningsForPoints rounds half-up at 0.5 boundary', () {
-      // 端数なし
-      expect(HealthScoring.earningsForPoints(100, 1000), 3000); // 3000.0
-      expect(HealthScoring.earningsForPoints(50, 1000), 1500); // 1500.0
+    test('maxActiveScore は瞑想ON=100 / OFF=80', () {
+      expect(HealthScoring.maxActiveScore(meditationEnabled: true), 100);
+      expect(HealthScoring.maxActiveScore(meditationEnabled: false), 80);
+    });
 
-      // .5 境界: 四捨五入で切り上げ
-      expect(HealthScoring.earningsForPoints(1, 50), 2); // 50*3*1/100=1.5 → 2
-      expect(HealthScoring.earningsForPoints(3, 50), 5); // 50*3*3/100=4.5 → 5
+    test('achievementRatio は totalScore/maxActiveScore を0〜1でクランプ', () {
+      expect(HealthScoring.achievementRatio(0, 100), 0.0);
+      expect(HealthScoring.achievementRatio(40, 100), 0.4);
+      expect(HealthScoring.achievementRatio(100, 100), 1.0);
+      expect(HealthScoring.achievementRatio(120, 100), 1.0); // クランプ
+      expect(HealthScoring.achievementRatio(80, 80), 1.0);
+      expect(HealthScoring.achievementRatio(0, 0), 0.0); // maxActiveScore<=0
+    });
 
-      // .5 未満: 切り捨て
-      expect(HealthScoring.earningsForPoints(1, 49), 1); // 49*3/100=1.47 → 1
+    // 線形・40%ゲート。p<0.40 は没収(0)、p>=0.40 は round(cap * p)。
+    test('earningsForRatio は40%ゲートで線形按分・四捨五入', () {
+      // p<0.40 は没収
+      expect(HealthScoring.earningsForRatio(ratio: 0.39, dailyCapYen: 300), 0);
+      expect(HealthScoring.earningsForRatio(ratio: 0.0, dailyCapYen: 300), 0);
 
-      // エッジ: points=0 や hourlyRate=0 は 0
-      expect(HealthScoring.earningsForPoints(0, 1000), 0);
-      expect(HealthScoring.earningsForPoints(50, 0), 0);
+      // p>=0.40 は round(cap*p)
+      expect(
+        HealthScoring.earningsForRatio(ratio: 0.40, dailyCapYen: 300),
+        120,
+      ); // round(300*0.4)=120
+      expect(
+        HealthScoring.earningsForRatio(ratio: 1.0, dailyCapYen: 300),
+        300,
+      );
+
+      // dailyCapYen<=0 は0
+      expect(HealthScoring.earningsForRatio(ratio: 1.0, dailyCapYen: 0), 0);
     });
 
     test('scores sleep from three hours to the goal', () {

@@ -4,26 +4,26 @@ import 'package:task_manager/utils/health_goal.dart';
 
 void main() {
   group('healthTotalColor', () {
-    const cases = {
-      0: Colors.grey,
-      1: Colors.blue,
-      29: Colors.blue,
-      30: Colors.green,
-      59: Colors.green,
-      60: Colors.amber,
-      79: Colors.amber,
-      80: Colors.red,
-      100: Colors.red,
+    final cases = {
+      0.0: Colors.grey,
+      0.01: Colors.blue,
+      0.39: Colors.blue,
+      0.40: Colors.green,
+      0.59: Colors.green,
+      0.60: Colors.amber,
+      0.79: Colors.amber,
+      0.80: Colors.red,
+      1.0: Colors.red,
     };
 
     for (final entry in cases.entries) {
-      test('score ${entry.key} (light) is ${entry.value}', () {
+      test('percent ${entry.key} (light) is ${entry.value}', () {
         final color = healthTotalColor(entry.key, Brightness.light);
         expect(color, isA<Color>());
         expect(_hueName(color), entry.value);
       });
 
-      test('score ${entry.key} (dark) is ${entry.value}', () {
+      test('percent ${entry.key} (dark) is ${entry.value}', () {
         final color = healthTotalColor(entry.key, Brightness.dark);
         expect(color, isA<Color>());
         expect(_hueName(color), entry.value);
@@ -31,10 +31,10 @@ void main() {
     }
 
     test('light and dark shades differ', () {
-      for (final score in cases.keys) {
-        final light = healthTotalColor(score, Brightness.light);
-        final dark = healthTotalColor(score, Brightness.dark);
-        expect(light, isNot(equals(dark)), reason: 'score=$score');
+      for (final percent in cases.keys) {
+        final light = healthTotalColor(percent, Brightness.light);
+        final dark = healthTotalColor(percent, Brightness.dark);
+        expect(light, isNot(equals(dark)), reason: 'percent=$percent');
       }
     });
   });

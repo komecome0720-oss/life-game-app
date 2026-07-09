@@ -441,33 +441,18 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
     final fieldHasValue = fieldMinutes != null && fieldMinutes > 0;
 
     if (!fieldHasValue) {
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('時間ログなしで完了しますか？'),
-          content: const Text('時間予測ログが残りませんがよろしいですか？'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('いいえ'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('はい'),
-            ),
-          ],
-        ),
+      showAppSnackBar(
+        context,
+        const SnackBar(content: Text('実績時間を入力してください')),
       );
-      if (ok != true) return;
+      return;
     }
-
-    final actual = fieldHasValue ? fieldMinutes : null;
 
     if (!mounted) return;
     Navigator.of(context).pop();
     await widget.onComplete(
       predictedMinutes: _livePredictedMinutes,
-      actualMinutes: actual,
+      actualMinutes: fieldMinutes,
     );
   }
 

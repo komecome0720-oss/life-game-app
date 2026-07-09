@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/health/model/health_category.dart';
 import 'package:task_manager/features/health/viewmodel/health_detail_viewmodel.dart';
-import 'package:task_manager/features/health/widgets/health_history_section.dart';
 import 'package:task_manager/features/health/widgets/health_item_row.dart';
+import 'package:task_manager/features/health/widgets/health_streak_calendar.dart';
 import 'package:task_manager/features/health/widgets/total_cards.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 import 'package:task_manager/utils/app_messenger.dart';
@@ -99,11 +99,17 @@ class _HealthDetailScreenState extends ConsumerState<HealthDetailScreen>
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Expanded(child: TotalScoreCard(log: state.log)),
+                          Expanded(
+                            child: TotalScoreCard(
+                              log: state.log,
+                              maxActiveScore: settings.maxActiveHealthScore,
+                            ),
+                          ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: TotalEarningsCard(
                               log: state.log,
+                              dailyCapYen: settings.healthDailyCapYen,
                               onHelpTap: () => _showHelpDialog(context),
                             ),
                           ),
@@ -111,11 +117,7 @@ class _HealthDetailScreenState extends ConsumerState<HealthDetailScreen>
                       ),
                     ),
                     const SizedBox(height: 12),
-                    HealthHistorySection(
-                      logs: state.historyLogs,
-                      isLoading: state.isHistoryLoading,
-                      errorMessage: state.historyErrorMessage,
-                    ),
+                    HealthStreakCalendar(streakState: state.streakState),
                     const SizedBox(height: 16),
                   ],
                 ),
@@ -131,10 +133,13 @@ class _HealthDetailScreenState extends ConsumerState<HealthDetailScreen>
       builder: (ctx) => AlertDialog(
         title: const Text('獲得金額の計算'),
         content: const Text(
-          '100点満点 = 毎日１００点の生活を送れば、寿命は10年伸びると仮定しています。\n'
-          '80年の人生の1/8 = 10年分に相当。\n'
-          '1日に換算すると24時間の1/8 = 3時間分の時間単価を獲得できます。\n\n'
-          '例）時間単価3,000円/h の場合、100点 → 9,000円',
+          '健康を整えることは「1日3時間分の立派な仕事」。\n'
+          '月のお小遣いのうち30%を健康の枠として確保し、固定30日で割った額が'
+          '「1日満額」です（例：月予算30,000円 → 1日満額300円）。\n\n'
+          '達成率（合計点 ÷ 満点）が40%未満の日は、その日の健康分は0円になります'
+          '（没収はその日の健康分のみ。タスク報酬や前日までの残高には一切影響しません）。\n'
+          '40%以上なら「1日満額 × 達成率」（四捨五入）を獲得できます。\n\n'
+          '獲得額は深夜または次回起動時に確定し、所持金へ反映されます。',
         ),
         actions: [
           TextButton(

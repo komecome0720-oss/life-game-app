@@ -60,6 +60,17 @@ class ActiveTimerRepository {
     return uid;
   }
 
+  /// 相手端末の削除競合で doc が消えていても落とさない update。
+  /// not-found（相手が完了/クリアで delete 済み）は無視する。
+  Future<void> _safeUpdate(String uid, Map<String, Object?> data) async {
+    try {
+      await _docRef(uid).update(data);
+    } on FirebaseException catch (e) {
+      if (e.code == 'not-found') return; // doc は既に消えている＝この更新は無効でよい
+      rethrow;
+    }
+  }
+
   /// 現在のアクティブタイマーを監視する。存在しなければ null を流す。
   Stream<ActiveTimer?> watch() {
     final uid = _auth.currentUser?.uid;
@@ -129,7 +140,7 @@ class ActiveTimerRepository {
   Future<void> pause(ActiveTimer t) async {
     final uid = _uidOrThrow;
     final elapsed = t.elapsedSeconds(_now());
-    await _docRef(uid).update({
+    await _safeUpdate(uid, {
       'accumulatedSeconds': elapsed,
       'startedAtUtc': null,
       'updatedAtUtc': Timestamp.fromDate(_now().toUtc()),
@@ -139,7 +150,7 @@ class ActiveTimerRepository {
   /// 再開：startedAtUtc を現在時刻にする（accumulatedSeconds はそのまま）。
   Future<void> resume(ActiveTimer t) async {
     final uid = _uidOrThrow;
-    await _docRef(uid).update({
+    await _safeUpdate(uid, {
       'startedAtUtc': Timestamp.fromDate(_now().toUtc()),
       'updatedAtUtc': Timestamp.fromDate(_now().toUtc()),
     });
@@ -148,7 +159,7 @@ class ActiveTimerRepository {
   /// 保存後の状態：accumulatedSeconds=0・停止状態にリセットする。
   Future<void> resetToZero() async {
     final uid = _uidOrThrow;
-    await _docRef(uid).update({
+    await _safeUpdate(uid, {
       'accumulatedSeconds': 0,
       'startedAtUtc': null,
       'updatedAtUtc': Timestamp.fromDate(_now().toUtc()),
@@ -258,7 +269,7 @@ class ActiveTimerRepository {
   /// phaseStartedAtUtc を null にする。
   Future<void> pausePomodoro(ActiveTimer t, int elapsedSecondsInPhase) async {
     final uid = _uidOrThrow;
-    await _docRef(uid).update({
+    await _safeUpdate(uid, {
       'pomodoro.phaseAccumulatedSeconds': elapsedSecondsInPhase,
       'pomodoro.phaseStartedAtUtc': null,
       'updatedAtUtc': Timestamp.fromDate(_now().toUtc()),
@@ -269,7 +280,7 @@ class ActiveTimerRepository {
   /// （phaseAccumulatedSeconds はそのまま）。
   Future<void> resumePomodoro() async {
     final uid = _uidOrThrow;
-    await _docRef(uid).update({
+    await _safeUpdate(uid, {
       'pomodoro.phaseStartedAtUtc': Timestamp.fromDate(_now().toUtc()),
       'updatedAtUtc': Timestamp.fromDate(_now().toUtc()),
     });
@@ -278,7 +289,7 @@ class ActiveTimerRepository {
   /// タスク名変更時にフォールバック表示用の taskTitle を追従させる。
   Future<void> updateTaskTitle(String title) async {
     final uid = _uidOrThrow;
-    await _docRef(uid).update({
+    await _safeUpdate(uid, {
       'taskTitle': title,
       'updatedAtUtc': Timestamp.fromDate(_now().toUtc()),
     });
@@ -287,7 +298,7 @@ class ActiveTimerRepository {
   /// ロック画面での「見込み」手動編集。
   Future<void> updatePredictedMinutes(int predictedMinutes) async {
     final uid = _uidOrThrow;
-    await _docRef(uid).update({
+    await _safeUpdate(uid, {
       'predictedMinutes': predictedMinutes,
       'updatedAtUtc': Timestamp.fromDate(_now().toUtc()),
     });

@@ -49,7 +49,7 @@ class _AdventureLogContent extends StatelessWidget {
       170.0,
       (mediaQuery.size.height - mediaQuery.padding.vertical - kToolbarHeight) /
           3,
-    );
+    ) * 2 / 3;
 
     final graphChildren = <Widget>[
       const EarningsPeriodSelector(),

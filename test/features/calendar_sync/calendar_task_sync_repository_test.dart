@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -97,6 +98,38 @@ void main() {
       final data = await taskDataByExternalId('cal1:evt1');
       expect(data['title'], 'ToDo化済み', reason: 'ToDo化済みはGoogle側データで巻き戻されてはいけない');
     });
+
+    test('repositioned=true（実績ベースで再配置済み）は isCompleted の真偽に依らず更新をスキップする',
+        () async {
+      await firestore.collection('users').doc(uid).collection('tasks').add({
+        'title': '再配置済み',
+        'externalCalendarId': 'cal1:evt1',
+        'isTodo': false,
+        'isCompleted': false, // 完了確定前の非同期窓を想定
+        'repositioned': true,
+        'startAtUtc': DateTime(2026, 7, 6, 10, 30).toUtc(),
+        'endAtUtc': DateTime(2026, 7, 6, 11).toUtc(),
+      });
+
+      final updated = CalendarTask(
+        id: 'ignored',
+        title: 'Google側の新タイトル',
+        start: DateTime(2026, 7, 6, 10),
+        end: DateTime(2026, 7, 6, 11),
+        rewardYen: 0,
+        externalCalendarId: 'cal1:evt1',
+      );
+      await repo.upsert([updated]);
+
+      final data = await taskDataByExternalId('cal1:evt1');
+      expect(data['title'], '再配置済み', reason: 'repositioned:true はGoogle側データで巻き戻されてはいけない');
+      expect(
+        (data['startAtUtc'] as Timestamp)
+            .toDate()
+            .isAtSameMomentAs(DateTime(2026, 7, 6, 10, 30).toUtc()),
+        isTrue,
+      );
+    });
   });
 
   group('deleteTasksByCalendarInWeek', () {
@@ -130,6 +163,13 @@ void main() {
         'startAtUtc': DateTime(2026, 7, 7).toUtc(),
         'isCompleted': false,
       });
+      await tasksCol.add({
+        'title': '再配置済み（保護される）',
+        'externalCalendarId': 'calA:evt5',
+        'startAtUtc': DateTime(2026, 7, 7).toUtc(),
+        'isCompleted': false,
+        'repositioned': true,
+      });
 
       await repo.deleteTasksByCalendarInWeek(
         calendarId: 'calA',
@@ -142,7 +182,44 @@ void main() {
         '完了済み（保護される）',
         '実績入力済み（保護される）',
         '別カレンダー（対象外）',
+        '再配置済み（保護される）',
       });
+    });
+  });
+
+  group('moveTaskById', () {
+    test('start/end を更新し repositioned:true を同一書き込みで立てる', () async {
+      final tasksCol =
+          firestore.collection('users').doc(uid).collection('tasks');
+      final doc = await tasksCol.add({
+        'title': 'タスク',
+        'startAtUtc': DateTime(2026, 7, 6, 9).toUtc(),
+        'endAtUtc': DateTime(2026, 7, 6, 10).toUtc(),
+        'isCompleted': false,
+      });
+
+      final newStart = DateTime(2026, 7, 6, 13, 15);
+      final newEnd = DateTime(2026, 7, 6, 14);
+      await repo.moveTaskById(
+        taskId: doc.id,
+        newStart: newStart,
+        newEnd: newEnd,
+      );
+
+      final data = (await doc.get()).data()!;
+      expect(
+        (data['startAtUtc'] as Timestamp)
+            .toDate()
+            .isAtSameMomentAs(newStart.toUtc()),
+        isTrue,
+      );
+      expect(
+        (data['endAtUtc'] as Timestamp)
+            .toDate()
+            .isAtSameMomentAs(newEnd.toUtc()),
+        isTrue,
+      );
+      expect(data['repositioned'], isTrue);
     });
   });
 }

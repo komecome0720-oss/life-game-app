@@ -170,7 +170,13 @@ void main() {
   });
 
   group('complete', () {
-    test('カレンダータスクは convertToCalendarEvent を呼ばない', () async {
+    test('カレンダータスクは convertToCalendarEvent を呼ばず moveTaskById で実績ベースに再配置する',
+        () async {
+      when(() => calendarRepo.moveTaskById(
+            taskId: any(named: 'taskId'),
+            newStart: any(named: 'newStart'),
+            newEnd: any(named: 'newEnd'),
+          )).thenAnswer((_) async {});
       when(() => economyRepo.completeTask(
             taskId: any(named: 'taskId'),
             title: any(named: 'title'),
@@ -190,12 +196,14 @@ void main() {
             settings: any(named: 'settings'),
           )).thenAnswer((_) async => const RouletteOutcome.invalidConfig());
 
+      final before = DateTime.now();
       final actions = container.read(timerActionsProvider);
       final result = await actions.complete(
         task: sampleTask(),
         predictedMinutes: 60,
         actualMinutes: 45,
       );
+      final after = DateTime.now();
 
       expect(result, isNotNull);
       expect(result!.balanceAfterYen, 1000);
@@ -204,6 +212,24 @@ void main() {
             start: any(named: 'start'),
             end: any(named: 'end'),
           ));
+      final captured = verify(() => calendarRepo.moveTaskById(
+            taskId: 'task-1',
+            newStart: captureAny(named: 'newStart'),
+            newEnd: captureAny(named: 'newEnd'),
+          )).captured;
+      final capturedStart = captured[0] as DateTime;
+      final capturedEnd = captured[1] as DateTime;
+      expect(
+        capturedStart.isAfter(before.subtract(const Duration(minutes: 46))),
+        isTrue,
+      );
+      expect(
+        capturedStart.isBefore(after.subtract(const Duration(minutes: 44))),
+        isTrue,
+      );
+      expect(capturedEnd.isAfter(before), isTrue);
+      expect(capturedEnd.isBefore(after.add(const Duration(seconds: 1))),
+          isTrue);
     });
 
     test('ToDoタスクは completeTask 前に convertToCalendarEvent を呼ぶ', () async {
@@ -289,6 +315,161 @@ void main() {
       );
 
       expect(result, isNull);
+    });
+  });
+
+  group('placeForCompletion', () {
+    test('時間指定タスク：moveTaskById が (now-actual, now) で呼ばれ自idと predictedOverride=null を返す',
+        () async {
+      when(() => calendarRepo.moveTaskById(
+            taskId: any(named: 'taskId'),
+            newStart: any(named: 'newStart'),
+            newEnd: any(named: 'newEnd'),
+          )).thenAnswer((_) async {});
+
+      final before = DateTime.now();
+      final actions = container.read(timerActionsProvider);
+      final result = await actions.placeForCompletion(
+        taskId: 'task-1',
+        isTodo: false,
+        isAllDay: false,
+        title: 'サンプル',
+        minutesForPlacement: 30,
+      );
+      final after = DateTime.now();
+
+      expect(result.taskId, 'task-1');
+      expect(result.predictedOverride, isNull);
+      final captured = verify(() => calendarRepo.moveTaskById(
+            taskId: 'task-1',
+            newStart: captureAny(named: 'newStart'),
+            newEnd: captureAny(named: 'newEnd'),
+          )).captured;
+      final capturedStart = captured[0] as DateTime;
+      final capturedEnd = captured[1] as DateTime;
+      expect(
+        capturedStart.isAfter(before.subtract(const Duration(minutes: 31))),
+        isTrue,
+      );
+      expect(
+        capturedStart.isBefore(after.subtract(const Duration(minutes: 29))),
+        isTrue,
+      );
+      expect(capturedEnd.isAfter(before.subtract(const Duration(seconds: 1))),
+          isTrue);
+      expect(capturedEnd.isBefore(after.add(const Duration(seconds: 1))),
+          isTrue);
+      verifyNever(() => calendarRepo.createTaskFull(
+            title: any(named: 'title'),
+            start: any(named: 'start'),
+            end: any(named: 'end'),
+          ));
+      verifyNever(() => todoRepo.convertToCalendarEvent(
+            taskId: any(named: 'taskId'),
+            start: any(named: 'start'),
+            end: any(named: 'end'),
+          ));
+    });
+
+    test('終日：createTaskFull が (now-actual, now) で呼ばれ新idと predictedOverride=0 を返す',
+        () async {
+      when(() => calendarRepo.createTaskFull(
+            title: any(named: 'title'),
+            start: any(named: 'start'),
+            end: any(named: 'end'),
+            colorId: any(named: 'colorId'),
+          )).thenAnswer((_) async => 'new-block-id');
+
+      final before = DateTime.now();
+      final actions = container.read(timerActionsProvider);
+      final result = await actions.placeForCompletion(
+        taskId: 'task-1',
+        isTodo: false,
+        isAllDay: true,
+        title: 'サンプル',
+        minutesForPlacement: 40,
+      );
+      final after = DateTime.now();
+
+      expect(result.taskId, 'new-block-id');
+      expect(result.predictedOverride, 0);
+      final captured = verify(() => calendarRepo.createTaskFull(
+            title: 'サンプル',
+            start: captureAny(named: 'start'),
+            end: captureAny(named: 'end'),
+            colorId: any(named: 'colorId'),
+          )).captured;
+      final capturedStart = captured[0] as DateTime;
+      final capturedEnd = captured[1] as DateTime;
+      expect(
+        capturedStart.isAfter(before.subtract(const Duration(minutes: 41))),
+        isTrue,
+      );
+      expect(capturedEnd.isBefore(after.add(const Duration(seconds: 1))),
+          isTrue);
+      verifyNever(() => calendarRepo.moveTaskById(
+            taskId: any(named: 'taskId'),
+            newStart: any(named: 'newStart'),
+            newEnd: any(named: 'newEnd'),
+          ));
+    });
+
+    test('ToDo：todoRepository.convertToCalendarEvent が呼ばれ自idと predictedOverride=null を返す',
+        () async {
+      when(() => todoRepo.convertToCalendarEvent(
+            taskId: any(named: 'taskId'),
+            start: any(named: 'start'),
+            end: any(named: 'end'),
+          )).thenAnswer((_) async {});
+
+      final actions = container.read(timerActionsProvider);
+      final result = await actions.placeForCompletion(
+        taskId: 'task-1',
+        isTodo: true,
+        isAllDay: false,
+        title: 'サンプル',
+        minutesForPlacement: 20,
+      );
+
+      expect(result.taskId, 'task-1');
+      expect(result.predictedOverride, isNull);
+      verify(() => todoRepo.convertToCalendarEvent(
+            taskId: 'task-1',
+            start: any(named: 'start'),
+            end: any(named: 'end'),
+          )).called(1);
+    });
+
+    test('日またぎ：開始が完了日0:00に丸められる（分数は保持し表示位置のみ丸め）', () async {
+      when(() => calendarRepo.moveTaskById(
+            taskId: any(named: 'taskId'),
+            newStart: any(named: 'newStart'),
+            newEnd: any(named: 'newEnd'),
+          )).thenAnswer((_) async {});
+
+      final now = DateTime.now();
+      final dayStart = DateTime(now.year, now.month, now.day);
+      // 現在時刻から日付境界(0:00)までの分数より大きい実績分を与え、
+      // 開始が前日側にはみ出す状況を作る。
+      final minutesForPlacement = now.difference(dayStart).inMinutes + 120;
+
+      final actions = container.read(timerActionsProvider);
+      final result = await actions.placeForCompletion(
+        taskId: 'task-1',
+        isTodo: false,
+        isAllDay: false,
+        title: 'サンプル',
+        minutesForPlacement: minutesForPlacement,
+      );
+
+      expect(result.taskId, 'task-1');
+      final captured = verify(() => calendarRepo.moveTaskById(
+            taskId: 'task-1',
+            newStart: captureAny(named: 'newStart'),
+            newEnd: captureAny(named: 'newEnd'),
+          )).captured;
+      final capturedStart = captured[0] as DateTime;
+      expect(capturedStart, DateTime(now.year, now.month, now.day));
     });
   });
 }

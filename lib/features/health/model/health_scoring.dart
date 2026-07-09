@@ -1,3 +1,5 @@
+import 'package:task_manager/features/economy/model/budget_split.dart';
+
 /// 健康ログの採点・報酬計算ユーティリティ
 class HealthScoring {
   HealthScoring._();
@@ -27,10 +29,23 @@ class HealthScoring {
     return v;
   }
 
-  /// 合計点(0〜100) と時間単価から、獲得金額を算出。四捨五入（.round()）。
-  /// 100点 = 1日分(24時間)の1/8 = 3時間分の時間単価。挙動変更禁止（過去残高との整合）。
-  static int earningsForPoints(int points, double hourlyRate) {
-    if (hourlyRate <= 0 || points <= 0) return 0;
-    return (hourlyRate * 3 * points / 100).round();
+  /// 有効項目の満点。瞑想ON=100 / OFF=80。
+  static int maxActiveScore({required bool meditationEnabled}) =>
+      meditationEnabled ? 100 : 80;
+
+  /// 達成率 0.0〜1.0。
+  static double achievementRatio(int totalScore, int maxActiveScore) {
+    if (maxActiveScore <= 0) return 0;
+    return (totalScore / maxActiveScore).clamp(0.0, 1.0);
+  }
+
+  /// 線形・40%ゲート。p<0.40 は 0（没収）。p>=0.40 は round(cap × p)。
+  static int earningsForRatio({
+    required double ratio,
+    required int dailyCapYen,
+  }) {
+    if (dailyCapYen <= 0) return 0;
+    if (ratio < kHealthGateRatio) return 0;
+    return (dailyCapYen * ratio).round();
   }
 }

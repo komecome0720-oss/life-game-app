@@ -22,9 +22,9 @@ class HealthPanel extends StatelessWidget {
           _row(context, '野菜・果物', scores.meal),
           _row(context, '睡眠', scores.sleep),
           _row(context, '運動', scores.exercise),
-          _row(context, '瞑想', scores.meditation),
+          if (scores.meditationEnabled) _row(context, '瞑想', scores.meditation),
           const Divider(height: 10),
-          _totalRow(context, scores.total),
+          _totalRow(context, scores.total, scores.maxTotal),
         ],
       ),
     );
@@ -59,17 +59,22 @@ class HealthPanel extends StatelessWidget {
     );
   }
 
-  Widget _totalRow(BuildContext context, int total) {
+  Widget _totalRow(BuildContext context, int total, int maxTotal) {
     final text = Theme.of(context).textTheme;
     return Padding(
       padding: const EdgeInsets.only(top: 2),
       child: Row(
         children: [
-          AnimatedHealthHeart(totalScore: total),
+          AnimatedHealthHeart(totalScore: total, maxTotal: maxTotal),
           const SizedBox(width: 4),
-          Expanded(child: TotalSegmentedProgressBar(totalScore: total)),
+          Expanded(
+            child: TotalSegmentedProgressBar(
+              totalScore: total,
+              maxTotal: maxTotal,
+            ),
+          ),
           const SizedBox(width: 4),
-          Text('$total/${HealthScores.maxTotal}',
+          Text('$total/$maxTotal',
               style: text.labelSmall?.copyWith(fontWeight: FontWeight.w800)),
         ],
       ),

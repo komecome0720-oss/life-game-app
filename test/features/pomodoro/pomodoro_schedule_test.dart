@@ -384,4 +384,60 @@ void main() {
       expect(result.workSeconds, 0);
     });
   });
+
+  group('壊れたデータへの防御（2台同時利用で相手端末が不正データを書いた場合）', () {
+    test('setCount=0 でもゼロ除算せず例外にならない（1セット扱いに丸める）', () {
+      final run = _run(setCount: 0);
+      final schedule = PomodoroSchedule(run);
+      expect(() => schedule.phaseTypeAt(0), returnsNormally);
+      expect(() => schedule.setNumberAt(0), returnsNormally);
+      expect(() => schedule.currentPhase(t0), returnsNormally);
+      // setCount<=0 は1セット扱い（周期2）になる。
+      expect(schedule.phaseTypeAt(0), PomodoroPhaseType.work);
+      expect(schedule.phaseTypeAt(1), PomodoroPhaseType.longBreak);
+      expect(schedule.phaseTypeAt(2), PomodoroPhaseType.work);
+    });
+
+    test('setCount が負でもゼロ除算せず例外にならない', () {
+      final run = _run(setCount: -1);
+      final schedule = PomodoroSchedule(run);
+      expect(() => schedule.currentPhase(t0), returnsNormally);
+    });
+
+    test('workMinutes=0 でも currentPhase が無限ループせず有限時間で返る', () {
+      final run = _run(
+        workMinutes: 0,
+        shortBreakMinutes: 0,
+        longBreakMinutes: 0,
+        phaseIndex: 0,
+        phaseStartedAtUtc: t0,
+      );
+      final schedule = PomodoroSchedule(run);
+      // 実時間が少し進んだだけでも length=0 だと従来は無限ループしていた。
+      // 最低1秒に丸められるため、有限のフェーズ数だけ進んで正常に返る。
+      final state = schedule.currentPhase(t0.add(const Duration(seconds: 5)));
+      expect(state.phaseLengthSeconds, greaterThanOrEqualTo(1));
+    });
+
+    test('startPhaseLengthSecondsOverride=0 でも無限ループせず有限時間で返る', () {
+      final run = _run(
+        phaseIndex: 0,
+        phaseStartedAtUtc: t0,
+        startPhaseIndex: 0,
+        startPhaseLengthSecondsOverride: 0,
+      );
+      final schedule = PomodoroSchedule(run);
+      final state = schedule.currentPhase(t0.add(const Duration(seconds: 1)));
+      expect(state.phaseLengthSeconds, greaterThanOrEqualTo(1));
+    });
+
+    test('正常データ（setCount>=1・分×60）では従来通りの挙動を保つ', () {
+      // 既存の「K=4」ケースと同値であることを再確認し、ガード追加による
+      // 正常系への影響が無いことを担保する。
+      final run = _run(setCount: 4);
+      final schedule = PomodoroSchedule(run);
+      expect(schedule.phaseLengthSecondsAt(0), 25 * 60);
+      expect(schedule.phaseLengthSecondsAt(7), 15 * 60);
+    });
+  });
 }

@@ -2,10 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:task_manager/features/health/model/health_log.dart';
 import 'package:task_manager/widgets/segmented_progress_bar.dart';
 
-/// 合計点数カード（100点満点）
+/// 合計点数カード（瞑想ON=100点満点 / OFF=80点満点）
 class TotalScoreCard extends StatelessWidget {
-  const TotalScoreCard({super.key, required this.log});
+  const TotalScoreCard({
+    super.key,
+    required this.log,
+    this.maxActiveScore = 100,
+  });
   final HealthLog log;
+
+  /// 満点（瞑想ON=100 / OFF=80）。呼び出し元の設定に合わせて渡す。
+  final int maxActiveScore;
 
   @override
   Widget build(BuildContext context) {
@@ -13,8 +20,10 @@ class TotalScoreCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return _SummaryCard(
       icon: Icons.favorite,
-      iconWidget: AnimatedHealthHeart(totalScore: log.totalScore),
-      title: '合計点数',
+      iconWidget: AnimatedHealthHeart(
+        totalScore: log.totalScore,
+        maxTotal: maxActiveScore,
+      ),
       accentColor: scheme.primary,
       trailing: null,
       value: RichText(
@@ -29,13 +38,17 @@ class TotalScoreCard extends StatelessWidget {
                 height: 1,
               ),
             ),
-            const TextSpan(text: ' / 100'),
+            TextSpan(text: ' / $maxActiveScore'),
           ],
         ),
       ),
       footer: Align(
         alignment: Alignment.topLeft,
-        child: TotalSegmentedProgressBar(totalScore: log.totalScore, height: 5),
+        child: TotalSegmentedProgressBar(
+          totalScore: log.totalScore,
+          maxTotal: maxActiveScore,
+          height: 5,
+        ),
       ),
     );
   }
@@ -46,34 +59,48 @@ class TotalEarningsCard extends StatelessWidget {
   const TotalEarningsCard({
     super.key,
     required this.log,
+    required this.dailyCapYen,
     required this.onHelpTap,
   });
 
   final HealthLog log;
+
+  /// 満点なら貰える1日の満額（分母表示に使う）。
+  final int dailyCapYen;
   final VoidCallback onHelpTap;
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final scheme = Theme.of(context).colorScheme;
+    final earned = log.isFinalized
+        ? log.finalizedEarnedYen
+        : log.provisionalEarnedYen;
     return _SummaryCard(
       icon: Icons.savings_outlined,
-      title: '獲得金額',
       accentColor: scheme.primary,
       trailing: IconButton(
         tooltip: '計算方法',
-        icon: const Icon(Icons.help_outline, size: 18),
+        icon: const Icon(Icons.help_outline, size: 16),
         padding: EdgeInsets.zero,
         constraints: const BoxConstraints(),
         visualDensity: VisualDensity.compact,
         onPressed: onHelpTap,
       ),
-      value: Text(
-        '¥${_fmt(log.provisionalEarnedYen)}',
-        style: text.headlineSmall?.copyWith(
-          fontWeight: FontWeight.w800,
-          color: scheme.tertiary,
-          height: 1,
+      value: RichText(
+        text: TextSpan(
+          style: text.bodyMedium?.copyWith(height: 1),
+          children: [
+            TextSpan(
+              text: '¥${_fmt(earned)}',
+              style: text.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: scheme.tertiary,
+                height: 1,
+              ),
+            ),
+            TextSpan(text: ' / ${_fmt(dailyCapYen)}'),
+          ],
         ),
       ),
       footer: Text(
@@ -93,7 +120,6 @@ class _SummaryCard extends StatelessWidget {
   const _SummaryCard({
     required this.icon,
     this.iconWidget,
-    required this.title,
     required this.accentColor,
     required this.value,
     required this.footer,
@@ -102,7 +128,6 @@ class _SummaryCard extends StatelessWidget {
 
   final IconData icon;
   final Widget? iconWidget;
-  final String title;
   final Color accentColor;
   final Widget value;
   final Widget footer;
@@ -110,7 +135,6 @@ class _SummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
@@ -120,21 +144,25 @@ class _SummaryCard extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             SizedBox(
-              height: 18,
+              height: 26,
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  iconWidget ?? Icon(icon, size: 16, color: accentColor),
+                  iconWidget ?? Icon(icon, size: 20, color: accentColor),
                   const SizedBox(width: 6),
-                  Text(title, style: text.labelSmall),
-                  const Spacer(),
-                  trailing ?? const SizedBox.shrink(),
+                  Expanded(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: value,
+                    ),
+                  ),
+                  if (trailing != null) ...[
+                    const SizedBox(width: 4),
+                    trailing!,
+                  ],
                 ],
               ),
-            ),
-            const SizedBox(height: 4),
-            SizedBox(
-              height: 30,
-              child: Align(alignment: Alignment.topLeft, child: value),
             ),
             const SizedBox(height: 4),
             SizedBox(

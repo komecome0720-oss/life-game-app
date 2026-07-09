@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:task_manager/features/economy/model/budget_split.dart';
 import 'package:task_manager/features/roulette/model/reward_config.dart';
 
 class UserSettings {
@@ -33,6 +34,7 @@ class UserSettings {
     this.defaultTodoEstimatedMinutes = defaultTodoEstimatedMinutesFallback,
     this.defaultCalendarDurationMinutes = defaultCalendarDurationMinutesFallback,
     this.onboardingCompleted = false,
+    this.meditationEnabled = true,
   });
 
   final String displayName;
@@ -89,11 +91,25 @@ class UserSettings {
   /// 設定画面の全体保存でこのフラグを stale 値に巻き戻さないため）。
   final bool onboardingCompleted;
 
+  /// 瞑想項目を有効にするか（既定true）。永続設定・日替り切替不可。
+  /// OFF時は満点が80になり、瞑想は合計・達成率・満点から除外される。
+  final bool meditationEnabled;
+
   double get hourlyRate {
     final totalMinutes = monthlyQuestDays * dailyQuestMinutes;
     if (totalMinutes <= 0) return 0;
     return monthlyBudget / (totalMinutes / 60);
   }
+
+  /// タスク側の時間単価（月予算の70%分）。健康は別枠（[healthDailyCapYen]）。
+  double get taskHourlyRate => hourlyRate * kTaskBudgetRatio;
+
+  /// 健康デイリーキャップ（円）= round(monthlyBudget × 30% ÷ 30日)。
+  int get healthDailyCapYen =>
+      (monthlyBudget * kHealthBudgetRatio / kHealthCapDays).round();
+
+  /// 有効項目の満点（瞑想ON=100 / OFF=80）。
+  int get maxActiveHealthScore => meditationEnabled ? 100 : 80;
 
   /// 現在レベル（累計タスク数から導出。手入力ではない）。
   int get level => RewardConfig.levelForCumulative(cumulativeTaskCount);
@@ -135,6 +151,7 @@ class UserSettings {
     int? defaultTodoEstimatedMinutes,
     int? defaultCalendarDurationMinutes,
     bool? onboardingCompleted,
+    bool? meditationEnabled,
   }) {
     return UserSettings(
       displayName: displayName ?? this.displayName,
@@ -165,6 +182,7 @@ class UserSettings {
       defaultCalendarDurationMinutes:
           defaultCalendarDurationMinutes ?? this.defaultCalendarDurationMinutes,
       onboardingCompleted: onboardingCompleted ?? this.onboardingCompleted,
+      meditationEnabled: meditationEnabled ?? this.meditationEnabled,
     );
   }
 
@@ -233,6 +251,7 @@ class UserSettings {
           (data['defaultCalendarDurationMinutes'] as num?)?.toInt() ??
               defaultCalendarDurationMinutesFallback,
       onboardingCompleted: data['onboardingCompleted'] as bool? ?? false,
+      meditationEnabled: data['meditationEnabled'] as bool? ?? true,
     );
   }
 
@@ -264,6 +283,7 @@ class UserSettings {
       'weekStartDay': weekStartDay,
       'defaultTodoEstimatedMinutes': defaultTodoEstimatedMinutes,
       'defaultCalendarDurationMinutes': defaultCalendarDurationMinutes,
+      'meditationEnabled': meditationEnabled,
       'updatedAt': FieldValue.serverTimestamp(),
     };
   }

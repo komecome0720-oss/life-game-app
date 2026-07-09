@@ -228,7 +228,7 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
     if (mounted) Navigator.of(context).pop();
   }
 
-  /// 完了：running なら先に pause 相当。合計0なら actualMinutes=null（ログなし完了）。
+  /// 完了：running なら先に pause 相当。実績合計が0以下なら完了できない（実績必須化）。
   Future<void> _onTapComplete(ActiveTimer timer) async {
     if (_isCompleting) return;
     final task = _task;
@@ -240,21 +240,18 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
     final elapsedSec = timer.elapsedSeconds(DateTime.now());
     final addedMinutes = elapsedSec ~/ 60;
     final total = _currentActualMinutes + addedMinutes;
-    final actualMinutes = total > 0 ? total : null;
+    if (total <= 0) {
+      showAppSnackBar(context, const SnackBar(content: Text('実績時間を入力してください')));
+      return;
+    }
+    final actualMinutes = total;
 
-    // 確認ダイアログ：カレンダーは合計0のときのみ、ToDoは常に確認する
-    // （既存の各シートの挙動を踏襲）。
+    // 確認ダイアログ：ToDoは常に確認する（既存の各シートの挙動を踏襲）。
     final bool confirmed;
     if (task.isTodo) {
       confirmed = await _confirmComplete(
         title: '完了しますか？',
-        content: actualMinutes == null ? '時間ログなしで完了します。' : '完了として記録します。',
-      ) ==
-          true;
-    } else if (actualMinutes == null) {
-      confirmed = await _confirmComplete(
-        title: '時間ログなしで完了しますか？',
-        content: '時間予測ログが残りませんがよろしいですか？',
+        content: '完了として記録します。',
       ) ==
           true;
     } else {

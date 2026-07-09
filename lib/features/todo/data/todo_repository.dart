@@ -142,6 +142,7 @@ class TodoRepository {
       'isTodo': false,
       'startAtUtc': Timestamp.fromDate(start.toUtc()),
       'endAtUtc': Timestamp.fromDate(end.toUtc()),
+      'repositioned': true,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
@@ -166,6 +167,7 @@ class TodoRepository {
       'isTodo': false,
       'startAtUtc': Timestamp.fromDate(start.toUtc()),
       'endAtUtc': Timestamp.fromDate(end.toUtc()),
+      'repositioned': true,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }

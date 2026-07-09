@@ -85,5 +85,42 @@ void main() {
       expect(PomodoroBgm.fromId(null, PomodoroBgm.fire), PomodoroBgm.fire);
       expect(PomodoroBgm.fromId('nope', PomodoroBgm.fire), PomodoroBgm.fire);
     });
+
+    test('none の assetPath は null', () {
+      expect(PomodoroBgm.none.assetPath, isNull);
+      expect(PomodoroChime.none.assetPath, isNull);
+    });
+
+    test("fromId('none', ...) は none を返す", () {
+      expect(PomodoroBgm.fromId('none', PomodoroBgm.waves), PomodoroBgm.none);
+      expect(
+          PomodoroChime.fromId('none', PomodoroChime.drum), PomodoroChime.none);
+    });
+  });
+
+  group('PomodoroSettings.fromMap（none 選択のBGM/チャイム）', () {
+    test('toMap/fromMap の往復で none が正しく復元される', () {
+      const settings = PomodoroSettings(
+        workMinutes: 25,
+        shortBreakMinutes: 5,
+        setCount: 4,
+        longBreakMinutes: 15,
+        bgmWork: PomodoroBgm.none,
+        bgmShortBreak: PomodoroBgm.none,
+        bgmLongBreak: PomodoroBgm.none,
+        soundWorkStart: PomodoroChime.none,
+        soundShortBreakStart: PomodoroChime.none,
+        soundLongBreakStart: PomodoroChime.none,
+      );
+      final map = settings.toMap();
+      final restored = PomodoroSettings.fromMap(map);
+
+      expect(restored.bgmWork, PomodoroBgm.none);
+      expect(restored.bgmShortBreak, PomodoroBgm.none);
+      expect(restored.bgmLongBreak, PomodoroBgm.none);
+      expect(restored.soundWorkStart, PomodoroChime.none);
+      expect(restored.soundShortBreakStart, PomodoroChime.none);
+      expect(restored.soundLongBreakStart, PomodoroChime.none);
+    });
   });
 }

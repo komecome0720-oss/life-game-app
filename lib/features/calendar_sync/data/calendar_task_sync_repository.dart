@@ -28,6 +28,7 @@ class CalendarTaskSyncRepository {
     // whereIn の上限(30)に合わせてバッチ検索
     final existingRefs = <String, DocumentReference>{};
     final existingIsTodo = <String, bool>{};
+    final existingRepositioned = <String, bool>{};
     for (var i = 0; i < externalIds.length; i += 30) {
       final chunk = externalIds.sublist(
         i,
@@ -41,6 +42,8 @@ class CalendarTaskSyncRepository {
         if (extId != null) {
           existingRefs[extId] = doc.reference;
           existingIsTodo[extId] = doc.data()['isTodo'] as bool? ?? false;
+          existingRepositioned[extId] =
+              doc.data()['repositioned'] as bool? ?? false;
         }
       }
     }
@@ -56,6 +59,9 @@ class CalendarTaskSyncRepository {
       if (existingRefs.containsKey(extId)) {
         // ToDo化済みは Google 側データによる isTodo/start/end の巻き戻しを防ぐためスキップ
         if (existingIsTodo[extId] == true) continue;
+        // 完了時に実績ベースで再配置済み（repositioned:true）のものは、
+        // 再同期で元時刻に戻らないよう一切上書きしない
+        if (existingRepositioned[extId] == true) continue;
         // 更新: 完了状態とログはユーザー操作値を保持するため除外
         final updateData = task.toMap()
           ..remove('isCompleted')
@@ -105,16 +111,28 @@ class CalendarTaskSyncRepository {
     DateTime newStart,
     DateTime newEnd,
   ) async {
+    await moveTaskById(taskId: task.id, newStart: newStart, newEnd: newEnd);
+  }
+
+  /// 指定タスクIDの開始・終了時刻を変更し、実績ベースの再配置であることを示す
+  /// `repositioned:true` を同一書き込みで立てる。以降 upsert / deleteTasksByCalendarInWeek
+  /// はこのフラグが立ったドキュメントを保護し、位置を上書き・削除しない。
+  Future<void> moveTaskById({
+    required String taskId,
+    required DateTime newStart,
+    required DateTime newEnd,
+  }) async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) throw Exception('Not authenticated');
     await _db
         .collection('users')
         .doc(uid)
         .collection('tasks')
-        .doc(task.id)
+        .doc(taskId)
         .update({
           'startAtUtc': Timestamp.fromDate(newStart.toUtc()),
           'endAtUtc': Timestamp.fromDate(newEnd.toUtc()),
+          'repositioned': true,
           'updatedAt': FieldValue.serverTimestamp(),
         });
   }
@@ -320,6 +338,7 @@ class CalendarTaskSyncRepository {
       if (ext == null) continue;
       if (data['isCompleted'] == true) continue;
       if (data['actualMinutes'] != null) continue;
+      if (data['repositioned'] == true) continue;
       final parts = ext.split(':');
       // 旧形式: calendarId:eventId / 新形式: accountId:calendarId:eventId
       final extCalId = parts.length == 2
@@ -355,6 +374,7 @@ class CalendarTaskSyncRepository {
           'isTodo': false,
           'startAtUtc': Timestamp.fromDate(start.toUtc()),
           'endAtUtc': Timestamp.fromDate(end.toUtc()),
+          'repositioned': true,
           'updatedAt': FieldValue.serverTimestamp(),
         });
   }

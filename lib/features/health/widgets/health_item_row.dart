@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/health/model/health_category.dart';
 import 'package:task_manager/features/health/model/health_log.dart';
-import 'package:task_manager/features/health/model/health_scoring.dart';
 import 'package:task_manager/features/health/viewmodel/health_detail_viewmodel.dart';
 import 'package:task_manager/features/user_settings/model/user_settings.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
@@ -162,7 +161,7 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Text('目標', style: text.labelSmall),
-        if (widget.enabled) ...[
+        if (_inputsEnabled) ...[
           const SizedBox(width: 8),
           _goalSaveControl(text, scheme),
         ],
@@ -245,6 +244,29 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
     );
   }
 
+  /// 瞑想OFFの行は表示は残すが入力（スライダー・目標・保存）を無効化する。
+  bool get _meditationOff =>
+      widget.category == HealthCategory.meditation &&
+      !widget.settings.meditationEnabled;
+
+  bool get _inputsEnabled => widget.enabled && !_meditationOff;
+
+  Future<void> _toggleMeditation(bool value) async {
+    final vm = ref.read(userSettingsProvider.notifier);
+    final success = await vm.saveMeditationEnabled(value);
+    if (!mounted) return;
+    if (!success) {
+      final err = ref.read(userSettingsProvider).errorMessage;
+      showAppSnackBar(
+        context,
+        SnackBar(
+          content: Text(err ?? '保存に失敗しました'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
@@ -255,10 +277,6 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
     final level = widget.category.level(widget.log, settings);
     final score = widget.category.score(widget.log);
     final maxPoints = widget.category.maxPoints;
-    final earnings = HealthScoring.earningsForPoints(
-      score,
-      settings.hourlyRate,
-    );
 
     final sliderLevel = widget.category.levelForValue(current, settings);
 
@@ -277,10 +295,29 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
                   widget.category.label,
                   style: text.titleSmall?.copyWith(fontWeight: FontWeight.w700),
                 ),
+                if (widget.category == HealthCategory.meditation) ...[
+                  const SizedBox(width: 4),
+                  SizedBox(
+                    height: 18,
+                    child: FittedBox(
+                      fit: BoxFit.contain,
+                      child: Switch.adaptive(
+                        value: settings.meditationEnabled,
+                        onChanged: ref.watch(userSettingsProvider).isSaving
+                            ? null
+                            : _toggleMeditation,
+                        materialTapTargetSize:
+                            MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 4),
-            Row(
+            Opacity(
+              opacity: _meditationOff ? 0.4 : 1,
+              child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SizedBox(
@@ -319,7 +356,7 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
                             min: 0,
                             max: 10,
                             divisions: 10,
-                            onChanged: widget.enabled
+                            onChanged: _inputsEnabled
                                 ? (v) {
                                     final value = widget.category.valueForLevel(
                                       v.round(),
@@ -333,7 +370,7 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
                                         .previewValue(widget.category, value);
                                   }
                                 : null,
-                            onChangeEnd: widget.enabled
+                            onChangeEnd: _inputsEnabled
                                 ? (v) {
                                     final value = widget.category.valueForLevel(
                                       v.round(),
@@ -383,20 +420,12 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
                           '$score/$maxPoints点',
                           style: text.labelSmall?.copyWith(height: 1),
                         ),
-                        const SizedBox(height: 1),
-                        Text(
-                          '+¥${_fmtYen(earnings)}',
-                          style: text.titleSmall?.copyWith(
-                            color: scheme.tertiary,
-                            fontWeight: FontWeight.w700,
-                            height: 1,
-                          ),
-                        ),
                       ],
                     ),
                   ),
                 ),
               ],
+              ),
             ),
           ],
         ),
@@ -421,7 +450,7 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
                 width: w2,
                 child: TextField(
                   controller: controller,
-                  enabled: widget.enabled,
+                  enabled: _inputsEnabled,
                   keyboardType: TextInputType.number,
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,
@@ -480,7 +509,7 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
                   width: w4,
                   child: TextField(
                     controller: _primaryCtrl,
-                    enabled: widget.enabled,
+                    enabled: _inputsEnabled,
                     keyboardType: TextInputType.number,
                     inputFormatters: [
                       FilteringTextInputFormatter.digitsOnly,
@@ -500,9 +529,4 @@ class _HealthItemRowState extends ConsumerState<HealthItemRow> {
         );
     }
   }
-
-  String _fmtYen(int n) => n.toString().replaceAllMapped(
-    RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-    (m) => '${m[1]},',
-  );
 }

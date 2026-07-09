@@ -7,6 +7,7 @@ enum PomodoroBgm {
   // 端末キャッシュにコピーし、同じパスなら古いキャッシュを再生し続けるため、
   // 素材を替えるときは必ずファイル名も変える（このファイルも過去に声入り
   // 素材が残り続ける問題があり bgm_waves.mp3 → bgm_waves_soothing.mp3 に改名）。
+  none('none', null, 'なし'),
   waves('waves', 'assets/audio/bgm_waves_soothing.mp3', '波の音'),
   river('river', 'assets/audio/bgm_river.m4a', '川のせせらぎ'),
   fire('fire', 'assets/audio/bgm_fire.m4a', '焚き火'),
@@ -15,7 +16,7 @@ enum PomodoroBgm {
   const PomodoroBgm(this.id, this.assetPath, this.label);
 
   final String id;
-  final String assetPath;
+  final String? assetPath;
   final String label;
 
   static PomodoroBgm fromId(String? id, PomodoroBgm fallback) {
@@ -28,6 +29,7 @@ enum PomodoroBgm {
 
 /// フェーズ切り替え時に鳴らすチャイム（効果音）の種類。
 enum PomodoroChime {
+  none('none', null, 'なし'),
   drum('drum', 'assets/audio/sfx_drum.wav', '太鼓'),
   bell('bell', 'assets/audio/sfx_bell.wav', '鈴'),
   trumpet('trumpet', 'assets/audio/sfx_trumpet.mp3', 'ラッパ');
@@ -35,7 +37,7 @@ enum PomodoroChime {
   const PomodoroChime(this.id, this.assetPath, this.label);
 
   final String id;
-  final String assetPath;
+  final String? assetPath;
   final String label;
 
   static PomodoroChime fromId(String? id, PomodoroChime fallback) {

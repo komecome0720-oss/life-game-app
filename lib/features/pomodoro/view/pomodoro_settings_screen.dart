@@ -345,7 +345,7 @@ class _MinutesField extends StatelessWidget {
 class _SoundOption {
   const _SoundOption(this.label, this.assetPath);
   final String label;
-  final String assetPath;
+  final String? assetPath;
 }
 
 /// ラベルをタップで選択、試聴ボタンをタップで選択前に音を聴けるリストをボトムシートで表示する。
@@ -377,7 +377,9 @@ Future<T?> _showSoundPicker<T>({
                 selected: v == selected,
                 onTap: () => Navigator.of(sheetContext).pop(v),
                 trailing: IconButton(
-                  onPressed: () => onPreview(toOption(v).assetPath),
+                  onPressed: toOption(v).assetPath == null
+                      ? null
+                      : () => onPreview(toOption(v).assetPath!),
                   icon: const Icon(Icons.play_arrow_rounded),
                   tooltip: '試聴',
                 ),

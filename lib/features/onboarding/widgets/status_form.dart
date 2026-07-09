@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:task_manager/features/economy/model/budget_split.dart';
 import 'package:task_manager/features/user_settings/widgets/hourly_rate_display.dart';
 import 'package:task_manager/features/user_settings/widgets/settings_number_field.dart';
 
@@ -155,8 +156,9 @@ class _StatusFormState extends State<StatusForm> {
                 _daysCtrl,
                 _minutesCtrl,
               ]),
-              builder: (context, _) =>
-                  HourlyRateDisplay(hourlyRate: _hourlyRate),
+              builder: (context, _) => HourlyRateDisplay(
+                hourlyRate: _hourlyRate * kTaskBudgetRatio,
+              ),
             ),
             const SizedBox(height: 32),
             FilledButton(

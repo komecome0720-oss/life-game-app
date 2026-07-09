@@ -117,7 +117,8 @@ void main() {
       expect(capturedPredicted, 60);
     });
 
-    testWidgets('タイマー・フィールドともに空で完了するとダイアログが出る', (tester) async {
+    testWidgets('実績分フィールドが空で完了するとSnackBarが出て onComplete は呼ばれない',
+        (tester) async {
       bool called = false;
       await _pumpSheet(
         tester,
@@ -131,14 +132,14 @@ void main() {
 
       await tester.ensureVisible(find.text('完了'));
       await tester.tap(find.text('完了'));
-      await tester.pumpAndSettle();
+      await tester.pump();
 
-      expect(find.text('時間ログなしで完了しますか？'), findsOneWidget);
-      expect(find.text('時間予測ログが残りませんがよろしいですか？'), findsOneWidget);
+      expect(find.text('実績時間を入力してください'), findsOneWidget);
       expect(called, isFalse);
     });
 
-    testWidgets('ダイアログ「いいえ」で完了せず戻る', (tester) async {
+    testWidgets('実績分フィールドが0で完了するとSnackBarが出て onComplete は呼ばれない',
+        (tester) async {
       bool called = false;
       await _pumpSheet(
         tester,
@@ -150,17 +151,18 @@ void main() {
         },
       );
 
+      await tester.enterText(find.byKey(_actualKey), '0');
+      await tester.pump();
       await tester.ensureVisible(find.text('完了'));
       await tester.tap(find.text('完了'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('いいえ'));
-      await tester.pumpAndSettle();
+      await tester.pump();
 
+      expect(find.text('実績時間を入力してください'), findsOneWidget);
       expect(called, isFalse);
     });
 
-    testWidgets('ダイアログ「はい」で actualMinutes=null として完了する', (tester) async {
-      int? capturedActual = -1; // sentinel
+    testWidgets('実績分を入力してから完了すると即座に onComplete が呼ばれる', (tester) async {
+      int? capturedActual;
       int? capturedPredicted;
       await _pumpSheet(
         tester,
@@ -173,13 +175,13 @@ void main() {
         },
       );
 
+      await tester.enterText(find.byKey(_actualKey), '30');
+      await tester.pump();
       await tester.ensureVisible(find.text('完了'));
       await tester.tap(find.text('完了'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('はい'));
-      await tester.pumpAndSettle();
 
-      expect(capturedActual, isNull);
+      expect(capturedActual, 30);
       expect(capturedPredicted, 60);
     });
 
