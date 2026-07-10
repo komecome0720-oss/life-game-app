@@ -7,6 +7,7 @@ import 'package:task_manager/features/wish_list/widgets/add_wish_item_sheet.dart
 import 'package:task_manager/features/wish_list/widgets/wish_item_card.dart';
 import 'package:task_manager/widgets/empty_state_view.dart';
 import 'package:task_manager/widgets/message_guard.dart';
+import 'package:task_manager/widgets/quick_action_fab.dart';
 
 class WishListScreen extends ConsumerWidget {
   const WishListScreen({super.key});
@@ -16,6 +17,14 @@ class WishListScreen extends ConsumerWidget {
       context: context,
       isScrollControlled: true,
       builder: (_) => const AddWishItemSheet(),
+    );
+  }
+
+  void _showQuickPurchaseSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => const AddWishItemSheet(quickPurchase: true),
     );
   }
 
@@ -70,10 +79,17 @@ class WishListScreen extends ConsumerWidget {
               animation: controller,
               builder: (context, _) {
                 if (controller.index == 2) return const SizedBox.shrink();
-                return FloatingActionButton(
+                return QuickActionFab(
                   heroTag: 'wish_list_fab',
-                  onPressed: () => _showAddSheet(context),
-                  child: const Icon(Icons.add),
+                  icon: Icons.add,
+                  onTap: () => _showAddSheet(context),
+                  actions: [
+                    QuickAction(
+                      icon: Icons.check,
+                      tooltip: 'クイック購入',
+                      onTrigger: () => _showQuickPurchaseSheet(context),
+                    ),
+                  ],
                 );
               },
             );

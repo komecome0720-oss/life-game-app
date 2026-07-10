@@ -1,18 +1,25 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 import 'package:task_manager/features/wish_list/model/wish_item.dart';
+import 'package:task_manager/features/wish_list/view/wish_item_completion_screen.dart';
 import 'package:task_manager/features/wish_list/viewmodel/wish_list_viewmodel.dart';
 import 'package:task_manager/utils/app_messenger.dart';
 
 class AddWishItemSheet extends ConsumerStatefulWidget {
-  const AddWishItemSheet({super.key, this.item});
+  const AddWishItemSheet({super.key, this.item, this.quickPurchase = false});
 
   /// 編集対象。null なら新規追加モード。
   final WishItem? item;
+
+  /// true の場合「クイック購入モード」（新規1件を即「獲得済み」として登録）。
+  /// [item] との併用は想定しない。
+  final bool quickPurchase;
 
   @override
   ConsumerState<AddWishItemSheet> createState() => _AddWishItemSheetState();
@@ -39,10 +46,20 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
       _shopUrlCtrl.text = item.shopUrl;
       _existingImageUrl = item.imageUrl;
     }
+    if (widget.quickPurchase) {
+      _priceCtrl.addListener(_onPriceChanged);
+    }
+  }
+
+  void _onPriceChanged() {
+    setState(() {});
   }
 
   @override
   void dispose() {
+    if (widget.quickPurchase) {
+      _priceCtrl.removeListener(_onPriceChanged);
+    }
     _nameCtrl.dispose();
     _priceCtrl.dispose();
     _shopUrlCtrl.dispose();
@@ -88,6 +105,7 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    final navigator = Navigator.of(context);
     setState(() => _isSaving = true);
     try {
       String imageUrl = _existingImageUrl;
@@ -96,6 +114,44 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
             .read(wishListProvider.notifier)
             .uploadWishImage(_selectedImage!);
         imageUrl = url ?? '';
+      }
+
+      if (widget.quickPurchase) {
+        final name = _nameCtrl.text.trim();
+        final price = int.parse(_priceCtrl.text);
+        final shopUrl = _shopUrlCtrl.text.trim();
+        final settings = ref.read(userSettingsProvider).settings;
+        final result = await ref
+            .read(wishListProvider.notifier)
+            .quickPurchase(
+              name: name,
+              price: price,
+              shopUrl: shopUrl,
+              imageUrl: imageUrl,
+            );
+        if (!result.applied) {
+          if (mounted) {
+            showAppSnackBar(
+              context,
+              const SnackBar(content: Text('処理できませんでした')),
+            );
+          }
+          return;
+        }
+        navigator.pop();
+        unawaited(
+          navigator.push(
+            MaterialPageRoute<void>(
+              builder: (_) => WishItemCompletionScreen(
+                userName: settings.displayName,
+                itemPrice: price,
+                balanceBeforeYen: result.balanceBeforeYen,
+                balanceAfterYen: result.balanceAfterYen,
+              ),
+            ),
+          ),
+        );
+        return;
       }
 
       if (_isEditing) {
@@ -118,7 +174,7 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
               imageUrl: imageUrl,
             );
       }
-      if (mounted) Navigator.of(context).pop();
+      if (mounted) navigator.pop();
     } catch (e) {
       if (mounted) {
         showAppSnackBar(
@@ -129,6 +185,55 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
+  }
+
+  String get _title {
+    if (widget.quickPurchase) return 'クイック入力';
+    return _isEditing ? '欲しいものを編集' : '欲しいものを追加';
+  }
+
+  String get _submitLabel {
+    if (widget.quickPurchase) return '獲得済みにする';
+    return _isEditing ? '保存' : '追加';
+  }
+
+  String _formatMoney(int n) {
+    return n.toString().replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (m) => '${m[1]},',
+    );
+  }
+
+  Widget _buildBalancePreview(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final currentBalance = ref.watch(userSettingsProvider).settings.totalEarned;
+    final priceVal = int.tryParse(_priceCtrl.text) ?? 0;
+    final afterBalance = currentBalance - priceVal;
+    final isNegative = afterBalance < 0;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '現在の残高 ¥${_formatMoney(currentBalance)} → 購入後 ¥${_formatMoney(afterBalance)}',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          if (isNegative)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '残高がマイナスになります',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: colorScheme.error,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -149,7 +254,7 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              _isEditing ? '欲しいものを編集' : '欲しいものを追加',
+              _title,
               style: Theme.of(
                 context,
               ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
@@ -180,6 +285,7 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
                 return null;
               },
             ),
+            if (widget.quickPurchase) _buildBalancePreview(context),
             const SizedBox(height: 12),
             TextFormField(
               controller: _shopUrlCtrl,
@@ -283,7 +389,7 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
                         color: Colors.white,
                       ),
                     )
-                  : Text(_isEditing ? '保存' : '追加'),
+                  : Text(_submitLabel),
             ),
           ],
         ),

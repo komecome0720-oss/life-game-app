@@ -407,6 +407,73 @@ class EconomyRepository {
     });
   }
 
+  /// クイック購入：欲しいものリストへの新規登録と同時に「獲得済み」として
+  /// 確定する専用メソッド（既存 `purchaseWish` は無改変）。残高不足でも
+  /// ブロックせず、マイナス残高を許容して必ず適用する。
+  Future<BalanceLedgerResult> quickPurchaseWish({
+    required String name,
+    required int price,
+    String shopUrl = '',
+    String imageUrl = '',
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) throw Exception('Not authenticated');
+
+    if (price <= 0) {
+      final user = await _userRef(uid).get();
+      final balance = _balanceFrom(user);
+      return BalanceLedgerResult(
+        applied: false,
+        deltaYen: 0,
+        balanceBeforeYen: balance,
+        balanceAfterYen: balance,
+        missingAmount: true,
+      );
+    }
+
+    final newItemRef = _userRef(uid).collection('wishlist').doc();
+
+    return _db.runTransaction((tx) async {
+      final userRef = _userRef(uid);
+      final userDoc = await tx.get(userRef);
+      final before = _balanceFrom(userDoc);
+      final delta = -price;
+      final after = before + delta;
+
+      tx.set(newItemRef, {
+        'name': name,
+        'price': price,
+        'shopUrl': shopUrl,
+        'imageUrl': imageUrl,
+        'isPurchased': true,
+        'createdAt': FieldValue.serverTimestamp(),
+        'purchasedAt': FieldValue.serverTimestamp(),
+        'purchasedPriceYen': price,
+      });
+      tx.set(userRef, {
+        'totalEarned': after,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      tx.set(
+        _entriesCol(uid).doc(),
+        _entryData(
+          type: AdventureEntryType.wishPurchased,
+          title: name,
+          deltaYen: delta,
+          balanceBeforeYen: before,
+          balanceAfterYen: after,
+          sourceId: newItemRef.id,
+        ),
+      );
+      return BalanceLedgerResult(
+        applied: true,
+        deltaYen: delta,
+        balanceBeforeYen: before,
+        balanceAfterYen: after,
+      );
+    });
+  }
+
   Future<BalanceLedgerResult> unpurchaseWish({
     required String itemId,
     required String title,

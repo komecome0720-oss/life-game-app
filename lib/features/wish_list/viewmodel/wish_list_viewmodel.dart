@@ -129,6 +129,23 @@ class WishListViewModel extends Notifier<AsyncValue<List<WishItem>>> {
     return result;
   }
 
+  /// クイック購入：欲しいものリストに「獲得済み」で新規1件登録すると同時に
+  /// 残高から price を減算する（既存 wishlist 購読で自動反映）。
+  Future<BalanceLedgerResult> quickPurchase({
+    required String name,
+    required int price,
+    String shopUrl = '',
+    String imageUrl = '',
+  }) {
+    final economy = ref.read(economyRepositoryProvider);
+    return economy.quickPurchaseWish(
+      name: name,
+      price: price,
+      shopUrl: shopUrl,
+      imageUrl: imageUrl,
+    );
+  }
+
   Future<void> deleteItem(String itemId) async {
     final uid = _uid;
     if (uid == null) return;

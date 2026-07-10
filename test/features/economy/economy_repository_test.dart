@@ -135,6 +135,112 @@ void main() {
     });
   });
 
+  group('quickPurchaseWish', () {
+    test('wishlistへisPurchased=true/purchasedPriceYen=priceのdocを新規作成する', () async {
+      await firestore.collection('users').doc(uid).set({'totalEarned': 1000});
+
+      final result = await repo.quickPurchaseWish(name: 'クイックギフト', price: 300);
+
+      expect(result.applied, isTrue);
+
+      final wishlist = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('wishlist')
+          .where('isPurchased', isEqualTo: true)
+          .get();
+      expect(wishlist.docs.length, 1);
+      final data = wishlist.docs.first.data();
+      expect(data['name'], 'クイックギフト');
+      expect(data['price'], 300);
+      expect(data['purchasedPriceYen'], 300);
+      expect(data['createdAt'], isNotNull);
+      expect(data['purchasedAt'], isNotNull);
+    });
+
+    test('totalEarnedがbefore-priceになる', () async {
+      await firestore.collection('users').doc(uid).set({'totalEarned': 1000});
+
+      final result = await repo.quickPurchaseWish(name: 'クイックギフト', price: 300);
+
+      expect(result.balanceBeforeYen, 1000);
+      expect(result.balanceAfterYen, 700);
+
+      final userDoc = await firestore.collection('users').doc(uid).get();
+      expect(userDoc.data()?['totalEarned'], 700);
+    });
+
+    test('残高不足でもブロックせず適用されafterがマイナスになる', () async {
+      await firestore.collection('users').doc(uid).set({'totalEarned': 100});
+
+      final result = await repo.quickPurchaseWish(name: '高額ギフト', price: 500);
+
+      expect(result.applied, isTrue);
+      expect(result.balanceAfterYen, -400);
+
+      final userDoc = await firestore.collection('users').doc(uid).get();
+      expect(userDoc.data()?['totalEarned'], -400);
+    });
+
+    test('adventure_entriesにwishPurchasedが記録されdeltaYen/sourceIdが正しい', () async {
+      await firestore.collection('users').doc(uid).set({'totalEarned': 1000});
+
+      final result = await repo.quickPurchaseWish(name: 'クイックギフト', price: 300);
+
+      final wishlist = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('wishlist')
+          .where('isPurchased', isEqualTo: true)
+          .get();
+      final newItemId = wishlist.docs.first.id;
+
+      final entries = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('adventure_entries')
+          .get();
+      expect(entries.docs.length, 1);
+      final entry = entries.docs.first.data();
+      expect(entry['type'], AdventureEntryType.wishPurchased.wireName);
+      expect(entry['deltaYen'], -300);
+      expect(entry['sourceId'], newItemId);
+      expect(result.deltaYen, -300);
+    });
+
+    test('daily_earningsを書き込まない', () async {
+      await firestore.collection('users').doc(uid).set({'totalEarned': 1000});
+
+      await repo.quickPurchaseWish(name: 'クイックギフト', price: 300);
+
+      final days = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('daily_earnings')
+          .get();
+      expect(days.docs, isEmpty);
+    });
+
+    test('price<=0ならno-op（missingAmount）でwishlistに何も作らない', () async {
+      await firestore.collection('users').doc(uid).set({'totalEarned': 1000});
+
+      final result = await repo.quickPurchaseWish(name: '無効な価格', price: 0);
+
+      expect(result.applied, isFalse);
+      expect(result.missingAmount, isTrue);
+
+      final wishlist = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('wishlist')
+          .get();
+      expect(wishlist.docs, isEmpty);
+
+      final userDoc = await firestore.collection('users').doc(uid).get();
+      expect(userDoc.data()?['totalEarned'], 1000);
+    });
+  });
+
   group('daily_earnings への日次集計', () {
     String todayKey() {
       final now = DateTime.now();
