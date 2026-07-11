@@ -20,6 +20,7 @@ import 'package:task_manager/features/roulette/model/roulette_outcome.dart';
 import 'package:task_manager/features/roulette/providers/roulette_providers.dart';
 import 'package:task_manager/features/roulette/view/roulette_settings_screen.dart';
 import 'package:task_manager/features/timer/model/task_sheet_result.dart';
+import 'package:task_manager/features/timer/providers/timer_providers.dart';
 import 'package:task_manager/features/timer/view/timer_lock_launcher.dart';
 import 'package:task_manager/features/timer/viewmodel/timer_actions.dart';
 import 'package:task_manager/features/todo/providers/todo_providers.dart';
@@ -29,10 +30,13 @@ import 'package:task_manager/features/user_settings/viewmodel/user_settings_view
 import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/models/health_scores.dart';
 import 'package:task_manager/screens/task_completion_screen.dart';
+import 'package:task_manager/screens/task_create_screen.dart';
 import 'package:task_manager/screens/task_editor_screen.dart';
 import 'package:task_manager/utils/app_messenger.dart';
 import 'package:task_manager/widgets/health_panel.dart';
 import 'package:task_manager/widgets/message_guard.dart';
+import 'package:task_manager/widgets/prediction_chip_sheet.dart';
+import 'package:task_manager/widgets/quick_action_fab.dart';
 import 'package:task_manager/widgets/quick_create_sheet.dart';
 import 'package:task_manager/widgets/task_event_detail_sheet.dart';
 import 'package:task_manager/widgets/user_status_panel.dart';
@@ -203,8 +207,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   DateTime _dayForPage(int index) =>
       _baseDay.add(Duration(days: index - _initialPage));
 
-  /// カレンダー枠（または ToDo の estimatedMinutes）から見込時間を算出。
-  int _predictedMinutesFor(CalendarTask task) {
+  /// カレンダー枠（または ToDo の estimatedMinutes）から報酬計算用の「分」を算出する。
+  /// 精度ゲーム（宣言制）とは無関係。報酬・期待報酬の算出は従来ロジックを維持する
+  /// （確定仕様16）。旧名 `_predictedMinutesFor`。
+  int _plannedMinutesFor(CalendarTask task) {
     if (task.isTodo) return task.estimatedMinutes ?? 0;
     final s = task.start;
     final e = task.end;
@@ -231,7 +237,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   Future<void> _openTask(CalendarTask task) async {
     final settings = ref.read(userSettingsProvider).settings;
-    final predictedMinutes = _predictedMinutesFor(task);
+    final predictedMinutes = _plannedMinutesFor(task);
     final expectedReward = _calcReward(
       hourlyRate: settings.taskHourlyRate,
       minutes: predictedMinutes,
@@ -275,6 +281,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             start: start,
             end: end,
           );
+          // 作動中タイマーが同タスクなら active_timer.taskTitle も同期する
+          // （失敗しても保存全体は失敗扱いにしない＝表示追従用のため個別に握りつぶす）。
+          final activeTimer = ref.read(activeTimerStreamProvider).value;
+          if (activeTimer != null &&
+              activeTimer.taskId == taskId &&
+              activeTimer.taskTitle != title) {
+            try {
+              await ref
+                  .read(activeTimerRepositoryProvider)
+                  .updateTaskTitle(title);
+            } catch (_) {
+              // no-op: active_timer 側の追従失敗は保存成否に影響させない。
+            }
+          }
           await ref.read(calendarTaskSyncRepositoryProvider).updateQuadrant(
             taskId: taskId,
             urgency: quadrant.urgency,
@@ -288,6 +308,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               predictedMinutes: predictedMinutes,
               actualMinutes: actualMinutes,
             );
+          }
+          // 枠リサイズ＝再宣言（確定仕様7）：manual・宣言済み・未完了の予定で
+          // 枠が変わった場合、estimatedMinutes を新しい枠の分数へ同期する。
+          // 該当タスクの ActiveTimer 作動中はタイマー側が正のため同期しない。
+          final frameChanged = task.start != start || task.end != end;
+          if (!task.isCompleted &&
+              task.sourceType == TaskSourceType.manual &&
+              task.predictionDeclared &&
+              frameChanged &&
+              start != null &&
+              end != null &&
+              ref.read(activeTimerStreamProvider).value?.taskId != taskId) {
+            final frameMinutes =
+                end.difference(start).inMinutes.clamp(0, 24 * 60);
+            await ref
+                .read(calendarTaskSyncRepositoryProvider)
+                .saveDeclaredPrediction(taskId: taskId, minutes: frameMinutes);
           }
           return true;
         } catch (e) {
@@ -384,8 +421,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         if (!mounted) return;
         Navigator.of(context).push<bool>(
           MaterialPageRoute<bool>(
-            builder: (_) =>
-                TaskEditorScreen(mode: TaskEditorMode.edit, initial: task),
+            builder: (_) => TaskDetailEditScreen(task: task),
           ),
         );
       },
@@ -394,8 +430,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         final baseStart = task.end ?? DateTime.now();
         Navigator.of(context).push<bool>(
           MaterialPageRoute<bool>(
-            builder: (_) => TaskEditorScreen(
-              mode: TaskEditorMode.create,
+            builder: (_) => TaskCreateScreen(
               initial: task,
               initialStart: baseStart,
             ),
@@ -460,12 +495,42 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       return;
     }
     if (!mounted) return;
+
+    // 宣言＝スタート動作（確定仕様2）。チップシートを出すのは未宣言タスクの
+    // 初回スタートのみ。既存の作動中タイマーがあれば launcher がそちらを再開する
+    // （渡した predictedMinutes は無視される）ためスキップ。宣言済みタスクは
+    // 宣言値で即スタートする（途中保存→閉じる→再スタート時に再度聞かない）。
+    final hasActiveTimer = ref.read(activeTimerStreamProvider).value != null;
+    final declared = declaredPredictedMinutes(resolved);
+    final int predictedMinutesForLaunch;
+    if (hasActiveTimer) {
+      predictedMinutesForLaunch = _plannedMinutesFor(resolved);
+    } else if (declared != null) {
+      predictedMinutesForLaunch = declared;
+    } else {
+      final chosen = await showPredictionChipSheet(
+        context,
+        ref: ref,
+        highlighted: null,
+      );
+      if (chosen == null || !mounted) return; // キャンセル＝開始の中断
+      unawaited(
+        ref
+            .read(calendarTaskSyncRepositoryProvider)
+            .saveDeclaredPrediction(taskId: resolved.id, minutes: chosen)
+            .catchError((Object e) {
+          if (mounted) _showErrorSnackBar('予測の保存に失敗しました: $e');
+        }),
+      );
+      predictedMinutesForLaunch = chosen;
+    }
+
     if (result == TaskSheetResult.startPomodoro) {
       await TimerLockLauncher.openForPomodoro(
         context,
         ref,
         task: resolved,
-        predictedMinutes: _predictedMinutesFor(resolved),
+        predictedMinutes: predictedMinutesForLaunch,
       );
       return;
     }
@@ -473,7 +538,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       context,
       ref,
       task: resolved,
-      predictedMinutes: _predictedMinutesFor(resolved),
+      predictedMinutes: predictedMinutesForLaunch,
     );
   }
 
@@ -484,20 +549,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   // ── 空スロットタップでの予定追加 ───────────────────────────────
 
   Future<void> _handleEmptyTap(DateTime initialStart) async {
-    final defaultDuration = ref
-        .read(userSettingsProvider)
-        .settings
-        .defaultCalendarDurationMinutes;
     final result = await showModalBottomSheet<QuickCreateResult>(
       context: context,
       isScrollControlled: true,
-      builder: (ctx) => QuickCreateSheet(
-        initialStart: initialStart,
-        initialDurationMinutes: defaultDuration,
-      ),
+      builder: (ctx) => QuickCreateSheet(initialStart: initialStart),
     );
     if (result == null || !mounted) return;
     final (:title, :durationMinutes, :quadrant) = result;
+    // 空きスロットからの作成＝チップで選んだ枠がそのまま宣言になる（確定仕様6）。
     final end = initialStart.add(Duration(minutes: durationMinutes));
     final vm = ref.read(calendarSyncViewModelProvider.notifier);
     final success = await vm.createTask(
@@ -506,6 +565,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       end: end,
       urgency: quadrant.urgency,
       importance: quadrant.importance,
+      estimatedMinutes: durationMinutes,
+      predictionDeclared: true,
     );
     if (!mounted) return;
     if (success) {
@@ -970,19 +1031,34 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         ),
         title: const Text('人生ゲーム化'),
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: QuickActionFab(
         key: OnboardingKeys.addTaskFab,
         heroTag: 'home_fab',
+        icon: Icons.add,
         tooltip: '予定を追加',
-        onPressed: () {
+        onTap: () {
           Navigator.of(context).push<bool>(
             MaterialPageRoute<bool>(
-              builder: (_) =>
-                  const TaskEditorScreen(mode: TaskEditorMode.create),
+              builder: (_) => const TaskCreateScreen(),
             ),
           );
         },
-        child: const Icon(Icons.add),
+        actions: [
+          QuickAction(
+            icon: Icons.timer_outlined,
+            label: 'ストップウォッチ',
+            tooltip: 'ストップウォッチ',
+            onTrigger: () =>
+                TimerLockLauncher.openForQuickStart(context, ref, pomodoro: false),
+          ),
+          QuickAction(
+            icon: Icons.local_cafe_outlined,
+            label: 'ポモドーロ',
+            tooltip: 'ポモドーロ',
+            onTrigger: () =>
+                TimerLockLauncher.openForQuickStart(context, ref, pomodoro: true),
+          ),
+        ],
       ),
       drawer: Drawer(
         child: ListView(

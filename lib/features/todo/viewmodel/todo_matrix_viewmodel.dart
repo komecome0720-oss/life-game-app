@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
 import 'package:task_manager/features/todo/providers/todo_providers.dart';
-import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
+import 'package:task_manager/widgets/prediction_chip_sheet.dart';
 
 /// ToDo マトリクスの4象限。urgency×importance の組合せをキーにする。
 enum Quadrant {
@@ -106,6 +106,8 @@ class TodoMatrixViewModel {
   final Ref ref;
 
   /// 新規 ToDo を作成。[quadrant] 省略時は領域1（×緊急・重要）。
+  /// [estimatedMinutes] はチップで選ばれた予測時間（任意）。null なら未宣言のまま作成し、
+  /// 非 null なら宣言済みとして作成する（デフォルト30分の自動付与は廃止。確定仕様5）。
   /// 象限の先頭に出すため、現在時刻ベースの負の値を orderIndex に採番する
   /// （0 固定だと手動並び替え後の既存タスクとタイになり順序が不安定になるため）。
   /// 「既存最大/最小 ± 1」方式は、ストリームが未更新のまま連続作成すると
@@ -114,6 +116,7 @@ class TodoMatrixViewModel {
   Future<void> createTodo(
     String title, {
     Quadrant quadrant = Quadrant.notUrgentImportant,
+    int? estimatedMinutes,
   }) async {
     final titleTrim = title.trim();
     if (titleTrim.isEmpty) return;
@@ -124,8 +127,8 @@ class TodoMatrixViewModel {
       urgency: quadrant.urgency,
       importance: quadrant.importance,
       orderIndex: orderIndex,
-      estimatedMinutes:
-          ref.read(userSettingsProvider).settings.defaultTodoEstimatedMinutes,
+      estimatedMinutes: estimatedMinutes,
+      predictionDeclared: estimatedMinutes != null,
     );
   }
 
@@ -160,7 +163,8 @@ class TodoMatrixViewModel {
   }
 
   /// カレンダー予定（[dragged]、isTodo=false）を ToDo 化して [quadrant] の末尾に追加する。
-  /// 所要時間は元の start/end の分数（欠損・終日等は既存デフォルト30分）。
+  /// 宣言状態を引き継ぐ：宣言済みなら estimatedMinutes（宣言の正）＋フラグ真、
+  /// 未宣言なら null＋偽（30分フォールバックは廃止。宣言はスタート時に行う）。
   Future<void> convertCalendarTaskToTodo({
     required CalendarTask dragged,
     required Quadrant quadrant,
@@ -174,7 +178,8 @@ class TodoMatrixViewModel {
           urgency: quadrant.urgency,
           importance: quadrant.importance,
           orderIndex: orderIndex,
-          estimatedMinutes: estimatedMinutesFromRange(dragged),
+          estimatedMinutes: declaredPredictedMinutes(dragged),
+          predictionDeclared: dragged.predictionDeclared,
         );
   }
 
@@ -207,16 +212,6 @@ List<CalendarTask>? computeReorderedList({
   if (oldIndex == target) return null;
   working.insert(target, dragged);
   return working;
-}
-
-/// カレンダー予定の start/end から ToDo 化時の estimatedMinutes を算出する。
-/// start/end 欠損・終日・0分以下等の異常値は既存デフォルトの30分とする。
-int estimatedMinutesFromRange(CalendarTask task) {
-  final start = task.start;
-  final end = task.end;
-  if (task.isAllDay || start == null || end == null) return 30;
-  final minutes = end.difference(start).inMinutes;
-  return minutes > 0 ? minutes : 30;
 }
 
 final todoMatrixViewModelProvider =

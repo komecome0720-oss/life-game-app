@@ -1,6 +1,16 @@
 import 'package:task_manager/features/economy/model/budget_split.dart';
 import 'package:task_manager/features/health/model/health_streak_state.dart';
 
+/// リビルド（再計算）ロジックのバージョン。ロジックを変更したら上げる。
+/// state.rebuildVersion がこれ未満なら次回前進時にリビルドを走らせる。
+const int kStreakRebuildVersion = 1;
+
+/// ストリーク機能導入エポック（'yyyy-MM-dd'）。
+/// ver2.2.0＝コミット823ba1d（2026-07-09）の前日で、ユーザー報告の96点日を含む。
+/// リビルドはこの日以降のみを対象とし、それより前の健康ログ（ストリーク導入前から存在）には
+/// フリーズ消費・リセット・称号付与を遡及適用しない（仕様「これから先に適用」の原則）。
+const String kStreakEpochDateKey = '2026-07-08';
+
 /// [advanceOneDay] への1日分の入力。
 class DayInput {
   const DayInput({
@@ -82,4 +92,39 @@ List<String> _mergeTitle(List<String> titles, int count) {
   final title = streakTitleForCount(count);
   if (title == null || titles.contains(title)) return titles;
   return [...titles, title];
+}
+
+/// [rebuildStreak] の結果。state と、日付→outcome のマップ。
+class RebuildResult {
+  const RebuildResult({required this.state, required this.outcomes});
+
+  final HealthStreakState state;
+
+  /// dateKey → 'qualified' | 'perfect' | 'frozen' | 'broken'
+  final Map<String, String> outcomes;
+}
+
+/// 純粋関数：ログ履歴から streakCount / freezesRemaining / dayOutcome を一括再計算する。
+///
+/// [base] の achievedTitles は保持したまま、streakCount=0・freezesRemaining=0・
+/// freezeMonthKey=null（→初日の月替り判定で再付与される）・lastQualifiedDateKey=null
+/// を初期状態に、[days]（dateKey 昇順であること）を [advanceOneDay] で順に適用する。
+/// lastProcessedDateKey / rebuildVersion の付与は呼び出し側の責務。
+RebuildResult rebuildStreak(HealthStreakState base, List<DayInput> days) {
+  var state = HealthStreakState(
+    streakCount: 0,
+    lastQualifiedDateKey: null,
+    lastProcessedDateKey: base.lastProcessedDateKey,
+    freezesRemaining: 0,
+    freezeMonthKey: null,
+    achievedTitles: base.achievedTitles,
+    rebuildVersion: base.rebuildVersion,
+  );
+  final outcomes = <String, String>{};
+  for (final day in days) {
+    final result = advanceOneDay(state, day);
+    state = result.state;
+    outcomes[day.dateKey] = result.outcome;
+  }
+  return RebuildResult(state: state, outcomes: outcomes);
 }

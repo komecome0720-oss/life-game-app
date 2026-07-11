@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:task_manager/features/timer/view/timer_lock_launcher.dart';
 import 'package:task_manager/features/todo/providers/todo_providers.dart';
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
 import 'package:task_manager/features/todo/widgets/calendar_drop_bar.dart';
 import 'package:task_manager/features/todo/widgets/todo_quadrant.dart';
+import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 import 'package:task_manager/widgets/message_guard.dart';
+import 'package:task_manager/widgets/prediction_chip_sheet.dart';
+import 'package:task_manager/widgets/quick_action_fab.dart';
 
 /// Eisenhower Matrix 形式の ToDo 一覧画面。
 class TodoMatrixScreen extends ConsumerWidget {
@@ -13,8 +17,13 @@ class TodoMatrixScreen extends ConsumerWidget {
   Future<void> _showAddDialog(BuildContext context, WidgetRef ref) async {
     final controller = TextEditingController();
     var selected = Quadrant.urgentImportant;
+    // 予測時間チップ（任意）。選べば宣言済み ToDo として作成される（確定仕様5）。
+    int? selectedMinutes;
+    final presets =
+        ref.read(userSettingsProvider).settings.predictionChipMinutes;
 
-    final result = await showDialog<({String title, Quadrant quadrant})>(
+    final result =
+        await showDialog<({String title, Quadrant quadrant, int? estimatedMinutes})>(
       context: context,
       builder: (ctx) {
         return StatefulBuilder(
@@ -22,7 +31,11 @@ class TodoMatrixScreen extends ConsumerWidget {
             void submit() {
               Navigator.pop(
                 ctx,
-                (title: controller.text, quadrant: selected),
+                (
+                  title: controller.text,
+                  quadrant: selected,
+                  estimatedMinutes: selectedMinutes,
+                ),
               );
             }
 
@@ -66,7 +79,9 @@ class TodoMatrixScreen extends ConsumerWidget {
 
             return AlertDialog(
               title: const Text('ToDo を追加'),
-              content: Column(
+              // チップ行の追加でキーボード表示時にあふれ得るためスクロール可能にする。
+              content: SingleChildScrollView(
+                child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -101,7 +116,29 @@ class TodoMatrixScreen extends ConsumerWidget {
                       chip(Quadrant.urgentNotImportant),
                     ],
                   ),
+                  const SizedBox(height: 16),
+                  Text(
+                    '予測時間（任意）',
+                    style: Theme.of(ctx).textTheme.labelMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  // 再タップで解除できる任意チップ行。
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final m in presets)
+                        ChoiceChip(
+                          label: Text(formatPredictionMinutes(m)),
+                          selected: selectedMinutes == m,
+                          onSelected: (on) => setState(
+                            () => selectedMinutes = on ? m : null,
+                          ),
+                        ),
+                    ],
+                  ),
                 ],
+                ),
               ),
               actions: [
                 TextButton(
@@ -121,9 +158,11 @@ class TodoMatrixScreen extends ConsumerWidget {
     if (result == null) return;
     final title = result.title.trim();
     if (title.isEmpty) return;
-    await ref
-        .read(todoMatrixViewModelProvider)
-        .createTodo(title, quadrant: result.quadrant);
+    await ref.read(todoMatrixViewModelProvider).createTodo(
+          title,
+          quadrant: result.quadrant,
+          estimatedMinutes: result.estimatedMinutes,
+        );
   }
 
   @override
@@ -137,10 +176,26 @@ class TodoMatrixScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('ToDo'),
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: QuickActionFab(
         heroTag: 'todo_fab',
-        onPressed: () => _showAddDialog(context, ref),
-        child: const Icon(Icons.add),
+        icon: Icons.add,
+        onTap: () => _showAddDialog(context, ref),
+        actions: [
+          QuickAction(
+            icon: Icons.timer_outlined,
+            label: 'ストップウォッチ',
+            tooltip: 'ストップウォッチ',
+            onTrigger: () =>
+                TimerLockLauncher.openForQuickStart(context, ref, pomodoro: false),
+          ),
+          QuickAction(
+            icon: Icons.local_cafe_outlined,
+            label: 'ポモドーロ',
+            tooltip: 'ポモドーロ',
+            onTrigger: () =>
+                TimerLockLauncher.openForQuickStart(context, ref, pomodoro: true),
+          ),
+        ],
       ),
       body: MessageGuard(
         child: SafeArea(

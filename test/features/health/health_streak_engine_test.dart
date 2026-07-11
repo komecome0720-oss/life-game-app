@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:task_manager/features/health/model/health_log.dart';
+import 'package:task_manager/features/health/model/health_scoring.dart';
 import 'package:task_manager/features/health/model/health_streak_engine.dart';
 import 'package:task_manager/features/health/model/health_streak_state.dart';
 
@@ -177,6 +179,77 @@ void main() {
         _day('2026-07-05', ratio: 0.10),
       );
       expect(r.state.lastQualifiedDateKey, '2026-07-04');
+    });
+  });
+
+  group('rebuildStreak', () {
+    test('高スコア日(0.96)→未達→未達 でstreakCountが1のまま維持される（ユーザー報告シナリオの再現）', () {
+      final result = rebuildStreak(const HealthStreakState(), [
+        _day('2026-07-08', ratio: 0.96),
+        _day('2026-07-09', ratio: 0.0),
+        _day('2026-07-10', ratio: 0.0),
+      ]);
+      expect(result.state.streakCount, 1);
+      expect(result.outcomes['2026-07-08'], 'qualified');
+      expect(result.outcomes['2026-07-09'], 'frozen');
+      expect(result.outcomes['2026-07-10'], 'frozen');
+      expect(result.state.freezesRemaining, 0); // 月初2個付与→2日消費で0
+    });
+
+    test('月替りを跨ぐとフリーズが2個に再付与される', () {
+      final result = rebuildStreak(const HealthStreakState(), [
+        _day('2026-06-29', ratio: 0.0, monthKey: '2026-06'),
+        _day('2026-06-30', ratio: 0.0, monthKey: '2026-06'),
+        _day('2026-07-01', ratio: 0.0, monthKey: '2026-07'),
+      ]);
+      // 6月分は2個付与→2日で使い切り0。7月に入り2個へ再付与→1日消費で1。
+      expect(result.state.freezeMonthKey, '2026-07');
+      expect(result.state.freezesRemaining, 1);
+    });
+
+    test('baseのachievedTitlesが保持されたまま新称号がマージされる', () {
+      final base = const HealthStreakState(achievedTitles: ['習慣の芽']);
+      final days = List.generate(
+        7,
+        (i) => _day('2026-07-0${i + 1}', ratio: 0.85),
+      );
+      final result = rebuildStreak(base, days);
+      expect(result.state.streakCount, 7);
+      expect(result.state.achievedTitles, ['習慣の芽', '一週間の勇者']);
+    });
+
+    test('フリーズ0で未達日を挟むとstreakCountがリセットされる', () {
+      final result = rebuildStreak(const HealthStreakState(), [
+        _day('2026-07-01', ratio: 0.85), // qualified, streak=1
+        _day('2026-07-02', ratio: 0.10), // frozen, freeze 2->1
+        _day('2026-07-03', ratio: 0.10), // frozen, freeze 1->0
+        _day('2026-07-04', ratio: 0.10), // freeze0 → broken
+      ]);
+      expect(result.outcomes['2026-07-04'], 'broken');
+      expect(result.state.streakCount, 0);
+      expect(result.state.freezesRemaining, 0);
+    });
+  });
+
+  group('HealthScoring.ratioOf', () {
+    test('瞑想ONスナップショット(max100)でtotalScore96→0.96', () {
+      const log = HealthLog(
+        dateKey: '2026-07-08',
+        totalScore: 96,
+        achievedPercent: 0.0,
+        meditationEnabledSnapshot: true,
+      );
+      expect(HealthScoring.ratioOf(log), closeTo(0.96, 0.0001));
+    });
+
+    test('瞑想OFFスナップショット(max80)でtotalScore64→0.8（成立境界）', () {
+      const log = HealthLog(
+        dateKey: '2026-07-08',
+        totalScore: 64,
+        achievedPercent: 0.0,
+        meditationEnabledSnapshot: false,
+      );
+      expect(HealthScoring.ratioOf(log), closeTo(0.8, 0.0001));
     });
   });
 }

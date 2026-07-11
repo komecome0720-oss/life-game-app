@@ -1,15 +1,18 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
+import 'package:task_manager/features/wish_list/data/og_image_fetcher.dart';
 import 'package:task_manager/features/wish_list/model/wish_item.dart';
 import 'package:task_manager/features/wish_list/view/wish_item_completion_screen.dart';
 import 'package:task_manager/features/wish_list/viewmodel/wish_list_viewmodel.dart';
 import 'package:task_manager/utils/app_messenger.dart';
+import 'package:task_manager/utils/image_resize.dart';
 
 class AddWishItemSheet extends ConsumerStatefulWidget {
   const AddWishItemSheet({super.key, this.item, this.quickPurchase = false});
@@ -30,11 +33,22 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
   final _nameCtrl = TextEditingController();
   final _priceCtrl = TextEditingController();
   final _shopUrlCtrl = TextEditingController();
+  final _shopUrlFocus = FocusNode();
   File? _selectedImage;
   String _existingImageUrl = '';
+  Uint8List? _fetchedImageBytes;
+  bool _isFetchingImage = false;
+  bool _fetchFailed = false;
+  String _lastTriedUrl = '';
+  Future<void>? _pendingFetch;
   bool _isSaving = false;
 
   bool get _isEditing => widget.item != null;
+
+  bool get _hasImage =>
+      _selectedImage != null ||
+      _fetchedImageBytes != null ||
+      _existingImageUrl.isNotEmpty;
 
   @override
   void initState() {
@@ -45,14 +59,25 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
       _priceCtrl.text = item.price.toString();
       _shopUrlCtrl.text = item.shopUrl;
       _existingImageUrl = item.imageUrl;
+      if (item.imageUrl.isEmpty && item.shopUrl.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _maybeFetchImage());
+      }
     }
     if (widget.quickPurchase) {
       _priceCtrl.addListener(_onPriceChanged);
     }
+    _shopUrlFocus.addListener(_onShopUrlFocusChange);
   }
 
   void _onPriceChanged() {
     setState(() {});
+  }
+
+  void _onShopUrlFocusChange() {
+    if (!mounted) return;
+    if (!_shopUrlFocus.hasFocus) {
+      _maybeFetchImage();
+    }
   }
 
   @override
@@ -60,10 +85,48 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
     if (widget.quickPurchase) {
       _priceCtrl.removeListener(_onPriceChanged);
     }
+    _shopUrlFocus.removeListener(_onShopUrlFocusChange);
+    _shopUrlFocus.dispose();
     _nameCtrl.dispose();
     _priceCtrl.dispose();
     _shopUrlCtrl.dispose();
     super.dispose();
+  }
+
+  void _maybeFetchImage() {
+    if (_hasImage) return;
+    final url = _shopUrlCtrl.text.trim();
+    if (url.isEmpty || url == _lastTriedUrl || _isFetchingImage) return;
+
+    _lastTriedUrl = url;
+    setState(() {
+      _isFetchingImage = true;
+      _fetchFailed = false;
+    });
+    _pendingFetch = _fetchAndApplyImage(url);
+  }
+
+  Future<void> _fetchAndApplyImage(String url) async {
+    try {
+      final fetcher = ref.read(ogImageFetcherProvider);
+      final bytes = await fetcher.fetchImageBytes(url);
+      final resized = bytes == null ? null : await resizeToJpeg(bytes);
+      if (!mounted) return;
+      if (_shopUrlCtrl.text.trim() != url) return;
+      if (_selectedImage != null) return;
+      setState(() {
+        if (resized != null) {
+          _fetchedImageBytes = resized;
+        } else {
+          _fetchFailed = true;
+        }
+      });
+    } finally {
+      _pendingFetch = null;
+      if (mounted) {
+        setState(() => _isFetchingImage = false);
+      }
+    }
   }
 
   void _showImagePickerSheet() {
@@ -97,9 +160,17 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
 
   Future<void> _pickImage(ImageSource source) async {
     final picker = ImagePicker();
-    final picked = await picker.pickImage(source: source, imageQuality: 80);
+    final picked = await picker.pickImage(
+      source: source,
+      maxWidth: 800,
+      maxHeight: 800,
+      imageQuality: 80,
+    );
     if (picked != null) {
-      setState(() => _selectedImage = File(picked.path));
+      setState(() {
+        _selectedImage = File(picked.path);
+        _fetchedImageBytes = null;
+      });
     }
   }
 
@@ -108,11 +179,29 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
     final navigator = Navigator.of(context);
     setState(() => _isSaving = true);
     try {
+      if (_pendingFetch != null) {
+        await _pendingFetch!.timeout(const Duration(seconds: 5), onTimeout: () {});
+      } else {
+        final url = _shopUrlCtrl.text.trim();
+        if (!_hasImage && url.isNotEmpty && url != _lastTriedUrl) {
+          _maybeFetchImage();
+          final pending = _pendingFetch;
+          if (pending != null) {
+            await pending.timeout(const Duration(seconds: 5), onTimeout: () {});
+          }
+        }
+      }
+
       String imageUrl = _existingImageUrl;
       if (_selectedImage != null) {
         final url = await ref
             .read(wishListProvider.notifier)
             .uploadWishImage(_selectedImage!);
+        imageUrl = url ?? '';
+      } else if (_fetchedImageBytes != null) {
+        final url = await ref
+            .read(wishListProvider.notifier)
+            .uploadWishImageBytes(_fetchedImageBytes!);
         imageUrl = url ?? '';
       }
 
@@ -147,6 +236,7 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
                 itemPrice: price,
                 balanceBeforeYen: result.balanceBeforeYen,
                 balanceAfterYen: result.balanceAfterYen,
+                shopUrl: shopUrl,
               ),
             ),
           ),
@@ -289,16 +379,32 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
             const SizedBox(height: 12),
             TextFormField(
               controller: _shopUrlCtrl,
+              focusNode: _shopUrlFocus,
               keyboardType: TextInputType.url,
               decoration: const InputDecoration(
                 labelText: 'ショップURL（任意）',
                 border: OutlineInputBorder(),
               ),
+              onChanged: (_) {
+                if (_fetchFailed) {
+                  setState(() => _fetchFailed = false);
+                }
+              },
             ),
+            if (_fetchFailed)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  '写真を自動取得できませんでした。手動で追加できます',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
             const SizedBox(height: 12),
             GestureDetector(
-              onTap: _isSaving ? null : _showImagePickerSheet,
-              child: _selectedImage != null || _existingImageUrl.isNotEmpty
+              onTap: (_isSaving || _isFetchingImage) ? null : _showImagePickerSheet,
+              child: _hasImage
                   ? Stack(
                       children: [
                         ClipRRect(
@@ -310,12 +416,19 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
                                   width: double.infinity,
                                   fit: BoxFit.cover,
                                 )
-                              : Image.network(
-                                  _existingImageUrl,
+                              : _fetchedImageBytes != null
+                              ? Image.memory(
+                                  _fetchedImageBytes!,
                                   height: 120,
                                   width: double.infinity,
                                   fit: BoxFit.cover,
-                                  errorBuilder: (_, _, _) => Container(
+                                )
+                              : CachedNetworkImage(
+                                  imageUrl: _existingImageUrl,
+                                  height: 120,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover,
+                                  errorWidget: (_, _, _) => Container(
                                     height: 120,
                                     color: colorScheme.surfaceContainerHighest,
                                     child: Icon(
@@ -331,7 +444,9 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
                           child: GestureDetector(
                             onTap: () => setState(() {
                               _selectedImage = null;
+                              _fetchedImageBytes = null;
                               _existingImageUrl = '';
+                              _lastTriedUrl = '';
                             }),
                             child: Container(
                               decoration: const BoxDecoration(
@@ -348,6 +463,35 @@ class _AddWishItemSheetState extends ConsumerState<AddWishItemSheet> {
                           ),
                         ),
                       ],
+                    )
+                  : _isFetchingImage
+                  ? Container(
+                      height: 80,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: colorScheme.outline,
+                          style: BorderStyle.solid,
+                        ),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '写真を取得中…',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
                     )
                   : Container(
                       height: 80,

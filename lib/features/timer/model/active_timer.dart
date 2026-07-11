@@ -22,6 +22,7 @@ class ActiveTimer {
     required this.accumulatedSeconds,
     required this.updatedAtUtc,
     this.pomodoro,
+    this.quickStart = false,
   });
 
   final String taskId;
@@ -38,6 +39,9 @@ class ActiveTimer {
 
   /// null = 通常タイマー。非null = ポモドーロ実行中。
   final PomodoroRun? pomodoro;
+
+  /// クイックスタート（FAB長押しからの起動）で作られたタスクかどうか。
+  final bool quickStart;
 
   bool get isRunning => startedAtUtc != null;
 
@@ -60,6 +64,7 @@ class ActiveTimer {
     DateTime? updatedAtUtc,
     PomodoroRun? pomodoro,
     bool clearPomodoro = false,
+    bool? quickStart,
   }) {
     return ActiveTimer(
       taskId: taskId ?? this.taskId,
@@ -71,6 +76,7 @@ class ActiveTimer {
       accumulatedSeconds: accumulatedSeconds ?? this.accumulatedSeconds,
       updatedAtUtc: updatedAtUtc ?? this.updatedAtUtc,
       pomodoro: clearPomodoro ? null : (pomodoro ?? this.pomodoro),
+      quickStart: quickStart ?? this.quickStart,
     );
   }
 
@@ -85,6 +91,7 @@ class ActiveTimer {
       'accumulatedSeconds': accumulatedSeconds,
       'updatedAtUtc': Timestamp.fromDate(updatedAtUtc),
       'pomodoro': pomodoro?.toMap(),
+      'quickStart': quickStart,
     };
   }
 
@@ -101,6 +108,7 @@ class ActiveTimer {
       updatedAtUtc: updatedTs?.toDate() ?? DateTime.now().toUtc(),
       pomodoro:
           PomodoroRun.fromMap(data['pomodoro'] as Map<String, dynamic>?),
+      quickStart: data['quickStart'] as bool? ?? false,
     );
   }
 }

@@ -241,6 +241,139 @@ void main() {
     });
   });
 
+  group('saveHealthLogAndAdjust', () {
+    test(
+      'deltaYen:0は値のみをmergeし、確定系フィールドは書き込まない（fire-and-forget）',
+      () async {
+        await firestore.collection('users').doc(uid).set({
+          'totalEarned': 1000,
+        });
+        // 既存docにisFinalized:trueがある状態で値のみの保存を行っても
+        // 確定状態が巻き戻らないことを確認する。
+        await firestore
+            .collection('users')
+            .doc(uid)
+            .collection('healthLogs')
+            .doc('2026-07-05')
+            .set({
+              'isFinalized': true,
+              'finalizedEarnedYen': 300,
+              'balanceAppliedYen': 300,
+            });
+
+        final result = await repo.saveHealthLogAndAdjust(
+          dateKey: '2026-07-05',
+          healthLogData: {
+            'mealGrams': 500,
+            'isFinalized': false,
+            'finalizedEarnedYen': 0,
+            'balanceAppliedYen': 0,
+          },
+          deltaYen: 0,
+        );
+
+        expect(result.applied, isFalse);
+
+        // fire-and-forgetの書き込み完了をマイクロタスクの消化で待つ。
+        await Future<void>.delayed(Duration.zero);
+
+        final doc = await firestore
+            .collection('users')
+            .doc(uid)
+            .collection('healthLogs')
+            .doc('2026-07-05')
+            .get();
+        expect(doc.data()?['mealGrams'], 500);
+        // 確定系フィールドは一切書き込まれない（既存値のまま）。
+        expect(doc.data()?['isFinalized'], isTrue);
+        expect(doc.data()?['finalizedEarnedYen'], 300);
+        expect(doc.data()?['balanceAppliedYen'], 300);
+
+        final userDoc = await firestore.collection('users').doc(uid).get();
+        expect(userDoc.data()?['totalEarned'], 1000);
+
+        final entries = await firestore
+            .collection('users')
+            .doc(uid)
+            .collection('adventure_entries')
+            .get();
+        expect(entries.docs, isEmpty);
+      },
+    );
+
+    test(
+      'finalize済みログにdeltaYen:0で保存してもisFinalizedはtrueのまま（二重加算防止の回帰）',
+      () async {
+        await firestore.collection('users').doc(uid).set({
+          'totalEarned': 1000,
+        });
+        await firestore
+            .collection('users')
+            .doc(uid)
+            .collection('healthLogs')
+            .doc('2026-07-06')
+            .set({
+              'isFinalized': true,
+              'finalizedEarnedYen': 200,
+              'balanceAppliedYen': 200,
+            });
+
+        await repo.saveHealthLogAndAdjust(
+          dateKey: '2026-07-06',
+          healthLogData: {'exerciseMinutes': 30},
+          deltaYen: 0,
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        final doc = await firestore
+            .collection('users')
+            .doc(uid)
+            .collection('healthLogs')
+            .doc('2026-07-06')
+            .get();
+        expect(doc.data()?['isFinalized'], isTrue);
+        expect(doc.data()?['balanceAppliedYen'], 200);
+
+        final userDoc = await firestore.collection('users').doc(uid).get();
+        expect(userDoc.data()?['totalEarned'], 1000); // 巻き戻し・二重加算なし
+      },
+    );
+
+    test('deltaYenが非0ならトランザクションで残高・台帳・ログを更新する（既存経路の回帰）', () async {
+      await firestore.collection('users').doc(uid).set({'totalEarned': 1000});
+
+      final result = await repo.saveHealthLogAndAdjust(
+        dateKey: '2026-07-07',
+        healthLogData: {'isFinalized': true, 'finalizedEarnedYen': 250},
+        deltaYen: 100,
+      );
+
+      expect(result.applied, isTrue);
+      expect(result.balanceBeforeYen, 1000);
+      expect(result.balanceAfterYen, 1100);
+
+      final userDoc = await firestore.collection('users').doc(uid).get();
+      expect(userDoc.data()?['totalEarned'], 1100);
+
+      final doc = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('healthLogs')
+          .doc('2026-07-07')
+          .get();
+      // トランザクション経路は healthLogData をそのまま書く（フィールド除去はしない）。
+      expect(doc.data()?['isFinalized'], isTrue);
+      expect(doc.data()?['finalizedEarnedYen'], 250);
+
+      final entries = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('adventure_entries')
+          .get();
+      expect(entries.docs.length, 1);
+    });
+  });
+
   group('daily_earnings への日次集計', () {
     String todayKey() {
       final now = DateTime.now();

@@ -8,6 +8,7 @@ import 'package:task_manager/features/pomodoro/providers/pomodoro_day_providers.
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/utils/app_messenger.dart';
+import 'package:task_manager/utils/google_event_colors.dart';
 
 /// カレンダーの表示モード。
 enum CalendarViewMode { week, day }
@@ -882,6 +883,10 @@ Color resolveTaskColor(
   bool isManaged = false,
 }) {
   if (isManaged) {
+    if (task.colorId != null) {
+      final custom = kGoogleEventColors[task.colorId];
+      if (custom != null) return custom;
+    }
     final q = QuadrantX.from(
         urgency: task.urgency, importance: task.importance);
     return q.accentColor(scheme);

@@ -9,6 +9,7 @@ import 'package:task_manager/features/pomodoro/view/pomodoro_settings_screen.dar
 import 'package:task_manager/features/roulette/model/roulette_outcome.dart';
 import 'package:task_manager/features/roulette/providers/roulette_providers.dart';
 import 'package:task_manager/features/timer/model/task_sheet_result.dart';
+import 'package:task_manager/features/timer/providers/timer_providers.dart';
 import 'package:task_manager/features/timer/widgets/split_start_button.dart';
 import 'package:task_manager/features/todo/providers/todo_providers.dart';
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
@@ -18,6 +19,7 @@ import 'package:task_manager/screens/task_completion_screen.dart';
 import 'package:task_manager/theme/app_tokens.dart';
 import 'package:task_manager/utils/app_messenger.dart';
 import 'package:task_manager/widgets/draggable_detail_sheet.dart';
+import 'package:task_manager/widgets/prediction_chip_sheet.dart';
 import 'package:task_manager/widgets/task_detail/quadrant_selector.dart';
 
 /// 大型一体型スタートボタンの高さ。「現状」列もこの高さ内に収める。
@@ -69,7 +71,10 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
 
   late bool _urgency;
   late bool _importance;
-  late int _estimatedMinutes;
+
+  /// 宣言済み予測（分）。null は未宣言（「未設定（—）」表示から開始）。
+  /// ステッパーを明示的に触ると宣言になる（保存時 predictionDeclared: true）。
+  int? _estimatedMinutes;
   late Quadrant _quadrant;
 
   bool _isCompleting = false;
@@ -79,9 +84,7 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
     if (_descCtrl.text.trim() != (widget.task.description ?? '')) return true;
     if (_urgency != widget.task.urgency) return true;
     if (_importance != widget.task.importance) return true;
-    final defaultMinutes =
-        ref.read(userSettingsProvider).settings.defaultTodoEstimatedMinutes;
-    if (_estimatedMinutes != (widget.task.estimatedMinutes ?? defaultMinutes)) {
+    if (_estimatedMinutes != declaredPredictedMinutes(widget.task)) {
       return true;
     }
     return false;
@@ -99,8 +102,7 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
     }
     _urgency = widget.task.urgency;
     _importance = widget.task.importance;
-    _estimatedMinutes = widget.task.estimatedMinutes ??
-        ref.read(userSettingsProvider).settings.defaultTodoEstimatedMinutes;
+    _estimatedMinutes = declaredPredictedMinutes(widget.task);
     _quadrant = QuadrantX.from(urgency: _urgency, importance: _importance);
   }
 
@@ -139,18 +141,39 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
 
   // ── 保存 ────────────────────────────────────────────
 
-  Future<void> _save() async {
-    final title = _titleCtrl.text.trim();
-    if (title.isEmpty) return;
+  /// 編集内容を反映したタスク。ステッパーを触って宣言した場合は
+  /// estimatedMinutes＋predictionDeclared を併せて反映する
+  /// （未宣言のままなら元の宣言状態を維持）。
+  CalendarTask _editedTask(String title) {
     // description: '' を渡すと copyWith 内で `'' ?? this.description` → '' になるので空文字クリア可能
-    final updated = widget.task.copyWith(
+    return widget.task.copyWith(
       title: title,
       urgency: _urgency,
       importance: _importance,
       estimatedMinutes: _estimatedMinutes,
+      predictionDeclared:
+          _estimatedMinutes != null ? true : widget.task.predictionDeclared,
       description: _descCtrl.text.trim(),
     );
+  }
+
+  Future<void> _save() async {
+    final title = _titleCtrl.text.trim();
+    if (title.isEmpty) return;
+    final updated = _editedTask(title);
     await ref.read(todoRepositoryProvider).upsert(updated);
+    // 作動中タイマーが同タスクなら active_timer.taskTitle も同期する
+    // （失敗しても保存全体は失敗扱いにしない＝表示追従用のため個別に握りつぶす）。
+    final activeTimer = ref.read(activeTimerStreamProvider).value;
+    if (activeTimer != null &&
+        activeTimer.taskId == widget.task.id &&
+        activeTimer.taskTitle != title) {
+      try {
+        await ref.read(activeTimerRepositoryProvider).updateTaskTitle(title);
+      } catch (_) {
+        // no-op: active_timer 側の追従失敗は保存成否に影響させない。
+      }
+    }
     if (!mounted) return;
     Navigator.of(context).pop();
   }
@@ -207,13 +230,7 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
     var start = now.subtract(Duration(minutes: durationMinutes));
     final dayStart = DateTime(now.year, now.month, now.day);
     if (start.isBefore(dayStart)) start = dayStart; // 日またぎ丸め（仕様5）
-    final updated = widget.task.copyWith(
-      title: title,
-      urgency: _urgency,
-      importance: _importance,
-      estimatedMinutes: _estimatedMinutes,
-      description: _descCtrl.text.trim(),
-    );
+    final updated = _editedTask(title);
     try {
       await ref.read(todoRepositoryProvider).upsertAndConvertToCalendarEvent(
         task: updated,
@@ -236,7 +253,8 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
             taskId: widget.task.id,
             title: title,
             rewardYen: reward,
-            predictedMinutes: _estimatedMinutes,
+            // 宣言済みなら宣言値、未宣言なら 0（統計から自動除外。確定仕様9）。
+            predictedMinutes: _estimatedMinutes ?? 0,
             actualMinutes: actual,
           );
       if (!result.applied) {
@@ -269,7 +287,8 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
             outcome: outcome,
             cumulativeTaskCountBefore: result.cumulativeTaskCountBefore,
             cumulativeTaskCountAfter: result.cumulativeTaskCountAfter,
-            predictedMinutes: _estimatedMinutes,
+            // 宣言済みなら宣言値、未宣言なら 0（統計から自動除外。確定仕様9）。
+            predictedMinutes: _estimatedMinutes ?? 0,
             actualMinutes: actual,
           ),
         ),
@@ -290,11 +309,13 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
         : widget.task.title;
     final desc = _descCtrl.text.trim();
     try {
+      // 複製元の宣言状態を引き継ぐ（未宣言なら null＋false）。
       final id = await ref.read(todoRepositoryProvider).createTodo(
         title: '$titleのコピー',
         urgency: _urgency,
         importance: _importance,
         estimatedMinutes: _estimatedMinutes,
+        predictionDeclared: _estimatedMinutes != null,
         orderIndex: widget.task.orderIndex,
         description: desc.isNotEmpty ? desc : null,
       );
@@ -337,14 +358,16 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
 
   // ── ステッパー ───────────────────────────────────────
 
+  /// ステッパー操作＝宣言。未宣言（null）から触った場合は 0 起点で加減する。
   void _adjustMinutes(int delta) {
     setState(() {
-      _estimatedMinutes = (_estimatedMinutes + delta).clamp(5, 600);
+      _estimatedMinutes = ((_estimatedMinutes ?? 0) + delta).clamp(5, 600);
       _quadrant = QuadrantX.from(urgency: _urgency, importance: _importance);
     });
   }
 
-  String _formatMinutes(int m) {
+  String _formatMinutes(int? m) {
+    if (m == null) return '未設定（—）';
     if (m < 60) return '$m分';
     if (m % 60 == 0) return '${m ~/ 60}時間';
     return '${m ~/ 60}時間${m % 60}分';
@@ -387,10 +410,12 @@ class _TodoDetailBodyState extends ConsumerState<_TodoDetailBody> {
     final text = Theme.of(context).textTheme;
     final scheme = Theme.of(context).colorScheme;
 
-    // 報酬プレビュー
+    // 報酬プレビュー（報酬計算は従来ロジック維持。宣言が無ければ既存の
+    // estimatedMinutes にフォールバック。確定仕様16）
     final settings = ref.read(userSettingsProvider).settings;
-    final rewardYen = settings.taskHourlyRate > 0
-        ? rewardYenFor(hourlyRate: settings.taskHourlyRate, minutes: _estimatedMinutes)
+    final plannedMinutes = _estimatedMinutes ?? widget.task.estimatedMinutes ?? 0;
+    final rewardYen = settings.taskHourlyRate > 0 && plannedMinutes > 0
+        ? rewardYenFor(hourlyRate: settings.taskHourlyRate, minutes: plannedMinutes)
         : widget.task.rewardYen;
 
     return PopScope(

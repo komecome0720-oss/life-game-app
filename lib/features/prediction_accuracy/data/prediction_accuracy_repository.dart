@@ -21,7 +21,9 @@ class PredictionAccuracyRepository {
   CollectionReference<Map<String, dynamic>> _tasksCol(String uid) =>
       _db.collection('users').doc(uid).collection('tasks');
 
-  /// 予測・実績とも記録済みの完了タスクを、完了日時の新しい順に返す（リアルタイム反映）。
+  /// 宣言済み予測・実績とも記録済みの完了タスクを、完了日時の新しい順に返す（リアルタイム反映）。
+  /// [CalendarTask.predictionDeclared] が false（未宣言）のタスクは対象外
+  /// （宣言制導入前の旧完了タスクを自動的に統計から除外する＝シーズン2リセット）。
   Stream<PredictionAccuracyStats> watchStats() {
     final uid = _auth.currentUser?.uid;
     if (uid == null) {
@@ -36,7 +38,9 @@ class PredictionAccuracyRepository {
       final tasks = snap.docs
           .map((doc) => CalendarTask.fromMap(doc.id, doc.data()))
           .where((t) =>
-              (t.predictedMinutes ?? 0) > 0 && (t.actualMinutes ?? 0) > 0)
+              t.predictionDeclared &&
+              (t.predictedMinutes ?? 0) > 0 &&
+              (t.actualMinutes ?? 0) > 0)
           .toList()
         ..sort((a, b) {
           final aAt = a.completedAt ?? DateTime(0);
@@ -54,6 +58,9 @@ class PredictionAccuracyRepository {
       return PredictionAccuracyStats(
         averageError: PredictionAccuracyConfig.rollingAverage(errors),
         cumulativeCount: tasks.length,
+        windowCount: tasks.length < PredictionAccuracyConfig.rollingWindowSize
+            ? tasks.length
+            : PredictionAccuracyConfig.rollingWindowSize,
       );
     });
   }

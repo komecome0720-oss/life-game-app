@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/wish_list/model/wish_item.dart';
+import 'package:task_manager/features/wish_list/model/wish_sort.dart';
 import 'package:task_manager/features/wish_list/viewmodel/wish_list_viewmodel.dart';
+import 'package:task_manager/features/wish_list/viewmodel/wish_sort_providers.dart';
 import 'package:task_manager/features/roulette/widgets/reward_tickets_tab.dart';
 import 'package:task_manager/features/wish_list/widgets/add_wish_item_sheet.dart';
 import 'package:task_manager/features/wish_list/widgets/wish_item_card.dart';
+import 'package:task_manager/features/wish_list/widgets/wish_sort_bar.dart';
 import 'package:task_manager/widgets/empty_state_view.dart';
 import 'package:task_manager/widgets/message_guard.dart';
 import 'package:task_manager/widgets/quick_action_fab.dart';
@@ -109,10 +112,14 @@ class WishListScreen extends ConsumerWidget {
                   _ItemList(
                     items: active,
                     onDelete: (item) => _confirmDelete(context, ref, item),
+                    sortProvider: activeWishSortProvider,
+                    availableKeys: kActiveWishSortKeys,
                   ),
                   _ItemList(
                     items: purchased,
                     onDelete: (item) => _confirmDelete(context, ref, item),
+                    sortProvider: purchasedWishSortProvider,
+                    availableKeys: kPurchasedWishSortKeys,
                   ),
                   const RewardTicketsTab(),
                 ],
@@ -125,15 +132,23 @@ class WishListScreen extends ConsumerWidget {
   }
 }
 
-class _ItemList extends StatelessWidget {
-  const _ItemList({required this.items, required this.onDelete});
+class _ItemList extends ConsumerWidget {
+  const _ItemList({
+    required this.items,
+    required this.onDelete,
+    required this.sortProvider,
+    required this.availableKeys,
+  });
 
   final List<WishItem> items;
   final void Function(WishItem) onDelete;
+  final NotifierProvider<WishSortNotifier, WishSort> sortProvider;
+  final List<WishSortKey> availableKeys;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     if (items.isEmpty) {
+      // アイテム0件のタブでは並び替えバーを非表示にし、空表示のみとする。
       return const Center(
         child: EmptyStateView(
           icon: Icons.favorite_border,
@@ -141,11 +156,22 @@ class _ItemList extends StatelessWidget {
         ),
       );
     }
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: items.length,
-      itemBuilder: (_, i) =>
-          WishItemCard(item: items[i], onDelete: () => onDelete(items[i])),
+    final sort = ref.watch(sortProvider);
+    final sorted = sortWishItems(items, sort);
+    return Column(
+      children: [
+        WishSortBar(sortProvider: sortProvider, availableKeys: availableKeys),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            itemCount: sorted.length,
+            itemBuilder: (_, i) => WishItemCard(
+              item: sorted[i],
+              onDelete: () => onDelete(sorted[i]),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

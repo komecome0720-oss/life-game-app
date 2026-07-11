@@ -232,6 +232,50 @@ void main() {
           isTrue);
     });
 
+    test('predictedMinutes=0（未宣言完了）でも completeTaskFast に0が渡り正常完了する',
+        () async {
+      when(() => calendarRepo.moveTaskById(
+            taskId: any(named: 'taskId'),
+            newStart: any(named: 'newStart'),
+            newEnd: any(named: 'newEnd'),
+          )).thenAnswer((_) async {});
+      when(() => economyRepo.completeTask(
+            taskId: any(named: 'taskId'),
+            title: any(named: 'title'),
+            rewardYen: any(named: 'rewardYen'),
+            predictedMinutes: any(named: 'predictedMinutes'),
+            actualMinutes: any(named: 'actualMinutes'),
+          )).thenAnswer((_) async => const BalanceLedgerResult(
+            applied: true,
+            deltaYen: 1000,
+            balanceBeforeYen: 0,
+            balanceAfterYen: 1000,
+            cumulativeTaskCountBefore: 0,
+            cumulativeTaskCountAfter: 1,
+          ));
+      when(() => rouletteService.spin(
+            completionId: any(named: 'completionId'),
+            settings: any(named: 'settings'),
+          )).thenAnswer((_) async => const RouletteOutcome.invalidConfig());
+
+      final actions = container.read(timerActionsProvider);
+      final result = await actions.complete(
+        task: sampleTask(),
+        predictedMinutes: 0,
+        actualMinutes: 45,
+      );
+
+      expect(result, isNotNull);
+      expect(result!.predictedMinutes, 0);
+      verify(() => economyRepo.completeTask(
+            taskId: any(named: 'taskId'),
+            title: any(named: 'title'),
+            rewardYen: any(named: 'rewardYen'),
+            predictedMinutes: 0,
+            actualMinutes: 45,
+          )).called(1);
+    });
+
     test('ToDoタスクは completeTask 前に convertToCalendarEvent を呼ぶ', () async {
       final callOrder = <String>[];
       when(() => todoRepo.convertToCalendarEvent(

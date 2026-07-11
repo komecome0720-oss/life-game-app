@@ -120,6 +120,84 @@ void main() {
     });
   });
 
+  group('UserSettings predictionChipMinutes', () {
+    test('default で [15,30,45,60,90,120,180] を持つ', () {
+      const settings = UserSettings();
+      expect(
+        settings.predictionChipMinutes,
+        UserSettings.defaultPredictionChipMinutes,
+      );
+    });
+
+    test('copyWith で更新できる', () {
+      const settings = UserSettings();
+      final updated = settings.copyWith(predictionChipMinutes: [10, 20]);
+      expect(updated.predictionChipMinutes, [10, 20]);
+      expect(
+        settings.predictionChipMinutes,
+        UserSettings.defaultPredictionChipMinutes,
+      );
+    });
+
+    test('toFirestore / fromFirestore の round-trip', () async {
+      const settings = UserSettings(predictionChipMinutes: [10, 25, 50]);
+      final data = settings.toFirestore();
+      expect(data['predictionChipMinutes'], [10, 25, 50]);
+
+      final firestore = FakeFirebaseFirestore();
+      final ref = firestore.collection('users').doc('u1');
+      await ref.set({'predictionChipMinutes': [10, 25, 50]});
+      final doc = await ref.get();
+      final restored = UserSettings.fromFirestore(doc);
+      expect(restored.predictionChipMinutes, [10, 25, 50]);
+    });
+
+    test('fromFirestore: キー無しならデフォルトプリセット', () async {
+      final firestore = FakeFirebaseFirestore();
+      final ref = firestore.collection('users').doc('u1');
+      await ref.set({'displayName': 'たろう'});
+      final doc = await ref.get();
+      final settings = UserSettings.fromFirestore(doc);
+      expect(
+        settings.predictionChipMinutes,
+        UserSettings.defaultPredictionChipMinutes,
+      );
+    });
+
+    test('fromFirestore: 数値以外の要素は除外される', () async {
+      final firestore = FakeFirebaseFirestore();
+      final ref = firestore.collection('users').doc('u1');
+      await ref.set({'predictionChipMinutes': [15, 'x', 30]});
+      final doc = await ref.get();
+      final settings = UserSettings.fromFirestore(doc);
+      expect(settings.predictionChipMinutes, [15, 30]);
+    });
+
+    test('fromFirestore: 空リストならデフォルトプリセット', () async {
+      final firestore = FakeFirebaseFirestore();
+      final ref = firestore.collection('users').doc('u1');
+      await ref.set({'predictionChipMinutes': []});
+      final doc = await ref.get();
+      final settings = UserSettings.fromFirestore(doc);
+      expect(
+        settings.predictionChipMinutes,
+        UserSettings.defaultPredictionChipMinutes,
+      );
+    });
+
+    test('fromFirestore: 全要素が非数値ならデフォルトプリセット', () async {
+      final firestore = FakeFirebaseFirestore();
+      final ref = firestore.collection('users').doc('u1');
+      await ref.set({'predictionChipMinutes': ['x', 'y']});
+      final doc = await ref.get();
+      final settings = UserSettings.fromFirestore(doc);
+      expect(
+        settings.predictionChipMinutes,
+        UserSettings.defaultPredictionChipMinutes,
+      );
+    });
+  });
+
   group('UserSettings taskHourlyRate / healthDailyCapYen / maxActiveHealthScore', () {
     test('taskHourlyRate は hourlyRate の70%', () {
       const settings = UserSettings(

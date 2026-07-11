@@ -161,8 +161,10 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
     return false;
   }
 
-  /// ステージ後の start/end から算出した見込時間（分）。
-  int get _livePredictedMinutes {
+  /// ステージ後の start/end から算出した報酬計算用の「分」（枠の長さ）。
+  /// 精度ゲーム（宣言）とは別物（確定仕様16）。報酬ライブ計算と
+  /// onSaveEdits(predictedMinutes:) への受け渡しに使う。旧名 `_livePredictedMinutes`。
+  int get _plannedLiveMinutes {
     final s = _currentStart;
     final e = _currentEnd;
     if (s != null && e != null) {
@@ -172,9 +174,26 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
     return widget.predictedMinutes;
   }
 
+  /// 宣言済み予測（分）。未宣言なら null（「未宣言」表示・統計対象外）。
+  /// 宣言済み manual 予定はステージ中の枠の分数（枠リサイズ＝再宣言のライブプレビュー）、
+  /// 宣言済み googleCalendar 予定は estimatedMinutes（枠と宣言は独立。確定仕様7）。
+  int? get _declaredLiveMinutes {
+    if (!widget.task.predictionDeclared) return null;
+    if (widget.task.sourceType == TaskSourceType.manual &&
+        !widget.task.isCompleted) {
+      final s = _currentStart;
+      final e = _currentEnd;
+      if (s != null && e != null) {
+        final m = e.difference(s).inMinutes;
+        if (m > 0) return m.clamp(1, 24 * 60);
+      }
+    }
+    return widget.task.estimatedMinutes ?? 0;
+  }
+
   int get _liveRewardYen {
     final calc = widget.calcReward;
-    if (calc != null) return calc(_livePredictedMinutes);
+    if (calc != null) return calc(_plannedLiveMinutes);
     return widget.expectedRewardYen;
   }
 
@@ -361,7 +380,7 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
         quadrant: _currentQuadrant,
         start: _currentStart,
         end: _currentEnd,
-        predictedMinutes: _livePredictedMinutes,
+        predictedMinutes: _plannedLiveMinutes,
         actualMinutes: actual,
       );
     } finally {
@@ -450,8 +469,9 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
 
     if (!mounted) return;
     Navigator.of(context).pop();
+    // 宣言済みなら宣言値を、未宣言なら 0 を渡す（0 は統計から自動除外。確定仕様9）。
     await widget.onComplete(
-      predictedMinutes: _livePredictedMinutes,
+      predictedMinutes: _declaredLiveMinutes ?? 0,
       actualMinutes: fieldMinutes,
     );
   }
@@ -460,8 +480,10 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final scheme = Theme.of(context).colorScheme;
-    final liveMinutes = _livePredictedMinutes;
+    final liveMinutes = _plannedLiveMinutes;
     final predictedLabel = liveMinutes > 0 ? '$liveMinutes分' : '—';
+    final declared = _declaredLiveMinutes;
+    final declaredLabel = declared == null ? '未宣言' : '$declared分';
 
     return PopScope(
       canPop: false,
@@ -551,6 +573,7 @@ class _TaskEventDetailBodyState extends State<_TaskEventDetailBody> {
                   ? _CompletedSummaryCard(task: widget.task)
                   : _RewardCard(
                       predictedLabel: predictedLabel,
+                      declaredLabel: declaredLabel,
                       expectedRewardYen: _liveRewardYen,
                     ),
               const SizedBox(height: 16),
@@ -602,9 +625,14 @@ String _formatYen(int n) {
 }
 
 class _RewardCard extends StatelessWidget {
-  const _RewardCard({required this.predictedLabel, required this.expectedRewardYen});
+  const _RewardCard({
+    required this.predictedLabel,
+    required this.declaredLabel,
+    required this.expectedRewardYen,
+  });
 
   final String predictedLabel;
+  final String declaredLabel;
   final int expectedRewardYen;
 
   @override
@@ -626,6 +654,20 @@ class _RewardCard extends StatelessWidget {
               const SizedBox(width: 6),
               Text(
                 '見込時間：$predictedLabel',
+                style: text.bodyMedium?.copyWith(
+                  color: scheme.onPrimaryContainer,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              Icon(Icons.flag_outlined, size: 18, color: scheme.primary),
+              const SizedBox(width: 6),
+              Text(
+                '予測宣言：$declaredLabel',
                 style: text.bodyMedium?.copyWith(
                   color: scheme.onPrimaryContainer,
                   fontWeight: FontWeight.w700,
@@ -674,6 +716,8 @@ class _CompletedSummaryCard extends StatelessWidget {
     final actual = task.actualMinutes;
     String? accuracyLabel;
     if (predicted != null && predicted > 0 && actual != null) {
+      // 分を主役に表示（確定仕様14）。%はクランプ済みの誤差から算出。
+      final diff = actual - predicted;
       final percent = (PredictionAccuracyConfig.errorFor(
                 predictedMinutes: predicted,
                 actualMinutes: actual,
@@ -681,7 +725,8 @@ class _CompletedSummaryCard extends StatelessWidget {
               100)
           .round();
       accuracyLabel =
-          '予測$predicted分 → 実績$actual分（${percent >= 0 ? '+' : ''}$percent%）';
+          '${diff >= 0 ? '+' : ''}$diff分（${percent >= 0 ? '+' : ''}$percent%）'
+          '　予測$predicted分→実績$actual分';
     }
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
@@ -950,7 +995,7 @@ class _ActionButtonsRow extends StatelessWidget {
                 child: TextButton.icon(
                   onPressed: onEdit,
                   icon: const Icon(Icons.edit_outlined),
-                  label: const Text('編集'),
+                  label: const Text('詳細'),
                 ),
               ),
             if (onDuplicate != null)

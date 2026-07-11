@@ -35,21 +35,38 @@ import 'package:task_manager/utils/app_messenger.dart';
 /// 既存docがある場合、その `pomodoro` 有無と起動経路が食い違うことがある
 /// （例: ポモドーロdoc残存中に通常スタート）。この場合は doc の型を正として
 /// 画面を振り分け、食い違いをユーザーへ通知する。
+///
+/// [predictedMinutes] は宣言済みの値を渡すこと（予測宣言チップシートで選ばれた値、
+/// または再開時は既存の宣言値）。既存タイマーが存続している間は渡した値を無視して
+/// 既存docを再開するため、呼び出し側は既存タイマーの有無を先に確認し、存続時は
+/// チップシートの表示をスキップすること（宣言＝スタート動作のため、既存タイマー
+/// 再開時に新たな宣言を求めても意味を持たない）。
+/// クイックスタート（FAB長押し）で作成するタスクの既定タイトル。
+const String kQuickStartDefaultTitle = 'クイックスタート';
+
 class TimerLockLauncher {
   TimerLockLauncher._();
 
   static bool _visible = false;
+
+  /// `openForQuickStart` のタスク作成〜起動処理中の二重再入防止フラグ
+  /// （`_visible` とは別。`_visible` を流用すると入れ子の open* 呼び出しが
+  /// 早期returnしてしまうため分離する）。
+  static bool _quickStarting = false;
 
   /// 現在ロック画面を表示中（起動処理中を含む）かどうか。
   static bool get isVisible => _visible;
 
   /// シートの「スタート」ボタンから呼ばれる起動口（通常タイマー）。
   /// 既にタイマーが存在する場合は上書きせずそれを使う（repository.start の仕様）。
+  /// [quickStart] は新規スタート時のみ `ActiveTimer` に反映する
+  /// （既存doc再開・型ミスマッチ分岐では常に false のまま扱う）。
   static Future<void> openForStart(
     BuildContext context,
     WidgetRef ref, {
     required CalendarTask task,
     required int predictedMinutes,
+    bool quickStart = false,
   }) async {
     if (_visible) return; // 二重起動防止
     _visible = true; // Firestore書き込みより必ず前に同期的にON
@@ -63,6 +80,7 @@ class TimerLockLauncher {
               isTodo: task.isTodo,
               taskTitle: task.title,
               predictedMinutes: predictedMinutes,
+              quickStart: quickStart,
             );
       } else if (asyncTimer.value != null) {
         // 既存タイマーはメモリ値をそのまま尊重（Firestoreアクセスなし）。
@@ -74,6 +92,7 @@ class TimerLockLauncher {
               isTodo: task.isTodo,
               taskTitle: task.title,
               predictedMinutes: predictedMinutes,
+              quickStart: quickStart,
             );
         timer = started.timer;
         _notifyOnWriteFailure(context, started.write);
@@ -91,6 +110,7 @@ class TimerLockLauncher {
             builder: (_) => PomodoroLockScreen(
               initialTimer: timer,
               initialTask: task,
+              quickStart: false,
             ),
           ),
         );
@@ -103,6 +123,7 @@ class TimerLockLauncher {
             initialTimer: timer,
             initialTask: task,
             showStartFlash: true,
+            quickStart: quickStart,
           ),
         ),
       );
@@ -120,11 +141,14 @@ class TimerLockLauncher {
 
   /// シートの「ポモドーロ」ボタンから呼ばれる起動口。
   /// 既にタイマーが存在する場合は上書きせずそれを使う（startPomodoro の仕様）。
+  /// [quickStart] は新規スタート時のみ `ActiveTimer` に反映する
+  /// （既存doc再開・型ミスマッチ分岐では常に false のまま扱う）。
   static Future<void> openForPomodoro(
     BuildContext context,
     WidgetRef ref, {
     required CalendarTask task,
     required int predictedMinutes,
+    bool quickStart = false,
   }) async {
     if (_visible) return;
     _visible = true;
@@ -146,6 +170,7 @@ class TimerLockLauncher {
               baseActualMinutes: baseActualMinutes,
               dateKey: resolved.dateKey,
               dayStart: resolved.dayStart,
+              quickStart: quickStart,
             );
       } else if (asyncTimer.value != null) {
         // 既存タイマーはメモリ値をそのまま尊重（Firestoreアクセスなし）。
@@ -170,6 +195,7 @@ class TimerLockLauncher {
                   baseActualMinutes: baseActualMinutes,
                   dateKey: resolved.dateKey,
                   dayStart: resolved.dayStart,
+                  quickStart: quickStart,
                 );
         timer = started.timer;
         _notifyOnWriteFailure(context, started.write);
@@ -187,6 +213,7 @@ class TimerLockLauncher {
             builder: (_) => TimerLockScreen(
               initialTimer: timer,
               initialTask: task,
+              quickStart: false,
             ),
           ),
         );
@@ -215,6 +242,7 @@ class TimerLockLauncher {
             initialTimer: timer,
             initialTask: task,
             showStartFlash: true,
+            quickStart: quickStart,
           ),
         ),
       );
@@ -250,6 +278,7 @@ class TimerLockLauncher {
             builder: (_) => PomodoroLockScreen(
               initialTimer: timerSnapshot,
               initialTask: task,
+              quickStart: timerSnapshot.quickStart,
             ),
           ),
         );
@@ -261,11 +290,95 @@ class TimerLockLauncher {
           builder: (_) => TimerLockScreen(
             initialTimer: timerSnapshot,
             initialTask: task,
+            quickStart: timerSnapshot.quickStart,
           ),
         ),
       );
     } finally {
       _visible = false;
+    }
+  }
+
+  /// FAB長押し（クイックスタート）からの起動口。カレンダー予定を1件
+  /// （タイトル＝[kQuickStartDefaultTitle]・開始/終了=now・見込み0・
+  /// `predictionDeclared: true`）作成し、即ロック画面を開く。
+  ///
+  /// 作成前に `activeTimer` の有無を確認し、既に計測中なら新規タスクは作らず
+  /// その計測中のロック画面を開き直す（保険。通常は起きない前提）。
+  ///
+  /// `_visible` とは別に `_quickStarting` で二重再入を防ぐ
+  /// （タスク作成のFirestore往復中に再度呼ばれてゴミタスクが二重生成されるのを防止）。
+  static Future<void> openForQuickStart(
+    BuildContext context,
+    WidgetRef ref, {
+    required bool pomodoro,
+  }) async {
+    if (_visible || _quickStarting) return;
+    _quickStarting = true;
+    try {
+      final asyncTimer = ref.read(activeTimerStreamProvider);
+      if (asyncTimer.hasValue && asyncTimer.value != null) {
+        final existing = asyncTimer.value!;
+        showAppSnackBar(
+          context,
+          const SnackBar(content: Text('計測中のタイマーがあります')),
+        );
+        final resolved =
+            await resolveTaskForStart(ref, taskId: existing.taskId);
+        if (!context.mounted) return;
+        await openForRestore(
+          context,
+          ref,
+          timerSnapshot: existing,
+          task: resolved,
+        );
+        return;
+      }
+      final now = DateTime.now();
+      final taskId =
+          await ref.read(calendarTaskSyncRepositoryProvider).createTaskFull(
+                title: kQuickStartDefaultTitle,
+                start: now,
+                end: now,
+                predictionDeclared: true,
+              );
+      final quickTask = CalendarTask(
+        id: taskId,
+        title: kQuickStartDefaultTitle,
+        start: now,
+        end: now,
+        rewardYen: 0,
+        isTodo: false,
+        predictedMinutes: 0,
+        predictionDeclared: true,
+      );
+      if (!context.mounted) return;
+      if (pomodoro) {
+        await openForPomodoro(
+          context,
+          ref,
+          task: quickTask,
+          predictedMinutes: 0,
+          quickStart: true,
+        );
+      } else {
+        await openForStart(
+          context,
+          ref,
+          task: quickTask,
+          predictedMinutes: 0,
+          quickStart: true,
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        showAppSnackBar(
+          context,
+          SnackBar(content: Text('クイックスタートの開始に失敗しました: $e')),
+        );
+      }
+    } finally {
+      _quickStarting = false;
     }
   }
 

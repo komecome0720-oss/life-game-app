@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:task_manager/features/prediction_accuracy/model/prediction_accuracy_config.dart';
 import 'package:task_manager/features/prediction_accuracy/providers/prediction_accuracy_providers.dart';
 import 'package:task_manager/features/user_settings/model/user_settings.dart';
 import 'package:task_manager/features/user_settings/view/user_settings_screen.dart';
@@ -191,26 +192,48 @@ class _PredictionAccuracyLine extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
     final stats = ref.watch(predictionAccuracyStatsProvider).asData?.value;
     final percent = stats?.percentRounded;
     final title = stats?.title;
+    final measuringRemainder = stats?.measuringRemainder;
+    final windowCount = stats?.windowCount ?? 0;
     final percentText = percent == null
         ? '—'
         : '${percent >= 0 ? '+' : ''}$percent%';
+    // 対象30件未満のコールドスタートは称号の右に「直近○件」と件数を明示する（確定仕様13）。
+    final showWindowCount =
+        percent != null && windowCount < PredictionAccuracyConfig.rollingWindowSize;
+    // 称号行：件数不足（悪い側・ビビリ系）は中立の「計測中」表示（確定仕様12）。
+    final titleText = title ??
+        (measuringRemainder != null ? '計測中（あと$measuringRemainder件）' : null);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         statusLine(Icons.schedule, '時間予測精度', percentText, text),
-        if (title != null)
+        if (titleText != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 4),
             child: Align(
               alignment: Alignment.centerRight,
-              child: Text(
-                title,
-                style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    titleText,
+                    style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (showWindowCount) ...[
+                    const SizedBox(width: 6),
+                    Text(
+                      '（直近$windowCount件）',
+                      style: text.labelSmall?.copyWith(color: scheme.outline),
+                      maxLines: 1,
+                    ),
+                  ],
+                ],
               ),
             ),
           ),

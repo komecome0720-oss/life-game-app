@@ -74,6 +74,14 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
     return (error * 100).round();
   }
 
+  /// 今回の予測との差分（分）。表示は分を主役にする（確定仕様14）。
+  int? get _thisTaskDiffMinutes {
+    final predicted = widget.predictedMinutes;
+    final actual = widget.actualMinutes;
+    if (predicted == null || predicted <= 0 || actual == null) return null;
+    return actual - predicted;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -229,9 +237,11 @@ class _TaskCompletionScreenState extends State<TaskCompletionScreen>
                   ],
                   if (_thisTaskErrorPercent != null) ...[
                     const SizedBox(height: 4),
+                    // 分を主役に表示（確定仕様14）。
                     Text(
-                      '今回の予測精度：${_thisTaskErrorPercent! >= 0 ? '+' : ''}$_thisTaskErrorPercent%'
-                      '（予測${widget.predictedMinutes}分→実績${widget.actualMinutes}分）',
+                      '今回の予測：${_thisTaskDiffMinutes! >= 0 ? '+' : ''}$_thisTaskDiffMinutes分'
+                      '（${_thisTaskErrorPercent! >= 0 ? '+' : ''}$_thisTaskErrorPercent%）'
+                      '　予測${widget.predictedMinutes}分→実績${widget.actualMinutes}分',
                       textAlign: TextAlign.center,
                       style: text.bodyMedium?.copyWith(
                         color: scheme.onSurfaceVariant,

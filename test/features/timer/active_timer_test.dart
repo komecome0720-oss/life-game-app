@@ -115,5 +115,51 @@ void main() {
       expect(restored.isRunning, isFalse);
       expect(restored.accumulatedSeconds, 600);
     });
+
+    test('quickStart: toMap/fromMap の往復変換・既定値・copyWith', () {
+      final updatedAt = DateTime.utc(2026, 7, 6, 9, 5, 0);
+      final timer = ActiveTimer(
+        taskId: 'task-789',
+        isTodo: false,
+        taskTitle: 'クイックスタート',
+        predictedMinutes: 0,
+        startedAtUtc: null,
+        accumulatedSeconds: 0,
+        updatedAtUtc: updatedAt,
+        quickStart: true,
+      );
+
+      final map = timer.toMap();
+      expect(map['quickStart'], isTrue);
+
+      final restored = ActiveTimer.fromMap(map);
+      expect(restored.quickStart, isTrue);
+
+      // quickStart キーが無い（後方互換）既存docは false にフォールバックする。
+      final legacyMap = {...map}..remove('quickStart');
+      final legacyRestored = ActiveTimer.fromMap(legacyMap);
+      expect(legacyRestored.quickStart, isFalse);
+
+      // 既定値は false。
+      expect(
+        ActiveTimer(
+          taskId: 't',
+          isTodo: false,
+          taskTitle: 'タスク',
+          predictedMinutes: 0,
+          startedAtUtc: null,
+          accumulatedSeconds: 0,
+          updatedAtUtc: updatedAt,
+        ).quickStart,
+        isFalse,
+      );
+
+      // copyWith で明示的に上書きできる。
+      final toggledOff = timer.copyWith(quickStart: false);
+      expect(toggledOff.quickStart, isFalse);
+      // quickStart を渡さなければ元の値を維持する。
+      final unchanged = timer.copyWith(taskTitle: '別名');
+      expect(unchanged.quickStart, isTrue);
+    });
   });
 }

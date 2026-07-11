@@ -4,9 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/auth/providers/auth_providers.dart';
+import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
 import 'package:task_manager/features/economy/providers/economy_providers.dart';
+import 'package:task_manager/features/pomodoro/providers/pomodoro_day_providers.dart';
 import 'package:task_manager/features/timer/model/active_timer.dart';
 import 'package:task_manager/features/timer/providers/timer_providers.dart';
+import 'package:task_manager/features/timer/view/timer_lock_launcher.dart';
 import 'package:task_manager/features/timer/viewmodel/timer_actions.dart';
 import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/screens/task_completion_screen.dart';
@@ -30,6 +33,7 @@ class TimerLockScreen extends ConsumerStatefulWidget {
     required this.initialTimer,
     required this.initialTask,
     this.showStartFlash = false,
+    this.quickStart = false,
   });
 
   /// 起動時点の ActiveTimer（以後は stream の値で更新される）。
@@ -41,16 +45,33 @@ class TimerLockScreen extends ConsumerStatefulWidget {
   /// スタート起点で開いたときのみ true（「スタート！」演出用）。
   final bool showStartFlash;
 
+  /// クイックスタート（FAB長押し）で作られたタスクかどうか。
+  /// true の間は名前欄が空欄＋プレースホルダー表示、見込み欄が編集可になる。
+  final bool quickStart;
+
   @override
   ConsumerState<TimerLockScreen> createState() => _TimerLockScreenState();
 }
 
 class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
     with WidgetsBindingObserver {
-  late final TextEditingController _predictedMinutesCtrl;
-  final FocusNode _predictedMinutesFocus = FocusNode();
   late final TextEditingController _actualMinutesCtrl;
   final FocusNode _actualMinutesFocus = FocusNode();
+
+  // タスク名編集用。
+  late final TextEditingController _titleController;
+  final FocusNode _titleFocus = FocusNode();
+  bool _titleCommitting = false;
+
+  // クイックスタートのときのみ編集可の「見込み」欄。
+  late final TextEditingController _predictedController;
+  final FocusNode _predictedFocus = FocusNode();
+  bool _predictedCommitting = false;
+
+  // クイックスタートで名前欄をユーザーが確定入力するまでは、
+  // 空欄プレースホルダーを毎秒 setState・stream 更新で潰さないためのフラグ。
+  bool _nameCommittedByUser = false;
+
   final GlobalKey _closeButtonKey = GlobalKey();
   Timer? _ticker;
 
@@ -69,10 +90,18 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
     WidgetsBinding.instance.addObserver(this);
     _lastTimer = widget.initialTimer;
     _task = widget.initialTask;
-    _predictedMinutesCtrl =
-        TextEditingController(text: widget.initialTimer.predictedMinutes.toString());
     _actualMinutesCtrl =
         TextEditingController(text: (_task?.actualMinutes ?? 0).toString());
+    _titleController =
+        TextEditingController(text: widget.quickStart ? '' : _displayTaskTitle);
+    _titleFocus.addListener(() {
+      if (!_titleFocus.hasFocus) _commitTitle();
+    });
+    _predictedController =
+        TextEditingController(text: _lastTimer.predictedMinutes.toString());
+    _predictedFocus.addListener(() {
+      if (!_predictedFocus.hasFocus) _commitPredicted();
+    });
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
@@ -87,10 +116,12 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _ticker?.cancel();
-    _predictedMinutesCtrl.dispose();
-    _predictedMinutesFocus.dispose();
     _actualMinutesCtrl.dispose();
     _actualMinutesFocus.dispose();
+    _titleController.dispose();
+    _titleFocus.dispose();
+    _predictedController.dispose();
+    _predictedFocus.dispose();
     super.dispose();
   }
 
@@ -100,11 +131,10 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
     if (state == AppLifecycleState.resumed && mounted) setState(() {});
   }
 
+  String get _displayTaskTitle => _task?.title ?? _lastTimer.taskTitle;
+
   int get _currentActualMinutes =>
       int.tryParse(_actualMinutesCtrl.text.trim()) ?? 0;
-
-  int get _currentPredictedMinutes =>
-      int.tryParse(_predictedMinutesCtrl.text.trim()) ?? 0;
 
   String _elapsedLabel(int elapsedSec) {
     final d = Duration(seconds: elapsedSec);
@@ -114,7 +144,98 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
     return '$h:$m:$s';
   }
 
+  /// タスク名の確定処理：フォーカスを失ったとき／キーボード完了時に呼ぶ。
+  /// クイックスタートのタスクで空欄のまま確定した場合は、裏のタイトルを
+  /// 変更せず欄も空のまま保持する（確定仕様3）。
+  Future<void> _commitTitle() async {
+    if (_titleCommitting) return;
+    final newTitle = _titleController.text.trim();
+    final currentTitle = _displayTaskTitle;
+    if (newTitle.isEmpty && widget.quickStart) {
+      return;
+    }
+    if (newTitle.isEmpty || newTitle == currentTitle) {
+      _titleController.text = currentTitle;
+      return;
+    }
+    _titleCommitting = true;
+    try {
+      final task = _task;
+      if (task != null) {
+        await ref.read(calendarTaskSyncRepositoryProvider).updateTask(
+              taskId: _lastTimer.taskId,
+              title: newTitle,
+            );
+      }
+      await ref.read(activeTimerRepositoryProvider).updateTaskTitle(newTitle);
+      if (!mounted) return;
+      setState(() {
+        _task = _task?.copyWith(title: newTitle);
+        _lastTimer = _lastTimer.copyWith(taskTitle: newTitle);
+        _nameCommittedByUser = true;
+      });
+    } catch (_) {
+      if (mounted) {
+        showAppSnackBar(
+          context,
+          const SnackBar(content: Text('タスク名を保存できませんでした')),
+        );
+      }
+      _titleController.text = currentTitle;
+    } finally {
+      _titleCommitting = false;
+    }
+  }
+
+  /// 「見込み」の確定処理（クイックスタートのタスクのみ編集可）。
+  Future<void> _commitPredicted() async {
+    if (_predictedCommitting) return;
+    final raw = int.tryParse(_predictedController.text.trim()) ?? 0;
+    final parsed = raw < 0 ? 0 : raw;
+    final current = _lastTimer.predictedMinutes;
+    if (parsed == current) {
+      _predictedController.text = current.toString();
+      return;
+    }
+    _predictedCommitting = true;
+    try {
+      await ref
+          .read(activeTimerRepositoryProvider)
+          .updatePredictedMinutes(parsed);
+      if (!mounted) return;
+      setState(() {
+        _lastTimer = _lastTimer.copyWith(predictedMinutes: parsed);
+      });
+    } catch (_) {
+      if (mounted) {
+        showAppSnackBar(
+          context,
+          const SnackBar(content: Text('見込みを保存できませんでした')),
+        );
+      }
+      _predictedController.text = current.toString();
+    } finally {
+      _predictedCommitting = false;
+    }
+  }
+
+  /// 名前欄・見込み欄の未確定編集をフラッシュする。一時停止・保存・✕・完了の
+  /// 各操作の直前に呼ぶ（ボタンタップはフォーカスを奪わないため、確定処理が
+  /// 走らないまま計算に進んでしまう不整合を防ぐ。ポモドーロ画面の
+  /// `_flushPendingEdits` を踏襲）。
+  Future<void> _flushPendingEdits() async {
+    FocusScope.of(context).unfocus();
+    if (_titleController.text.trim() != _displayTaskTitle) {
+      await _commitTitle();
+    }
+    if (widget.quickStart) {
+      await _commitPredicted();
+    }
+  }
+
   Future<void> _togglePauseResume(ActiveTimer timer) async {
+    await _flushPendingEdits();
+    if (!mounted) return;
     final repo = ref.read(activeTimerRepositoryProvider);
     if (timer.isRunning) {
       await repo.pause(timer);
@@ -127,14 +248,17 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
   /// 成功したら resetToZero し、現状欄へ合計を反映する。
   Future<void> _onTapSave(ActiveTimer timer) async {
     if (_isSaving) return;
+    await _flushPendingEdits();
+    if (!mounted) return;
     final task = _task;
     if (task == null) return;
     setState(() => _isSaving = true);
-    final elapsedSec = timer.elapsedSeconds(DateTime.now());
+    final current = _lastTimer;
+    final elapsedSec = current.elapsedSeconds(DateTime.now());
     final total = _currentActualMinutes + elapsedSec ~/ 60;
     final ok = await ref.read(timerActionsProvider).saveProgress(
-          taskId: timer.taskId,
-          predictedMinutes: _currentPredictedMinutes,
+          taskId: current.taskId,
+          predictedMinutes: current.predictedMinutes,
           actualMinutes: total,
         );
     if (!mounted) return;
@@ -167,7 +291,10 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
       );
       return;
     }
-    final elapsedSec = timer.elapsedSeconds(DateTime.now());
+    await _flushPendingEdits();
+    if (!mounted) return;
+    final current = _lastTimer;
+    final elapsedSec = current.elapsedSeconds(DateTime.now());
     final addedMinutes = elapsedSec ~/ 60;
     if (addedMinutes == 0) {
       _closing = true;
@@ -184,8 +311,8 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
 
     final total = _currentActualMinutes + addedMinutes;
     final ok = await ref.read(timerActionsProvider).saveProgress(
-          taskId: timer.taskId,
-          predictedMinutes: _currentPredictedMinutes,
+          taskId: current.taskId,
+          predictedMinutes: current.predictedMinutes,
           actualMinutes: total,
         );
     if (!mounted) return;
@@ -231,13 +358,16 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
   /// 完了：running なら先に pause 相当。実績合計が0以下なら完了できない（実績必須化）。
   Future<void> _onTapComplete(ActiveTimer timer) async {
     if (_isCompleting) return;
+    await _flushPendingEdits();
+    if (!mounted) return;
     final task = _task;
     if (task == null) {
       showAppSnackBar(context, const SnackBar(content: Text('タスクが見つかりませんでした')));
       return;
     }
 
-    final elapsedSec = timer.elapsedSeconds(DateTime.now());
+    final current = _lastTimer;
+    final elapsedSec = current.elapsedSeconds(DateTime.now());
     final addedMinutes = elapsedSec ~/ 60;
     final total = _currentActualMinutes + addedMinutes;
     if (total <= 0) {
@@ -262,7 +392,7 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
     setState(() => _isCompleting = true);
     final outcome = await ref.read(timerActionsProvider).complete(
           task: task,
-          predictedMinutes: _currentPredictedMinutes,
+          predictedMinutes: current.predictedMinutes,
           actualMinutes: actualMinutes,
         );
     if (!mounted) return;
@@ -333,6 +463,33 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
       }
     });
 
+    // 名前欄・見込み欄のコントローラは、非フォーカス時のみ最新値へ同期する
+    // （毎秒 setState・stream 更新で入力中のテキストを潰さないため、
+    // build内では直接書き換えない。ポモドーロ画面の既存パターンを踏襲）。
+    ref.listen<AsyncValue<ActiveTimer?>>(activeTimerStreamProvider, (prev, next) {
+      final timer = next.asData?.value;
+      if (timer == null) return;
+      _lastTimer = timer;
+      final task = _task;
+      if (task != null &&
+          timer.taskTitle.isNotEmpty &&
+          task.title != timer.taskTitle) {
+        _task = task.copyWith(title: timer.taskTitle);
+      }
+      if (!_titleCommitting &&
+          !_titleFocus.hasFocus &&
+          !(widget.quickStart && !_nameCommittedByUser) &&
+          _titleController.text != _displayTaskTitle) {
+        _titleController.text = _displayTaskTitle;
+      }
+      if (widget.quickStart &&
+          !_predictedCommitting &&
+          !_predictedFocus.hasFocus &&
+          _predictedController.text != timer.predictedMinutes.toString()) {
+        _predictedController.text = timer.predictedMinutes.toString();
+      }
+    });
+
     final asyncTimer = ref.watch(activeTimerStreamProvider);
 
     return PopScope(
@@ -370,148 +527,217 @@ class _TimerLockScreenState extends ConsumerState<TimerLockScreen>
 
   Widget _buildBody(BuildContext context, ActiveTimer timer) {
     final text = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
     final running = timer.isRunning;
     final elapsedSec = timer.elapsedSeconds(DateTime.now());
-    final taskTitle = _task?.title ?? timer.taskTitle;
+
+    // 「本日 X時間Y分」表示用（本日累計＋進行中の経過秒。
+    // todayEarningsStreamProvider は main.dart で常時listenされているメモリ値を参照する）。
+    final earningsWorkSeconds =
+        ref.watch(todayEarningsStreamProvider).value?.workSeconds ?? 0;
+    final totalWorkSeconds = earningsWorkSeconds + elapsedSec;
+    final todayWorkHours = totalWorkSeconds ~/ 3600;
+    final todayWorkMinutes = (totalWorkSeconds % 3600) ~/ 60;
 
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                IconButton(
-                  key: _closeButtonKey,
-                  onPressed: () => _onTapClose(timer),
-                  icon: const Icon(Icons.close),
-                  tooltip: '閉じる',
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              taskTitle,
-              style: text.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
-              textAlign: TextAlign.center,
-            ),
-            const Spacer(),
-            Center(
-              child: Text(
-                _elapsedLabel(elapsedSec),
-                style: text.displayLarge?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ),
-            const SizedBox(height: 24),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('見込み', style: text.labelLarge),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: 100,
-                          child: TextField(
-                            controller: _predictedMinutesCtrl,
-                            focusNode: _predictedMinutesFocus,
-                            keyboardType:
-                                const TextInputType.numberWithOptions(decimal: false),
-                            inputFormatters: [
-                              FilteringTextInputFormatter.digitsOnly,
-                              LengthLimitingTextInputFormatter(4),
-                            ],
-                            textAlign: TextAlign.end,
-                            decoration: const InputDecoration(
-                              isDense: true,
-                              contentPadding:
-                                  EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                              border: OutlineInputBorder(),
-                            ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: IntrinsicHeight(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          IconButton(
+                            key: _closeButtonKey,
+                            onPressed: () => _onTapClose(timer),
+                            icon: const Icon(Icons.close),
+                            tooltip: '閉じる',
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _titleController,
+                        focusNode: _titleFocus,
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) => _commitTitle(),
+                        style: text.headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                        decoration: InputDecoration(
+                          filled: true,
+                          isDense: true,
+                          border: const OutlineInputBorder(),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          hintText:
+                              widget.quickStart ? kQuickStartDefaultTitle : null,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '本日 $todayWorkHours時間$todayWorkMinutes分',
+                        style:
+                            text.bodyLarge?.copyWith(color: scheme.onSurfaceVariant),
+                        textAlign: TextAlign.center,
+                      ),
+                      const Spacer(),
+                      Center(
+                        child: Text(
+                          _elapsedLabel(elapsedSec),
+                          style: text.displayLarge?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            fontFeatures: const [FontFeature.tabularFigures()],
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        Text('分', style: text.bodyLarge),
-                      ],
-                    ),
-                  ],
-                ),
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('現状', style: text.labelLarge),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: 100,
-                          child: TextField(
-                            controller: _actualMinutesCtrl,
-                            focusNode: _actualMinutesFocus,
-                            keyboardType: const TextInputType.numberWithOptions(
-                                decimal: false),
-                            inputFormatters: [
-                              FilteringTextInputFormatter.digitsOnly,
-                              LengthLimitingTextInputFormatter(4),
+                      ),
+                      const SizedBox(height: 24),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('見込み', style: text.labelLarge),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: 140,
+                                child: widget.quickStart
+                                    ? TextField(
+                                        controller: _predictedController,
+                                        focusNode: _predictedFocus,
+                                        keyboardType:
+                                            const TextInputType.numberWithOptions(
+                                                decimal: false),
+                                        inputFormatters: [
+                                          FilteringTextInputFormatter.digitsOnly,
+                                          LengthLimitingTextInputFormatter(4),
+                                        ],
+                                        textAlign: TextAlign.center,
+                                        textInputAction: TextInputAction.done,
+                                        onSubmitted: (_) => _commitPredicted(),
+                                        style: text.titleLarge?.copyWith(
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
+                                        ),
+                                        decoration: const InputDecoration(
+                                          isDense: true,
+                                          suffixText: '分',
+                                          border: OutlineInputBorder(),
+                                          contentPadding: EdgeInsets.symmetric(
+                                              horizontal: 12, vertical: 10),
+                                        ),
+                                      )
+                                    : Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12, vertical: 10),
+                                        decoration: BoxDecoration(
+                                          border:
+                                              Border.all(color: scheme.outline),
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          '${timer.predictedMinutes}分',
+                                          textAlign: TextAlign.center,
+                                          style: text.titleLarge?.copyWith(
+                                            fontFeatures: const [
+                                              FontFeature.tabularFigures(),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                              ),
                             ],
-                            textAlign: TextAlign.end,
-                            decoration: const InputDecoration(
-                              isDense: true,
-                              contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 10),
-                              border: OutlineInputBorder(),
+                          ),
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('現状', style: text.labelLarge),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: 140,
+                                child: TextField(
+                                  controller: _actualMinutesCtrl,
+                                  focusNode: _actualMinutesFocus,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                          decimal: false),
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly,
+                                    LengthLimitingTextInputFormatter(4),
+                                  ],
+                                  textAlign: TextAlign.center,
+                                  style: text.titleLarge?.copyWith(
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures(),
+                                    ],
+                                  ),
+                                  decoration: const InputDecoration(
+                                    isDense: true,
+                                    suffixText: '分',
+                                    border: OutlineInputBorder(),
+                                    contentPadding: EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 10),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      const Spacer(),
+                      FilledButton.icon(
+                        onPressed: () => _togglePauseResume(timer),
+                        icon: Icon(running
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded),
+                        label: Text(running ? '一時停止' : '再開'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(56),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton.tonalIcon(
+                              onPressed:
+                                  _isSaving ? null : () => _onTapSave(timer),
+                              icon: const Icon(Icons.save_outlined),
+                              label: const Text('保存',
+                                  overflow: TextOverflow.ellipsis),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text('分', style: text.bodyLarge),
-                      ],
-                    ),
-                  ],
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: _isCompleting
+                                  ? null
+                                  : () => _onTapComplete(timer),
+                              icon: const Icon(Icons.check_circle_outline),
+                              label: const Text('完了',
+                                  overflow: TextOverflow.ellipsis),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ],
-            ),
-            const Spacer(),
-            FilledButton.icon(
-              onPressed: () => _togglePauseResume(timer),
-              icon: Icon(running ? Icons.pause_rounded : Icons.play_arrow_rounded),
-              label: Text(running ? '一時停止' : '再開'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(56),
               ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.tonalIcon(
-                    onPressed: _isSaving ? null : () => _onTapSave(timer),
-                    icon: const Icon(Icons.save_outlined),
-                    label: const Text('保存', overflow: TextOverflow.ellipsis),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _isCompleting ? null : () => _onTapComplete(timer),
-                    icon: const Icon(Icons.check_circle_outline),
-                    label: const Text('完了', overflow: TextOverflow.ellipsis),
-                  ),
-                ),
-              ],
-            ),
-          ],
+            );
+          },
         ),
       ),
     );

@@ -82,12 +82,16 @@ class CalendarTaskSyncRepository {
   }
 
   /// 手動タスクを新規作成する。
+  /// [estimatedMinutes]/[predictionDeclared] は空きスロットからの予定作成（宣言＝枠）用。
+  /// 未指定ならどちらも書かない（未宣言のまま作成）。
   Future<void> createTask({
     required String title,
     required DateTime start,
     required DateTime end,
     bool urgency = true,
     bool importance = true,
+    int? estimatedMinutes,
+    bool predictionDeclared = false,
   }) async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) throw Exception('Not authenticated');
@@ -101,8 +105,30 @@ class CalendarTaskSyncRepository {
       'isCompleted': false,
       'urgency': urgency,
       'importance': importance,
+      'estimatedMinutes': ?estimatedMinutes,
+      if (predictionDeclared) 'predictionDeclared': true,
       'updatedAt': FieldValue.serverTimestamp(),
     });
+  }
+
+  /// スタート時のチップ宣言（初回宣言・再宣言とも）を永続化する。
+  /// estimatedMinutes を宣言値に更新し、predictionDeclared を true にする。
+  Future<void> saveDeclaredPrediction({
+    required String taskId,
+    required int minutes,
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) throw Exception('Not authenticated');
+    await _db
+        .collection('users')
+        .doc(uid)
+        .collection('tasks')
+        .doc(taskId)
+        .update({
+          'estimatedMinutes': minutes,
+          'predictionDeclared': true,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
   }
 
   /// 指定タスクの開始・終了時刻を変更する。所要時間は [task] から算出。
@@ -157,6 +183,8 @@ class CalendarTaskSyncRepository {
   }
 
   /// 手動タスクまたは Google タスクの詳細を更新。指定されたフィールドのみ上書き。
+  /// [estimatedMinutes] は「枠リサイズ＝再宣言」用（manual・宣言済み・未完了の予定のみ、
+  /// 呼び出し側で新しい枠の分数を渡す）。
   Future<void> updateTask({
     required String taskId,
     String? title,
@@ -167,6 +195,7 @@ class CalendarTaskSyncRepository {
     String? location,
     String? colorId,
     List<String>? recurrence,
+    int? estimatedMinutes,
   }) async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) throw Exception('Not authenticated');
@@ -179,6 +208,7 @@ class CalendarTaskSyncRepository {
     if (location != null) data['location'] = location;
     if (colorId != null) data['colorId'] = colorId;
     if (recurrence != null) data['recurrence'] = recurrence;
+    if (estimatedMinutes != null) data['estimatedMinutes'] = estimatedMinutes;
     await _db
         .collection('users')
         .doc(uid)
@@ -239,6 +269,10 @@ class CalendarTaskSyncRepository {
     String? externalCalendarId,
     List<String>? recurrence,
     TaskSourceType sourceType = TaskSourceType.manual,
+    bool urgency = true,
+    bool importance = true,
+    int? estimatedMinutes,
+    bool predictionDeclared = false,
   }) async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) throw Exception('Not authenticated');
@@ -256,6 +290,10 @@ class CalendarTaskSyncRepository {
       'location': ?location,
       'colorId': ?colorId,
       'recurrence': ?recurrence,
+      'urgency': urgency,
+      'importance': importance,
+      'estimatedMinutes': ?estimatedMinutes,
+      if (predictionDeclared) 'predictionDeclared': true,
       'updatedAt': FieldValue.serverTimestamp(),
     });
     return doc.id;
@@ -382,12 +420,14 @@ class CalendarTaskSyncRepository {
   /// カレンダー予定（アプリ内タスク or ダウンロード済み Google 予定）を ToDo に変換する
   /// （isTodo=true にして start/end を消去）。
   /// externalCalendarId・isCompleted・actualMinutes・predictedMinutes は変更しない。
+  /// [estimatedMinutes] が null（未宣言の予定）ならフィールドに触れない（既存値を保持）。
   Future<void> convertToTodo({
     required String taskId,
     required bool urgency,
     required bool importance,
     required int orderIndex,
-    required int estimatedMinutes,
+    int? estimatedMinutes,
+    bool predictionDeclared = false,
   }) async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) throw Exception('Not authenticated');
@@ -403,7 +443,8 @@ class CalendarTaskSyncRepository {
           'urgency': urgency,
           'importance': importance,
           'orderIndex': orderIndex,
-          'estimatedMinutes': estimatedMinutes,
+          'estimatedMinutes': ?estimatedMinutes,
+          'predictionDeclared': predictionDeclared,
           'updatedAt': FieldValue.serverTimestamp(),
         });
   }

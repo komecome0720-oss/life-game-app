@@ -76,6 +76,11 @@ class TimerActions {
   /// 日またぎは完了日0:00に丸める（表示のみ、分数は保持）。
   /// minutesForPlacement は呼び出し側で actualMinutes ?? predictedMinutes を渡す（>0前提だが
   /// null 安全のためこの形。UI層で実績必須を担保済み）。
+  ///
+  /// 注意：ここでの moveTaskById は「完了時の枠置き直し」（実績で枠が書き換わる）であり、
+  /// 「枠リサイズ＝再宣言」（estimatedMinutes の同期）を発動させてはならない。
+  /// 宣言同期は viewmodel（updateExistingTask）とシート保存経路（home_screen の
+  /// onSaveEdits）にのみ置く。
   Future<({String taskId, int? predictedOverride})> placeForCompletion({
     required String taskId,
     required bool isTodo,

@@ -10,6 +10,7 @@ class HealthStreakState {
     this.freezesRemaining = 0,
     this.freezeMonthKey,
     this.achievedTitles = const [],
+    this.rebuildVersion = 0,
   });
 
   /// 現在の連続達成日数。
@@ -31,6 +32,10 @@ class HealthStreakState {
   /// これまでに到達した節目称号名（[streakTitleForCount]）の一覧。
   final List<String> achievedTitles;
 
+  /// このstateを最後に再計算した際の[kStreakRebuildVersion]。
+  /// これより古いバージョンなら次回前進時にリビルドを走らせる。
+  final int rebuildVersion;
+
   HealthStreakState copyWith({
     int? streakCount,
     Object? lastQualifiedDateKey = _unset,
@@ -38,6 +43,7 @@ class HealthStreakState {
     int? freezesRemaining,
     Object? freezeMonthKey = _unset,
     List<String>? achievedTitles,
+    int? rebuildVersion,
   }) {
     return HealthStreakState(
       streakCount: streakCount ?? this.streakCount,
@@ -52,6 +58,7 @@ class HealthStreakState {
           ? this.freezeMonthKey
           : freezeMonthKey as String?,
       achievedTitles: achievedTitles ?? this.achievedTitles,
+      rebuildVersion: rebuildVersion ?? this.rebuildVersion,
     );
   }
 
@@ -70,6 +77,7 @@ class HealthStreakState {
               ?.map((e) => e.toString())
               .toList(growable: false) ??
           const [],
+      rebuildVersion: (data['rebuildVersion'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -83,6 +91,7 @@ class HealthStreakState {
       'freezesRemaining': freezesRemaining,
       if (freezeMonthKey != null) 'freezeMonthKey': freezeMonthKey,
       'achievedTitles': achievedTitles,
+      'rebuildVersion': rebuildVersion,
       'updatedAt': FieldValue.serverTimestamp(),
     };
   }

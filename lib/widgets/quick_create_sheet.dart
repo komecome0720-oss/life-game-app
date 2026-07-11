@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
+import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
+import 'package:task_manager/widgets/prediction_chip_sheet.dart';
+import 'package:task_manager/widgets/prediction_chip_settings_dialog.dart';
 import 'package:task_manager/widgets/task_detail/quadrant_selector.dart';
 
+/// [durationMinutes] は予測宣言チップで選ばれた分数（確定仕様6: 空きスロットからの
+/// 予定作成＝宣言）。終了時刻はこの値から算出され、そのまま宣言値として保存される。
 typedef QuickCreateResult = ({
   String title,
   int durationMinutes,
@@ -10,33 +16,21 @@ typedef QuickCreateResult = ({
 });
 
 /// 空スロットタップから呼び出される予定作成シート。
-/// 結果は [QuickCreateResult]。キャンセル時は null。
-class QuickCreateSheet extends StatefulWidget {
-  const QuickCreateSheet({
-    super.key,
-    required this.initialStart,
-    this.initialDurationMinutes = 60,
-  });
+/// 予測時間チップは必須入力（未選択の間は保存不可）。結果は [QuickCreateResult]。
+/// キャンセル時は null。
+class QuickCreateSheet extends ConsumerStatefulWidget {
+  const QuickCreateSheet({super.key, required this.initialStart});
 
   final DateTime initialStart;
-  final int initialDurationMinutes;
 
   @override
-  State<QuickCreateSheet> createState() => _QuickCreateSheetState();
+  ConsumerState<QuickCreateSheet> createState() => _QuickCreateSheetState();
 }
 
-class _QuickCreateSheetState extends State<QuickCreateSheet> {
+class _QuickCreateSheetState extends ConsumerState<QuickCreateSheet> {
   final _controller = TextEditingController();
-  late int _durationMinutes = widget.initialDurationMinutes;
+  int? _durationMinutes;
   Quadrant _selectedQuadrant = Quadrant.urgentImportant;
-
-  static const _presetDurations = [15, 30, 45, 60, 90, 120, 180];
-
-  List<int> get _durations => {
-        ..._presetDurations,
-        widget.initialDurationMinutes,
-      }.toList()
-        ..sort();
 
   @override
   void dispose() {
@@ -44,18 +38,27 @@ class _QuickCreateSheetState extends State<QuickCreateSheet> {
     super.dispose();
   }
 
-  String _formatDuration(int m) {
-    if (m < 60) return '$m分';
-    if (m % 60 == 0) return '${m ~/ 60}時間';
-    return '${m ~/ 60}時間${m % 60}分';
+  Future<void> _openFreeInput() async {
+    final minutes = await showPredictionFreeInputDialog(context);
+    if (minutes != null && mounted) {
+      setState(() => _durationMinutes = minutes);
+    }
+  }
+
+  Future<void> _openSettings() async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => const PredictionChipSettingsDialog(),
+    );
   }
 
   void _submit() {
     final title = _controller.text.trim();
-    if (title.isEmpty) return;
+    final minutes = _durationMinutes;
+    if (title.isEmpty || minutes == null) return;
     Navigator.pop<QuickCreateResult>(context, (
       title: title,
-      durationMinutes: _durationMinutes,
+      durationMinutes: minutes,
       quadrant: _selectedQuadrant,
     ));
   }
@@ -65,6 +68,9 @@ class _QuickCreateSheetState extends State<QuickCreateSheet> {
     final scheme = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
     final startFmt = DateFormat('M月d日 (E) HH:mm', 'ja_JP');
+    final presets = ref.watch(
+      userSettingsProvider.select((s) => s.settings.predictionChipMinutes),
+    );
 
     return SafeArea(
       top: false,
@@ -120,20 +126,45 @@ class _QuickCreateSheetState extends State<QuickCreateSheet> {
                     style: text.bodyMedium,
                   ),
                 ),
-                const SizedBox(width: 8),
-                DropdownButton<int>(
-                  value: _durationMinutes,
-                  items: _durations
-                      .map(
-                        (m) => DropdownMenuItem(
-                          value: m,
-                          child: Text(_formatDuration(m)),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (v) {
-                    if (v != null) setState(() => _durationMinutes = v);
-                  },
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '予測時間（終了時刻はこれで決まります）',
+                    style: text.labelMedium,
+                  ),
+                ),
+                IconButton(
+                  onPressed: _openSettings,
+                  icon: const Icon(Icons.settings_outlined),
+                  tooltip: 'プリセットを編集',
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final m in presets)
+                  ChoiceChip(
+                    label: Text(formatPredictionMinutes(m)),
+                    selected: _durationMinutes == m,
+                    onSelected: (_) => setState(() => _durationMinutes = m),
+                  ),
+                ActionChip(
+                  avatar: const Icon(Icons.edit, size: 18),
+                  label: Text(
+                    _durationMinutes != null &&
+                            !presets.contains(_durationMinutes)
+                        ? formatPredictionMinutes(_durationMinutes!)
+                        : '自由入力',
+                  ),
+                  onPressed: _openFreeInput,
                 ),
               ],
             ),
@@ -146,7 +177,10 @@ class _QuickCreateSheetState extends State<QuickCreateSheet> {
                   child: const Text('キャンセル'),
                 ),
                 const SizedBox(width: 8),
-                FilledButton(onPressed: _submit, child: const Text('保存')),
+                FilledButton(
+                  onPressed: _durationMinutes != null ? _submit : null,
+                  child: const Text('保存'),
+                ),
               ],
             ),
           ],

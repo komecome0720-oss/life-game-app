@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:task_manager/features/calendar_sync/model/google_calendar_source.dart';
 import 'package:task_manager/features/calendar_sync/providers/calendar_sync_providers.dart';
+import 'package:task_manager/features/timer/providers/timer_providers.dart';
 import 'package:task_manager/features/todo/viewmodel/todo_matrix_viewmodel.dart';
 import 'package:task_manager/models/calendar_task.dart';
 
@@ -116,12 +117,15 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
   }
 
   /// 手動タスクを新規作成する。
+  /// [estimatedMinutes]/[predictionDeclared] は空きスロットからの予定作成（宣言＝枠）用。
   Future<bool> createTask({
     required String title,
     required DateTime start,
     required DateTime end,
     bool urgency = true,
     bool importance = true,
+    int? estimatedMinutes,
+    bool predictionDeclared = false,
   }) async {
     try {
       await ref.read(calendarTaskSyncRepositoryProvider).createTask(
@@ -130,6 +134,8 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
             end: end,
             urgency: urgency,
             importance: importance,
+            estimatedMinutes: estimatedMinutes,
+            predictionDeclared: predictionDeclared,
           );
       return true;
     } catch (e) {
@@ -146,7 +152,10 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
   Future<bool> moveTask(CalendarTask task, DateTime newStart) async {
     final syncRepo = ref.read(calendarTaskSyncRepositoryProvider);
 
-    // ToDo からカレンダーへのドロップ時は変換処理
+    // ToDo からカレンダーへのドロップ時は変換処理。
+    // ここでの 30分フォールバックは枠（表示上の長さ）のみに使うスケジューリング用途で、
+    // 宣言状態（predictionDeclared・estimatedMinutes）には影響しない
+    // （convertToCalendarEvent は update で該当フィールドに触れないため保持される）。
     if (task.isTodo) {
       final durationMin = task.estimatedMinutes ?? 30;
       final newEnd = newStart.add(Duration(minutes: durationMin));
@@ -191,6 +200,10 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
     String? location,
     String? colorId,
     List<String>? recurrence,
+    bool urgency = true,
+    bool importance = true,
+    int? estimatedMinutes,
+    bool predictionDeclared = false,
   }) async {
     final syncRepo = ref.read(calendarTaskSyncRepositoryProvider);
     try {
@@ -205,6 +218,10 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
         externalCalendarId: null,
         recurrence: recurrence,
         sourceType: TaskSourceType.manual,
+        urgency: urgency,
+        importance: importance,
+        estimatedMinutes: estimatedMinutes,
+        predictionDeclared: predictionDeclared,
       );
       return true;
     } catch (e) {
@@ -216,6 +233,10 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
   /// 既存タスクを更新する。
   /// 読み取り専用方針のため、取り込み済み（Google 由来）タスクでも Firestore のみ更新し、
   /// Google カレンダーへは書き戻さない（取り込み後は断絶＝ローカルの独立コピー）。
+  ///
+  /// 「枠リサイズ＝再宣言」（確定仕様7）: manual・宣言済み・未完了の予定で start/end が
+  /// 変わる場合、estimatedMinutes を新しい枠の分数へ同期する（同一 update 内で書く）。
+  /// 該当タスクの ActiveTimer が作動中は、タイマー側が正のため同期しない。
   Future<bool> updateExistingTask({
     required CalendarTask original,
     required String title,
@@ -228,6 +249,12 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
     List<String>? recurrence,
   }) async {
     final syncRepo = ref.read(calendarTaskSyncRepositoryProvider);
+    final frameChanged = original.start != start || original.end != end;
+    final canResync = original.sourceType == TaskSourceType.manual &&
+        original.predictionDeclared &&
+        !original.isCompleted &&
+        frameChanged &&
+        ref.read(activeTimerStreamProvider).value?.taskId != original.id;
     try {
       await syncRepo.updateTask(
         taskId: original.id,
@@ -239,12 +266,33 @@ class CalendarSyncViewModel extends Notifier<CalendarSyncState> {
         location: location ?? '',
         colorId: colorId ?? '',
         recurrence: recurrence ?? const [],
+        estimatedMinutes: canResync ? _frameMinutes(start, end) : null,
       );
+      // 作動中タイマーが同タスクなら active_timer.taskTitle も同期する
+      // （失敗しても保存全体は失敗扱いにしない＝表示追従用のため個別に握りつぶす）。
+      final activeTimer = ref.read(activeTimerStreamProvider).value;
+      if (activeTimer != null &&
+          activeTimer.taskId == original.id &&
+          activeTimer.taskTitle != title) {
+        try {
+          await ref.read(activeTimerRepositoryProvider).updateTaskTitle(title);
+        } catch (_) {
+          // no-op: active_timer 側の追従失敗は保存成否に影響させない。
+        }
+      }
       return true;
     } catch (e) {
       state = state.copyWith(errorMessage: _toMessage(e));
       return false;
     }
+  }
+
+  /// 開始・終了時刻から枠の長さ（分）を算出する（0〜1440分にクランプ）。
+  int _frameMinutes(DateTime start, DateTime end) {
+    final m = end.difference(start).inMinutes;
+    if (m < 0) return 0;
+    if (m > 24 * 60) return 24 * 60;
+    return m;
   }
 
   /// タスクを削除する。

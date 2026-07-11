@@ -89,6 +89,7 @@ class ActiveTimerRepository {
     required bool isTodo,
     required String taskTitle,
     required int predictedMinutes,
+    bool quickStart = false,
   }) async {
     final uid = _uidOrThrow;
     final ref = _docRef(uid);
@@ -105,6 +106,7 @@ class ActiveTimerRepository {
       startedAtUtc: _now().toUtc(),
       accumulatedSeconds: 0,
       updatedAtUtc: _now().toUtc(),
+      quickStart: quickStart,
     );
     await ref.set(timer.toMap());
     return timer;
@@ -122,6 +124,7 @@ class ActiveTimerRepository {
     required bool isTodo,
     required String taskTitle,
     required int predictedMinutes,
+    bool quickStart = false,
   }) {
     final uid = _uidOrThrow;
     final timer = ActiveTimer(
@@ -132,6 +135,7 @@ class ActiveTimerRepository {
       startedAtUtc: _now().toUtc(),
       accumulatedSeconds: 0,
       updatedAtUtc: _now().toUtc(),
+      quickStart: quickStart,
     );
     return (timer: timer, write: _docRef(uid).set(timer.toMap()));
   }
@@ -188,6 +192,7 @@ class ActiveTimerRepository {
     required int baseActualMinutes,
     String dateKey = '',
     PomodoroDayStart? dayStart,
+    bool quickStart = false,
   }) async {
     final uid = _uidOrThrow;
     final ref = _docRef(uid);
@@ -212,6 +217,7 @@ class ActiveTimerRepository {
         dayStart: dayStart,
         dateKey: dateKey,
       ),
+      quickStart: quickStart,
     );
     final batch = _db.batch();
     batch.set(ref, timer.toMap());
@@ -235,6 +241,7 @@ class ActiveTimerRepository {
     required int baseActualMinutes,
     String dateKey = '',
     PomodoroDayStart? dayStart,
+    bool quickStart = false,
   }) {
     final uid = _uidOrThrow;
     final nowUtc = _now().toUtc();
@@ -253,6 +260,7 @@ class ActiveTimerRepository {
         dayStart: dayStart,
         dateKey: dateKey,
       ),
+      quickStart: quickStart,
     );
     final batch = _db.batch();
     batch.set(_docRef(uid), timer.toMap());

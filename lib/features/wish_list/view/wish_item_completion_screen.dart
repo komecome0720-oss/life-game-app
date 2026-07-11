@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:task_manager/theme/app_tokens.dart';
+import 'package:task_manager/utils/url_opener.dart';
 import 'package:task_manager/widgets/message_guard.dart';
 import 'package:task_manager/widgets/reward_burst.dart';
 
@@ -10,12 +11,14 @@ class WishItemCompletionScreen extends StatelessWidget {
     required this.itemPrice,
     required this.balanceBeforeYen,
     required this.balanceAfterYen,
+    this.shopUrl = '',
   });
 
   final String userName;
   final int itemPrice;
   final int balanceBeforeYen;
   final int balanceAfterYen;
+  final String shopUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -56,6 +59,14 @@ class WishItemCompletionScreen extends StatelessWidget {
                 ),
               ),
               const Spacer(),
+              if (shopUrl.isNotEmpty) ...[
+                FilledButton.tonalIcon(
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('ショップを見る'),
+                  onPressed: () => openExternalUrl(context, shopUrl),
+                ),
+                const SizedBox(height: 12),
+              ],
               FilledButton(
                 onPressed: () => Navigator.of(context).pop(),
                 child: const Text('戻る'),

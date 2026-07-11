@@ -36,6 +36,7 @@ class CalendarTask {
     this.completedRewardYen,
     this.predictedMinutes,
     this.actualMinutes,
+    this.predictionDeclared = false,
   });
 
   final String id;
@@ -100,6 +101,10 @@ class CalendarTask {
   /// 実績時間（分）。タイマーまたは手入力から記録される。null なら未記録（ログなし完了）。
   final int? actualMinutes;
 
+  /// 予測が宣言済みか。true のときのみ [estimatedMinutes] を精度ゲーム（統計・称号）の対象とする。
+  /// デフォルト false（未宣言）。
+  final bool predictionDeclared;
+
   CalendarTask copyWith({
     String? title,
     DateTime? start,
@@ -125,6 +130,7 @@ class CalendarTask {
     int? completedRewardYen,
     int? predictedMinutes,
     int? actualMinutes,
+    bool? predictionDeclared,
   }) {
     return CalendarTask(
       id: id,
@@ -152,6 +158,7 @@ class CalendarTask {
       completedRewardYen: completedRewardYen ?? this.completedRewardYen,
       predictedMinutes: predictedMinutes ?? this.predictedMinutes,
       actualMinutes: actualMinutes ?? this.actualMinutes,
+      predictionDeclared: predictionDeclared ?? this.predictionDeclared,
     );
   }
 
@@ -181,6 +188,7 @@ class CalendarTask {
       if (completedRewardYen != null) 'completedRewardYen': completedRewardYen,
       if (predictedMinutes != null) 'predictedMinutes': predictedMinutes,
       if (actualMinutes != null) 'actualMinutes': actualMinutes,
+      if (predictionDeclared) 'predictionDeclared': true,
     };
   }
 
@@ -216,6 +224,7 @@ class CalendarTask {
       completedRewardYen: (data['completedRewardYen'] as num?)?.toInt(),
       predictedMinutes: (data['predictedMinutes'] as num?)?.toInt(),
       actualMinutes: (data['actualMinutes'] as num?)?.toInt(),
+      predictionDeclared: data['predictionDeclared'] as bool? ?? false,
     );
   }
 }

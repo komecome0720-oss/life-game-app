@@ -18,6 +18,30 @@ void main() {
       );
       expect(e, closeTo(-0.25, 1e-9));
     });
+
+    test('+300%相当の誤差は+1.0でクランプされる', () {
+      final e = PredictionAccuracyConfig.errorFor(
+        predictedMinutes: 30,
+        actualMinutes: 150,
+      );
+      expect(e, closeTo(1.0, 1e-9));
+    });
+
+    test('-300%相当の誤差は-1.0でクランプされる', () {
+      final e = PredictionAccuracyConfig.errorFor(
+        predictedMinutes: 30,
+        actualMinutes: -60,
+      );
+      expect(e, closeTo(-1.0, 1e-9));
+    });
+
+    test('5分予測10分実績は分母が15分にfloorされて+0.333…', () {
+      final e = PredictionAccuracyConfig.errorFor(
+        predictedMinutes: 5,
+        actualMinutes: 10,
+      );
+      expect(e, closeTo(5 / 15, 1e-9));
+    });
   });
 
   group('rollingAverage', () {
@@ -58,14 +82,64 @@ void main() {
     });
   });
 
-  group('titleFor', () {
-    test('-50%以下は常にビビリ（データ数に関係なく）', () {
+  group('titleFor 境界', () {
+    test('-9.99%はアンロック済みなら神帯', () {
       expect(
         PredictionAccuracyConfig.titleFor(
-          averageError: -0.6,
-          cumulativeCount: 0,
+          averageError: -0.0999,
+          cumulativeCount: 30,
         ),
-        'ビビリ',
+        '時間を司りし神',
+      );
+    });
+
+    test('-10.0%はちょいビビリ', () {
+      expect(
+        PredictionAccuracyConfig.titleFor(
+          averageError: -0.10,
+          cumulativeCount: 10,
+        ),
+        'ちょいビビリ',
+      );
+    });
+
+    test('-20.0%はビビリ見習い', () {
+      expect(
+        PredictionAccuracyConfig.titleFor(
+          averageError: -0.20,
+          cumulativeCount: 10,
+        ),
+        'ビビリ見習い',
+      );
+    });
+
+    test('-95%は時間を買い占めし者', () {
+      expect(
+        PredictionAccuracyConfig.titleFor(
+          averageError: -0.95,
+          cumulativeCount: 10,
+        ),
+        '時間を買い占めし者',
+      );
+    });
+
+    test('+10.0%は予測の達人（アンロック済み）', () {
+      expect(
+        PredictionAccuracyConfig.titleFor(
+          averageError: 0.10,
+          cumulativeCount: 30,
+        ),
+        '予測の達人',
+      );
+    });
+
+    test('+70%はどんぶり勘定さん', () {
+      expect(
+        PredictionAccuracyConfig.titleFor(
+          averageError: 0.70,
+          cumulativeCount: 10,
+        ),
+        'どんぶり勘定さん',
       );
     });
 
@@ -115,14 +189,46 @@ void main() {
         '時間読み見習い',
       );
     });
+  });
 
-    test('悪い側の称号はアンロック対象外（データ0でも100%は時間の迷子のまま）', () {
+  group('5件ゲート', () {
+    test('cumulativeCount=4 で percent=-30 は null（計測中）', () {
       expect(
         PredictionAccuracyConfig.titleFor(
-          averageError: 1.5,
-          cumulativeCount: 0,
+          averageError: -0.30,
+          cumulativeCount: 4,
         ),
-        '時間の迷子',
+        isNull,
+      );
+    });
+
+    test('cumulativeCount=4 で percent=+70 は null（計測中）', () {
+      expect(
+        PredictionAccuracyConfig.titleFor(
+          averageError: 0.70,
+          cumulativeCount: 4,
+        ),
+        isNull,
+      );
+    });
+
+    test('cumulativeCount=4 でも良い側 percent=+5 は現行どおり称号あり', () {
+      expect(
+        PredictionAccuracyConfig.titleFor(
+          averageError: 0.05,
+          cumulativeCount: 4,
+        ),
+        isNotNull,
+      );
+    });
+
+    test('cumulativeCount=5 なら percent=-30 でビビリが出る', () {
+      expect(
+        PredictionAccuracyConfig.titleFor(
+          averageError: -0.30,
+          cumulativeCount: 5,
+        ),
+        'ビビリ',
       );
     });
   });

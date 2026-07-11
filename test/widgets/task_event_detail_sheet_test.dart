@@ -8,7 +8,11 @@ import 'package:task_manager/widgets/task_event_detail_sheet.dart';
 // 実績分フィールドを特定するキーを再エクスポート
 const _actualKey = kActualMinutesFieldKey;
 
-CalendarTask _sampleTask({bool isCompleted = false}) {
+CalendarTask _sampleTask({
+  bool isCompleted = false,
+  bool predictionDeclared = false,
+  int? estimatedMinutes,
+}) {
   final start = DateTime(2026, 5, 6, 9, 0);
   final end = start.add(const Duration(minutes: 60));
   return CalendarTask(
@@ -18,6 +22,8 @@ CalendarTask _sampleTask({bool isCompleted = false}) {
     end: end,
     rewardYen: 300,
     isCompleted: isCompleted,
+    predictionDeclared: predictionDeclared,
+    estimatedMinutes: estimatedMinutes,
   );
 }
 
@@ -114,7 +120,45 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(capturedActual, 45);
+      // 未宣言タスクの完了は predictedMinutes=0（統計から自動除外。確定仕様9）。
+      expect(capturedPredicted, 0);
+    });
+
+    testWidgets('宣言済みタスクの完了は宣言値（枠の分数）が predictedMinutes に渡る',
+        (tester) async {
+      int? capturedPredicted;
+      await _pumpSheet(
+        tester,
+        // manual・宣言済み・未完了：枠60分がライブ宣言値になる。
+        task: _sampleTask(predictionDeclared: true, estimatedMinutes: 60),
+        predictedMinutes: 60,
+        expectedRewardYen: 1500,
+        onComplete: ({required predictedMinutes, required actualMinutes}) async {
+          capturedPredicted = predictedMinutes;
+        },
+      );
+
+      expect(find.text('予測宣言：60分'), findsOneWidget);
+
+      await tester.enterText(find.byKey(_actualKey), '45');
+      await tester.pump();
+      await tester.ensureVisible(find.text('完了'));
+      await tester.tap(find.text('完了'));
+      await tester.pumpAndSettle();
+
       expect(capturedPredicted, 60);
+    });
+
+    testWidgets('未宣言タスクには「予測宣言：未宣言」と表示される', (tester) async {
+      await _pumpSheet(
+        tester,
+        task: _sampleTask(),
+        predictedMinutes: 60,
+        expectedRewardYen: 1500,
+        onComplete: ({required predictedMinutes, required actualMinutes}) async {},
+      );
+
+      expect(find.text('予測宣言：未宣言'), findsOneWidget);
     });
 
     testWidgets('実績分フィールドが空で完了するとSnackBarが出て onComplete は呼ばれない',
@@ -182,7 +226,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(capturedActual, 30);
-      expect(capturedPredicted, 60);
+      // 未宣言タスクの完了は predictedMinutes=0（統計から自動除外。確定仕様9）。
+      expect(capturedPredicted, 0);
     });
 
     testWidgets('保存ボタンで onSaveEdits が呼ばれ、成功でシートが閉じる', (tester) async {

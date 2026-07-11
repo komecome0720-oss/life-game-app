@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
@@ -10,6 +11,7 @@ import 'package:task_manager/features/wish_list/view/wish_item_completion_screen
 import 'package:task_manager/features/wish_list/viewmodel/wish_list_viewmodel.dart';
 import 'package:task_manager/features/wish_list/widgets/add_wish_item_sheet.dart';
 import 'package:task_manager/utils/app_messenger.dart';
+import 'package:task_manager/utils/url_opener.dart';
 
 class WishItemCard extends ConsumerWidget {
   const WishItemCard({super.key, required this.item, required this.onDelete});
@@ -73,12 +75,12 @@ class WishItemCard extends ConsumerWidget {
                 if (item.imageUrl.isNotEmpty)
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: Image.network(
-                      item.imageUrl,
+                    child: CachedNetworkImage(
+                      imageUrl: item.imageUrl,
                       width: 56,
                       height: 56,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => _placeholder(colorScheme),
+                      errorWidget: (_, _, _) => _placeholder(colorScheme),
                     ),
                   )
                 else
@@ -130,9 +132,7 @@ class WishItemCard extends ConsumerWidget {
                       IconButton(
                         icon: const Icon(Icons.open_in_new, size: 20),
                         tooltip: 'ショップを開く',
-                        onPressed: () {
-                          /* URL launch は後で実装 */
-                        },
+                        onPressed: () => openExternalUrl(context, item.shopUrl),
                       ),
                     if (!item.isPurchased)
                       if (canAcquire)
@@ -249,6 +249,7 @@ class WishItemCard extends ConsumerWidget {
                     itemPrice: item.price,
                     balanceBeforeYen: ok.balanceBeforeYen,
                     balanceAfterYen: ok.balanceAfterYen,
+                    shopUrl: item.shopUrl,
                   ),
                 ),
               ));

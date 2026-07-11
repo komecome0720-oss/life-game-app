@@ -91,6 +91,10 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
   bool _isRefreshingForToday = false;
   int _stateGeneration = 0;
 
+  /// 当日ログのロード失敗／未確認状態からの自動リトライ用。
+  Timer? _loadRetryTimer;
+  int _loadRetryCount = 0;
+
   /// build 時にキャプチャした repo。onDispose 内では ref.read が使えないため、
   /// settle をどの経路からでも同じ参照で呼べるよう保持する。
   late EconomyRepository _economyRepo;
@@ -105,6 +109,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     _streakRepo = ref.read(healthStreakRepositoryProvider);
     ref.onDispose(() {
       _midnightTimer?.cancel();
+      _loadRetryTimer?.cancel();
       // PopScope／ライフサイクル監視を経由せず破棄された場合の保険。
       // await できないため fire-and-forget（破棄済み state の参照は settle 内で握り潰す）。
       unawaited(settlePendingLedger());
@@ -126,10 +131,13 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       return HealthDetailState(log: emptyLog, isLoading: false);
     }
     // 初期ロードは非同期。現時点は今日の空ログで isLoading=true。
+    // isEditableNow は false 固定：ロード完了（当日ログのサーバ確認）まで
+    // 編集・保存を許可しない（再起動直後にゼロ上書きしてしまう穴を塞ぐ）。
     Future.microtask(() => _load(uid));
     return HealthDetailState(
       log: emptyLog,
       isLoading: true,
+      isEditableNow: false,
       isHistoryLoading: true,
     );
   }
@@ -192,51 +200,124 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
 
   Future<void> _load(String uid) async {
     final loadGeneration = ++_stateGeneration;
+    _loadRetryTimer?.cancel();
+    final todayKey = HealthRollover.dateKey(DateTime.now());
+    final col = _db.collection('users').doc(uid).collection('healthLogs');
+
+    // Phase 0：C-1対策の移行スイープ（順序維持・fail-soft化）。
+    // 失敗しても当日表示は続行する。migrateは冪等なので次回起動時に再実行される。
+    var migrateOk = true;
     try {
-      // C-1対策：旧モデル（日中に残高反映）からの移行スイープを最初に一度だけ実行。
-      // 冪等（healthMigratedV2 フラグ）なので毎回awaitして問題ない。
-      await _economyRepo.migrateHealthBalanceV2();
-      if (_uid != uid || loadGeneration != _stateGeneration) return;
-      final todayKey = HealthRollover.dateKey(DateTime.now());
-      final col = _db.collection('users').doc(uid).collection('healthLogs');
-      final pastResult = await _fetchPastLogs(col, todayKey);
-      // finalize後にストリークを前進させる（Step14）。
-      final streakState = await _advanceStreakIfNeeded(uid);
-      if (_uid != uid || loadGeneration != _stateGeneration) return;
+      await _economyRepo
+          .migrateHealthBalanceV2()
+          .timeout(const Duration(seconds: 8));
+    } catch (_) {
+      migrateOk = false;
+    }
+    if (_uid != uid || loadGeneration != _stateGeneration) return;
 
-      final doc = await col.doc(todayKey).get();
-      // ロード中にユーザーが切り替わった場合は破棄
-      if (_uid != uid || loadGeneration != _stateGeneration) return;
-      final loadedLog = doc.exists
-          ? HealthLog.fromFirestore(doc)
-          : HealthLog(dateKey: todayKey);
-      final settings = ref.read(userSettingsProvider).settings;
-      final log = await _syncTodayLogIfNeeded(
-        uid: uid,
-        log: loadedLog,
-        settings: settings,
-      );
-      if (_uid != uid || loadGeneration != _stateGeneration) return;
+    // Phase 1：当日ログ（最重要・単独取得）。
+    // サーバ不達＋キャッシュ欠落（未確認）は「本当に未記録」と区別できないため、
+    // 編集ロック＋自動リトライで扱い、空ゼロログを書き戻さないようにする。
+    final todayResult = await _getTodayLog(col, todayKey);
+    if (_uid != uid || loadGeneration != _stateGeneration) return;
 
-      state = HealthDetailState(
-        log: log,
-        isLoading: false,
-        isEditableNow: true,
-        errorMessage: pastResult.error,
-        historyLogs: pastResult.logs.take(14).toList(growable: false),
-        isHistoryLoading: false,
-        historyErrorMessage: null,
-        streakState: streakState,
-      );
-    } catch (e) {
+    var loadedLog = todayResult.log;
+    final todayOk = todayResult.ok;
+    if (todayOk) {
+      try {
+        final settings = ref.read(userSettingsProvider).settings;
+        loadedLog = await _syncTodayLogIfNeeded(
+          uid: uid,
+          log: loadedLog,
+          settings: settings,
+        );
+      } catch (_) {
+        // 再計算差分の保存に失敗しても、取得済みの当日値の表示は継続する。
+      }
       if (_uid != uid || loadGeneration != _stateGeneration) return;
+      _loadRetryCount = 0;
+    }
+
+    // 状態更新①：当日値を即反映。失敗/未確認時は編集不可（ゼロ上書き防止）。
+    state = state.copyWith(
+      log: loadedLog,
+      isLoading: false,
+      isEditableNow: todayOk,
+      errorMessage: todayOk
+          ? null
+          : '読み込みに失敗しました'
+                '${todayResult.error != null ? ': ${todayResult.error}' : ''}',
+    );
+    if (!todayOk) _scheduleLoadRetry(uid);
+
+    // Phase 2：履歴＋finalize＋ストリーク。
+    if (migrateOk) {
+      try {
+        // キューに残った保存（前日分など）がfinalize後にサーバへ届いて
+        // 暫定値を巻き戻さないよう、送信完了を待ってからfinalizeする。
+        // オフラインならtimeoutし、finalize自体も失敗して次回リトライされる。
+        try {
+          await _db.waitForPendingWrites().timeout(const Duration(seconds: 5));
+        } catch (_) {}
+        final pastResult = await _fetchPastLogs(col, todayKey);
+        // finalize後にストリークを前進させる（Step14）。
+        final streakState = await _advanceStreakIfNeeded(uid);
+        if (_uid != uid || loadGeneration != _stateGeneration) return;
+        state = state.copyWith(
+          // copyWith は errorMessage を渡さないと必ず null にクリアするため、
+          // 当日ロードのエラーが既にある場合はそちらを優先して明示的に保持する。
+          errorMessage: state.errorMessage ?? pastResult.error,
+          historyLogs: pastResult.logs.take(14).toList(growable: false),
+          isHistoryLoading: false,
+          historyErrorMessage: null,
+          streakState: streakState,
+        );
+      } catch (e) {
+        if (_uid != uid || loadGeneration != _stateGeneration) return;
+        state = state.copyWith(
+          errorMessage: state.errorMessage ?? '過去の健康ログ確定に失敗しました: $e',
+          isHistoryLoading: false,
+        );
+      }
+    } else {
       state = state.copyWith(
-        isLoading: false,
-        errorMessage: '読み込みに失敗しました: $e',
+        errorMessage: state.errorMessage, // 明示保持（渡さないとクリアされるため）
         isHistoryLoading: false,
-        historyLogs: const [],
       );
     }
+  }
+
+  /// 当日ログを取得する。サーバ不達で結果がキャッシュ由来かつ未存在の場合は、
+  /// 本当に未記録なのか（旧経路の）サーバ書き込みが端末に届いていないだけなのか
+  /// 区別できないため `ok: false`（未確認）を返す。[_load] / [refreshForToday] 共通。
+  Future<({HealthLog log, bool ok, Object? error})> _getTodayLog(
+    CollectionReference<Map<String, dynamic>> col,
+    String todayKey,
+  ) async {
+    try {
+      final doc = await col.doc(todayKey).get();
+      if (!doc.exists && doc.metadata.isFromCache) {
+        return (log: HealthLog(dateKey: todayKey), ok: false, error: null);
+      }
+      final log = doc.exists
+          ? HealthLog.fromFirestore(doc)
+          : HealthLog(dateKey: todayKey);
+      return (log: log, ok: true, error: null);
+    } catch (e) {
+      return (log: HealthLog(dateKey: todayKey), ok: false, error: e);
+    }
+  }
+
+  /// 当日ログのロード失敗／未確認状態から自動で再ロードする（最大2回・3秒間隔）。
+  /// 成功（todayOk）した時点でカウンタをリセットする（[_load] 側）。
+  void _scheduleLoadRetry(String uid) {
+    if (_loadRetryCount >= 2) return;
+    _loadRetryCount++;
+    _loadRetryTimer?.cancel();
+    _loadRetryTimer = Timer(const Duration(seconds: 3), () {
+      if (_uid == uid) _load(uid);
+    });
   }
 
   /// 過去ログを最大20件フェッチし、未確定ログを [EconomyRepository.finalizeHealthLog]
@@ -280,11 +361,21 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
   /// ストリーク（連続達成）を前進させる。finalize後（過去ログ確定後）に呼ぶ。
   /// お金には一切触れない（非現金：称号＋フリーズのみ）。
   ///
-  /// - 初回（`lastProcessedDateKey==null`）は遡及しない：ベースラインを昨日に設定して終了（§10）。
-  /// - 長期放置（from < 昨日-90日）も遡及しない：ベースラインを昨日に再設定する（M-1ガード）。
+  /// - 初回（`lastProcessedDateKey==null`）または `rebuildVersion` が
+  ///   [kStreakRebuildVersion] 未満の場合は、ストリーク機能導入エポック
+  ///   （[kStreakEpochDateKey]）以降の healthLog から streakCount / freezesRemaining /
+  ///   dayOutcome を丸ごと再計算する（リビルド。[_runStreakRebuild]）。エポックより前の
+  ///   健康ログ（ストリーク導入前から存在）にはフリーズ消費・リセット・称号付与を
+  ///   遡及適用しない（仕様「これから先に適用」の原則）。
+  ///   このリビルド判定は冪等ガード（直下）より前に行う：後に置くと「今日すでに
+  ///   前進済み」の端末でリビルドが翌日まで遅延してしまうため。
+  /// - リビルド不要な通常時、既に前進済み（同日内の複数回呼び出し等）なら冪等に何もしない。
+  /// - 長期放置（from < 昨日-91日）は遡及しない：ベースラインを昨日に再設定する（M-1ガード）。
   /// - それ以外は `from+1 .. 昨日` を1日ずつ列挙し、各日の healthLog（無ければ ratio=0）で
   ///   [advanceOneDay] を適用する。ログ取得は `_fetchPastLogs`（表示用20件）に依存せず、
-  ///   dateKey の専用レンジクエリで対象範囲の全ログを取る（M-1対策）。
+  ///   dateKey の専用レンジクエリで対象範囲の全ログを取る（M-1対策）。達成率は保存済み
+  ///   `achievedPercent` に依存せず、常に [HealthScoring.ratioOf] で再計算する
+  ///   （カレンダー表示との判定ソースを一本化し、旧ログの未保存値による乖離を防ぐ）。
   /// - 各日の outcome は対応する healthLog（無ければスタブ）へ書き込む。
   Future<HealthStreakState> _advanceStreakIfNeeded(String uid) async {
     final now = DateTime.now();
@@ -292,17 +383,26 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     final yesterday = today.subtract(const Duration(days: 1));
     final yesterdayKey = HealthRollover.dateKey(yesterday);
     final todayKey = HealthRollover.dateKey(today);
+    final col = _db.collection('users').doc(uid).collection('healthLogs');
 
     var streak = await _streakRepo.load();
 
-    final lastProcessed = streak.lastProcessedDateKey;
-    if (lastProcessed == null) {
-      // 初回は遡及しない。ベースラインだけ設定して終了。
-      streak = streak.copyWith(lastProcessedDateKey: yesterdayKey);
-      await _streakRepo.save(streak);
-      return streak;
+    final needsRebuild =
+        streak.lastProcessedDateKey == null ||
+        streak.rebuildVersion < kStreakRebuildVersion;
+    if (needsRebuild) {
+      return _runStreakRebuild(
+        uid: uid,
+        col: col,
+        streak: streak,
+        today: today,
+        yesterday: yesterday,
+        yesterdayKey: yesterdayKey,
+        todayKey: todayKey,
+      );
     }
 
+    final lastProcessed = streak.lastProcessedDateKey!;
     if (lastProcessed.compareTo(yesterdayKey) >= 0) {
       // 既に前進済み（同日内の複数回呼び出し等）。冪等に何もしない。
       return streak;
@@ -318,7 +418,6 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     }
 
     final fromKey = HealthRollover.dateKey(fromDate);
-    final col = _db.collection('users').doc(uid).collection('healthLogs');
     final snaps = await col
         .where('dateKey', isGreaterThanOrEqualTo: fromKey)
         .where('dateKey', isLessThan: todayKey)
@@ -334,7 +433,7 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       final monthKey =
           '${cursor.year.toString().padLeft(4, '0')}-${cursor.month.toString().padLeft(2, '0')}';
       final log = logsByKey[dateKey];
-      final ratio = log?.achievedPercent ?? 0.0;
+      final ratio = log != null ? HealthScoring.ratioOf(log) : 0.0;
       final isPerfect = ratio >= 1.0;
       final result = advanceOneDay(
         streak,
@@ -354,6 +453,91 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     await _streakRepo.save(streak);
     await _writeDayOutcomes(uid, outcomes);
     return streak;
+  }
+
+  /// [_advanceStreakIfNeeded] のリビルド経路：ストリーク機能導入エポック
+  /// （[kStreakEpochDateKey]、今日-90日でクランプ）以降の healthLog から
+  /// streakCount / freezesRemaining / dayOutcome を丸ごと再計算する。
+  Future<HealthStreakState> _runStreakRebuild({
+    required String uid,
+    required CollectionReference<Map<String, dynamic>> col,
+    required HealthStreakState streak,
+    required DateTime today,
+    required DateTime yesterday,
+    required String yesterdayKey,
+    required String todayKey,
+  }) async {
+    final epochDate = _parseDateKey(kStreakEpochDateKey);
+    final guardDate = today.subtract(const Duration(days: 90));
+    final epochStart = epochDate.isAfter(guardDate) ? epochDate : guardDate;
+    final epochStartKey = HealthRollover.dateKey(epochStart);
+
+    final snaps = await col
+        .where('dateKey', isGreaterThanOrEqualTo: epochStartKey)
+        .where('dateKey', isLessThan: todayKey)
+        .get();
+
+    if (snaps.docs.isEmpty) {
+      // ログが1件も無ければ従来どおりベースラインだけ設定する。
+      // rebuildVersion を必ず付与しないと毎回このレンジクエリが空振りで走り続ける。
+      final next = streak.copyWith(
+        lastProcessedDateKey: yesterdayKey,
+        rebuildVersion: kStreakRebuildVersion,
+      );
+      await _streakRepo.save(next);
+      return next;
+    }
+
+    final logsByKey = {
+      for (final d in snaps.docs) d.id: HealthLog.fromFirestore(d),
+    };
+
+    // 最初にログが存在する日から昨日まで全日を列挙する。
+    var firstLogDate = _parseDateKey(logsByKey.keys.first);
+    for (final key in logsByKey.keys) {
+      final d = _parseDateKey(key);
+      if (d.isBefore(firstLogDate)) firstLogDate = d;
+    }
+
+    final days = <DayInput>[];
+    var cursor = firstLogDate;
+    while (!cursor.isAfter(yesterday)) {
+      final dateKey = HealthRollover.dateKey(cursor);
+      final monthKey =
+          '${cursor.year.toString().padLeft(4, '0')}-${cursor.month.toString().padLeft(2, '0')}';
+      final log = logsByKey[dateKey];
+      final ratio = log != null ? HealthScoring.ratioOf(log) : 0.0;
+      days.add(
+        DayInput(
+          dateKey: dateKey,
+          ratio: ratio,
+          isPerfect: ratio >= 1.0,
+          monthKey: monthKey,
+        ),
+      );
+      cursor = cursor.add(const Duration(days: 1));
+    }
+
+    final rebuildResult = rebuildStreak(streak, days);
+    final next = rebuildResult.state.copyWith(
+      lastProcessedDateKey: yesterdayKey,
+      rebuildVersion: kStreakRebuildVersion,
+    );
+    await _streakRepo.save(next);
+
+    // ログ無し日に'broken'スタブを作るとカレンダーの空白日が0点セルに変わる表示
+    // リグレッションになるため、既存ログがある日＋'frozen'の日のみ書き込む
+    // （'frozen'はスノーフレーク表示に必要なのでスタブ可。'qualified'/'perfect'は
+    // ratio>0ゆえログが必ず存在する）。
+    final outcomesToWrite = <String, String>{};
+    rebuildResult.outcomes.forEach((dateKey, outcome) {
+      if (logsByKey.containsKey(dateKey) || outcome == 'frozen') {
+        outcomesToWrite[dateKey] = outcome;
+      }
+    });
+    await _writeDayOutcomes(uid, outcomesToWrite);
+
+    return next;
   }
 
   /// 各日の outcome を対応する healthLog へ書き込む（無ければスタブ log を作成）。
@@ -402,8 +586,12 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
     final uid = _uid;
     if (uid == null) return;
     final loadGeneration = ++_stateGeneration;
+    _loadRetryTimer?.cancel();
     _isRefreshingForToday = true;
     try {
+      // fire-and-forget化（値のみ保存）により、この待機ループと下のsettleは
+      // 呼び出し元Futureの解決を待つだけで、サーバへの到達順序までは保証しない
+      // （形骸化）。実際の到達順序は下のwaitForPendingWritesで揃える。
       while (_activeSaves.isNotEmpty) {
         await Future.wait(_activeSaves.toList());
       }
@@ -413,6 +601,11 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       final col = _db.collection('users').doc(uid).collection('healthLogs');
       final currentDateKey = state.log.dateKey;
       if (HealthRollover.isPastDateKey(currentDateKey, todayKey)) {
+        // キューに残った値のみ保存がfinalize後にサーバへ届いて確定状態を
+        // 巻き戻さないよう、送信完了を待ってから確定する。
+        try {
+          await _db.waitForPendingWrites().timeout(const Duration(seconds: 5));
+        } catch (_) {}
         // 過去日となった当日ログを確定（ここで初めて残高へ加算される）。
         await _economyRepo.finalizeHealthLog(dateKey: currentDateKey);
       }
@@ -420,28 +613,42 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       // finalize後にストリークを前進させる（Step14）。
       final streakState = await _advanceStreakIfNeeded(uid);
       if (_uid != uid || loadGeneration != _stateGeneration) return;
-      final doc = await col.doc(todayKey).get();
+
+      final todayResult = await _getTodayLog(col, todayKey);
       if (_uid != uid || loadGeneration != _stateGeneration) return;
-      final loadedLog = doc.exists
-          ? HealthLog.fromFirestore(doc)
-          : HealthLog(dateKey: todayKey);
-      final settings = ref.read(userSettingsProvider).settings;
-      final todayLog = await _syncTodayLogIfNeeded(
-        uid: uid,
-        log: loadedLog,
-        settings: settings,
-      );
-      if (_uid != uid || loadGeneration != _stateGeneration) return;
-      state = HealthDetailState(
+      final todayOk = todayResult.ok;
+      // 未確認時はゼロ上書きを避け、現在表示中のログを維持する。
+      var todayLog = todayOk ? todayResult.log : state.log;
+      if (todayOk) {
+        try {
+          final settings = ref.read(userSettingsProvider).settings;
+          todayLog = await _syncTodayLogIfNeeded(
+            uid: uid,
+            log: todayLog,
+            settings: settings,
+          );
+        } catch (_) {
+          // 再計算差分の保存に失敗しても、取得済みの当日値の表示は継続する。
+        }
+        if (_uid != uid || loadGeneration != _stateGeneration) return;
+        _loadRetryCount = 0;
+      }
+      final todayErrorMessage = todayOk
+          ? null
+          : '読み込みに失敗しました'
+                '${todayResult.error != null ? ': ${todayResult.error}' : ''}';
+      state = state.copyWith(
         log: todayLog,
         isLoading: false,
-        isEditableNow: true,
-        errorMessage: pastResult.error,
+        isEditableNow: todayOk,
+        // 当日ロードのエラーがあればそちらを優先する（_load と同じ方針）。
+        errorMessage: todayErrorMessage ?? pastResult.error,
         historyLogs: pastResult.logs.take(14).toList(growable: false),
         isHistoryLoading: false,
         historyErrorMessage: null,
         streakState: streakState,
       );
+      if (!todayOk) _scheduleLoadRetry(uid);
     } catch (e) {
       if (_uid == uid && loadGeneration == _stateGeneration) {
         state = state.copyWith(
@@ -520,6 +727,9 @@ class HealthDetailViewModel extends Notifier<HealthDetailState> {
       return;
     }
     if (current.log.isFinalized) return;
+    if (current.isLoading || !current.isEditableNow) {
+      return; // ロード前/失敗/未確認の空ログを書き戻さない
+    }
     final saveDateKey = current.log.dateKey;
     final saveGeneration = _stateGeneration;
     final logData = current.log.toFirestore();

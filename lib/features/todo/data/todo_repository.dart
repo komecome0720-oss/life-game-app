@@ -39,11 +39,13 @@ class TodoRepository {
   }
 
   /// 新規 ToDo を作成する。デフォルトで右上（urgency=true, importance=true）。
+  /// [estimatedMinutes] が null なら未宣言のまま作成（デフォルト30分の自動付与はしない）。
   Future<String> createTodo({
     required String title,
     bool urgency = true,
     bool importance = true,
-    int estimatedMinutes = 30,
+    int? estimatedMinutes,
+    bool predictionDeclared = false,
     int orderIndex = 0,
     String? description,
   }) async {
@@ -59,7 +61,8 @@ class TodoRepository {
       'urgency': urgency,
       'importance': importance,
       'orderIndex': orderIndex,
-      'estimatedMinutes': estimatedMinutes,
+      'estimatedMinutes': ?estimatedMinutes,
+      if (predictionDeclared) 'predictionDeclared': true,
       'updatedAt': FieldValue.serverTimestamp(),
     };
     if (description != null) data['description'] = description;
@@ -68,6 +71,8 @@ class TodoRepository {
   }
 
   /// 詳細シートからの更新（タイトル・メモ・所要時間・象限）。
+  /// predictionDeclared は [task] が持つ値をそのまま書く（ユーザー操作起点の明示保存のため、
+  /// null-skip ではなく常に反映する）。
   Future<void> upsert(CalendarTask task) async {
     final uid = _uid;
     if (uid == null) throw Exception('Not authenticated');
@@ -77,6 +82,7 @@ class TodoRepository {
       'importance': task.importance,
       'orderIndex': task.orderIndex,
       'estimatedMinutes': task.estimatedMinutes,
+      'predictionDeclared': task.predictionDeclared,
       'note': task.note,
       'description': task.description ?? '',
       'updatedAt': FieldValue.serverTimestamp(),
@@ -162,6 +168,7 @@ class TodoRepository {
       'importance': task.importance,
       'orderIndex': task.orderIndex,
       'estimatedMinutes': task.estimatedMinutes,
+      'predictionDeclared': task.predictionDeclared,
       'note': task.note,
       'description': task.description ?? '',
       'isTodo': false,

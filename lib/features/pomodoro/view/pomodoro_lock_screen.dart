@@ -12,6 +12,7 @@ import 'package:task_manager/features/pomodoro/providers/pomodoro_providers.dart
 import 'package:task_manager/features/timer/data/active_timer_repository.dart';
 import 'package:task_manager/features/timer/model/active_timer.dart';
 import 'package:task_manager/features/timer/providers/timer_providers.dart';
+import 'package:task_manager/features/timer/view/timer_lock_launcher.dart';
 import 'package:task_manager/features/timer/viewmodel/timer_actions.dart';
 import 'package:task_manager/models/calendar_task.dart';
 import 'package:task_manager/screens/task_completion_screen.dart';
@@ -30,6 +31,7 @@ class PomodoroLockScreen extends ConsumerStatefulWidget {
     required this.initialTimer,
     required this.initialTask,
     this.showStartFlash = false,
+    this.quickStart = false,
   });
 
   /// 起動時点の ActiveTimer（`pomodoro` が非null であること）。
@@ -40,6 +42,10 @@ class PomodoroLockScreen extends ConsumerStatefulWidget {
 
   /// スタート起点で開いたときのみ true（「スタート！」演出用）。
   final bool showStartFlash;
+
+  /// クイックスタート（FAB長押し）で作られたタスクかどうか。
+  /// true の間はクエスト名欄が空欄＋プレースホルダー表示、見込み欄が編集可になる。
+  final bool quickStart;
 
   @override
   ConsumerState<PomodoroLockScreen> createState() =>
@@ -68,16 +74,22 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
   // saveProgress失敗の通知は初回のみ（以後の遷移では黙って継続）。
   bool _saveFailureNotified = false;
 
-  // クエスト名・「見込み」・「現状」編集用のコントローラ／フォーカス。
+  // クエスト名・「現状」編集用のコントローラ／フォーカス。
+  // 「見込み」はスタート後は表示専用（確定仕様4）だが、クイックスタートの
+  // タスクのときのみ編集可になるため編集用コントローラを持つ。
   late final TextEditingController _titleController;
   final FocusNode _titleFocus = FocusNode();
-  late final TextEditingController _predictedController;
-  final FocusNode _predictedFocus = FocusNode();
   late final TextEditingController _minutesController;
   final FocusNode _minutesFocus = FocusNode();
+  late final TextEditingController _predictedController;
+  final FocusNode _predictedFocus = FocusNode();
   bool _titleCommitting = false;
-  bool _predictedCommitting = false;
   bool _minutesCommitting = false;
+  bool _predictedCommitting = false;
+
+  // クイックスタートでクエスト名欄をユーザーが確定入力するまでは、
+  // 空欄プレースホルダーを毎秒 setState・stream 更新で潰さないためのフラグ。
+  bool _nameCommittedByUser = false;
 
   late ActiveTimer _lastTimer;
   CalendarTask? _task;
@@ -88,19 +100,20 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     WidgetsBinding.instance.addObserver(this);
     _lastTimer = widget.initialTimer;
     _task = widget.initialTask;
-    _titleController = TextEditingController(text: _displayTaskTitle);
+    _titleController =
+        TextEditingController(text: widget.quickStart ? '' : _displayTaskTitle);
     _titleFocus.addListener(() {
       if (!_titleFocus.hasFocus) _commitTitle();
-    });
-    _predictedController =
-        TextEditingController(text: _lastTimer.predictedMinutes.toString());
-    _predictedFocus.addListener(() {
-      if (!_predictedFocus.hasFocus) _commitPredicted();
     });
     _minutesController =
         TextEditingController(text: _displayTotalMinutes.toString());
     _minutesFocus.addListener(() {
       if (!_minutesFocus.hasFocus) _commitMinutes();
+    });
+    _predictedController =
+        TextEditingController(text: _lastTimer.predictedMinutes.toString());
+    _predictedFocus.addListener(() {
+      if (!_predictedFocus.hasFocus) _commitPredicted();
     });
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
@@ -119,10 +132,10 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     _ticker?.cancel();
     _titleController.dispose();
     _titleFocus.dispose();
-    _predictedController.dispose();
-    _predictedFocus.dispose();
     _minutesController.dispose();
     _minutesFocus.dispose();
+    _predictedController.dispose();
+    _predictedFocus.dispose();
     super.dispose();
   }
 
@@ -200,6 +213,10 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     if (_titleCommitting) return;
     final newTitle = _titleController.text.trim();
     final currentTitle = _displayTaskTitle;
+    if (newTitle.isEmpty && widget.quickStart) {
+      // クイックスタートは空欄のまま保持する（裏のクエスト名は既定値のまま）。
+      return;
+    }
     if (newTitle.isEmpty || newTitle == currentTitle) {
       _titleController.text = currentTitle;
       return;
@@ -218,6 +235,7 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
       setState(() {
         _task = _task?.copyWith(title: newTitle);
         _lastTimer = _lastTimer.copyWith(taskTitle: newTitle);
+        _nameCommittedByUser = true;
       });
     } catch (_) {
       if (mounted) {
@@ -229,37 +247,6 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
       _titleController.text = currentTitle;
     } finally {
       _titleCommitting = false;
-    }
-  }
-
-  /// 「見込み」の確定処理：フォーカスを失ったとき／キーボード完了時に呼ぶ。
-  /// active_timer 側の predictedMinutes を更新する
-  /// （saveProgress/complete が参照する値のため即時反映が必要）。
-  Future<void> _commitPredicted() async {
-    if (_predictedCommitting) return;
-    final parsed = int.tryParse(_predictedController.text.trim());
-    final current = _lastTimer.predictedMinutes;
-    if (parsed == null || parsed == current) {
-      _predictedController.text = current.toString();
-      return;
-    }
-    _predictedCommitting = true;
-    try {
-      await ref.read(activeTimerRepositoryProvider).updatePredictedMinutes(parsed);
-      if (!mounted) return;
-      setState(() {
-        _lastTimer = _lastTimer.copyWith(predictedMinutes: parsed);
-      });
-    } catch (_) {
-      if (mounted) {
-        showAppSnackBar(
-          context,
-          const SnackBar(content: Text('見込み時間を保存できませんでした')),
-        );
-      }
-      _predictedController.text = current.toString();
-    } finally {
-      _predictedCommitting = false;
     }
   }
 
@@ -319,7 +306,39 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     }
   }
 
-  /// クエスト名・「見込み」・「現状」の未確定編集をフラッシュする。
+  /// 「見込み」の確定処理（クイックスタートのタスクのみ編集可）。
+  Future<void> _commitPredicted() async {
+    if (_predictedCommitting) return;
+    final raw = int.tryParse(_predictedController.text.trim()) ?? 0;
+    final parsed = raw < 0 ? 0 : raw;
+    final current = _lastTimer.predictedMinutes;
+    if (parsed == current) {
+      _predictedController.text = current.toString();
+      return;
+    }
+    _predictedCommitting = true;
+    try {
+      await ref
+          .read(activeTimerRepositoryProvider)
+          .updatePredictedMinutes(parsed);
+      if (!mounted) return;
+      setState(() {
+        _lastTimer = _lastTimer.copyWith(predictedMinutes: parsed);
+      });
+    } catch (_) {
+      if (mounted) {
+        showAppSnackBar(
+          context,
+          const SnackBar(content: Text('見込みを保存できませんでした')),
+        );
+      }
+      _predictedController.text = current.toString();
+    } finally {
+      _predictedCommitting = false;
+    }
+  }
+
+  /// クエスト名・「現状」・「見込み」の未確定編集をフラッシュする。
   /// complete/close/pause の各操作の直前に必ず await すること
   /// （ボタンタップはフォーカスを奪わないため、確定処理が走らないまま
   /// actualMinutes 計算に進んでしまう Critical な不整合を防ぐ）。
@@ -328,9 +347,7 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
     if (_titleController.text.trim() != _displayTaskTitle) {
       await _commitTitle();
     }
-    final currentPredicted = _lastTimer.predictedMinutes;
-    final parsedPredicted = int.tryParse(_predictedController.text.trim());
-    if (parsedPredicted != null && parsedPredicted != currentPredicted) {
+    if (widget.quickStart) {
       await _commitPredicted();
     }
     final currentTotal = _displayTotalMinutes;
@@ -768,17 +785,35 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
       final timer = next.asData?.value;
       if (timer == null || timer.pomodoro == null) return;
       _lastTimer = timer;
-      if (!_titleFocus.hasFocus && _titleController.text != _displayTaskTitle) {
-        _titleController.text = _displayTaskTitle;
+      // ストリームのタイトルを _task へ同期する。書き込み直後のローカルエコー
+      // （サーバ ack 前のオフライン永続化スナップショット）が届いても、
+      // _displayTaskTitle が常にストリームの最新値と一致するようにし、
+      // 入力欄が古い _task.title で上書きされるレースを構造的に防ぐ。
+      final task = _task;
+      if (task != null &&
+          timer.taskTitle.isNotEmpty &&
+          task.title != timer.taskTitle) {
+        _task = task.copyWith(title: timer.taskTitle);
       }
-      final predicted = timer.predictedMinutes;
-      if (!_predictedFocus.hasFocus &&
-          _predictedController.text != predicted.toString()) {
-        _predictedController.text = predicted.toString();
+      // コミット処理中は入力欄の同期を一時停止する（_commitTitle が
+      // await 中の一時的な不整合ウィンドウで、確定直後の入力欄を触らない）。
+      // クイックスタートで未確定（ユーザーがまだ何も打っていない）間は、
+      // 空欄プレースホルダーを毎秒 setState・stream 更新で潰さないよう同期しない。
+      if (!_titleCommitting &&
+          !_titleFocus.hasFocus &&
+          !(widget.quickStart && !_nameCommittedByUser) &&
+          _titleController.text != _displayTaskTitle) {
+        _titleController.text = _displayTaskTitle;
       }
       final total = _displayTotalMinutes;
       if (!_minutesFocus.hasFocus && _minutesController.text != total.toString()) {
         _minutesController.text = total.toString();
+      }
+      if (widget.quickStart &&
+          !_predictedCommitting &&
+          !_predictedFocus.hasFocus &&
+          _predictedController.text != timer.predictedMinutes.toString()) {
+        _predictedController.text = timer.predictedMinutes.toString();
       }
     });
 
@@ -871,12 +906,14 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
                         onSubmitted: (_) => _commitTitle(),
                         style:
                             text.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           filled: true,
                           isDense: true,
-                          border: OutlineInputBorder(),
-                          contentPadding:
-                              EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          border: const OutlineInputBorder(),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          hintText:
+                              widget.quickStart ? kQuickStartDefaultTitle : null,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -889,12 +926,12 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
                       const SizedBox(height: 2),
                       Text(
                         '本日 $completedSetsToday セット',
-                        style: text.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+                        style: text.bodyLarge?.copyWith(color: scheme.onSurfaceVariant),
                         textAlign: TextAlign.center,
                       ),
                       Text(
                         '本日 $todayWorkHours時間$todayWorkMinutes分',
-                        style: text.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+                        style: text.bodyLarge?.copyWith(color: scheme.onSurfaceVariant),
                         textAlign: TextAlign.center,
                       ),
                       const Spacer(),
@@ -928,31 +965,56 @@ class _PomodoroLockScreenState extends ConsumerState<PomodoroLockScreen>
                             children: [
                               Text('見込み', style: text.labelLarge),
                               const SizedBox(height: 8),
+                              // 宣言＝スタート動作のため、スタート後は表示専用（確定仕様4）。
+                              // ただしクイックスタートのタスクのときのみ編集可（確定仕様4）。
                               SizedBox(
                                 width: 140,
-                                child: TextField(
-                                  controller: _predictedController,
-                                  focusNode: _predictedFocus,
-                                  keyboardType: const TextInputType.numberWithOptions(
-                                      decimal: false),
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.digitsOnly,
-                                    LengthLimitingTextInputFormatter(4),
-                                  ],
-                                  textAlign: TextAlign.center,
-                                  textInputAction: TextInputAction.done,
-                                  onSubmitted: (_) => _commitPredicted(),
-                                  style: text.titleLarge?.copyWith(
-                                    fontFeatures: const [FontFeature.tabularFigures()],
-                                  ),
-                                  decoration: const InputDecoration(
-                                    isDense: true,
-                                    suffixText: '分',
-                                    border: OutlineInputBorder(),
-                                    contentPadding: EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 10),
-                                  ),
-                                ),
+                                child: widget.quickStart
+                                    ? TextField(
+                                        controller: _predictedController,
+                                        focusNode: _predictedFocus,
+                                        keyboardType:
+                                            const TextInputType.numberWithOptions(
+                                                decimal: false),
+                                        inputFormatters: [
+                                          FilteringTextInputFormatter.digitsOnly,
+                                          LengthLimitingTextInputFormatter(4),
+                                        ],
+                                        textAlign: TextAlign.center,
+                                        textInputAction: TextInputAction.done,
+                                        onSubmitted: (_) => _commitPredicted(),
+                                        style: text.titleLarge?.copyWith(
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
+                                        ),
+                                        decoration: const InputDecoration(
+                                          isDense: true,
+                                          suffixText: '分',
+                                          border: OutlineInputBorder(),
+                                          contentPadding: EdgeInsets.symmetric(
+                                              horizontal: 12, vertical: 10),
+                                        ),
+                                      )
+                                    : Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12, vertical: 10),
+                                        decoration: BoxDecoration(
+                                          border:
+                                              Border.all(color: scheme.outline),
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          '${timer.predictedMinutes}分',
+                                          textAlign: TextAlign.center,
+                                          style: text.titleLarge?.copyWith(
+                                            fontFeatures: const [
+                                              FontFeature.tabularFigures(),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
                               ),
                             ],
                           ),

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -61,6 +62,15 @@ class WishListViewModel extends Notifier<AsyncValue<List<WishItem>>> {
     final name = DateTime.now().millisecondsSinceEpoch.toString();
     final ref = _storage.ref('wishlist/$uid/$name.jpg');
     await ref.putFile(file);
+    return ref.getDownloadURL();
+  }
+
+  Future<String?> uploadWishImageBytes(Uint8List bytes) async {
+    final uid = _uid;
+    if (uid == null) return null;
+    final name = DateTime.now().millisecondsSinceEpoch.toString();
+    final ref = _storage.ref('wishlist/$uid/$name.jpg');
+    await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
     return ref.getDownloadURL();
   }
 

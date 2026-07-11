@@ -6,6 +6,8 @@ import 'package:task_manager/features/user_settings/model/user_settings.dart';
 import 'package:task_manager/features/user_settings/viewmodel/user_settings_viewmodel.dart';
 import 'package:task_manager/utils/app_messenger.dart';
 import 'package:task_manager/widgets/message_guard.dart';
+import 'package:task_manager/widgets/prediction_chip_settings_dialog.dart';
+import 'package:task_manager/widgets/prediction_chip_sheet.dart';
 
 /// 設定画面（一般＝テーマ・週の始まり／ToDo／カレンダー）。
 /// 変更は即時にローカル反映（テーマは main.dart の watch でライブ反映）し、
@@ -21,14 +23,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _persist({
     String? themeMode,
     int? weekStartDay,
-    int? defaultTodoEstimatedMinutes,
     int? defaultCalendarDurationMinutes,
   }) async {
     final vm = ref.read(userSettingsProvider.notifier);
     final ok = await vm.savePreferences(
       themeMode: themeMode,
       weekStartDay: weekStartDay,
-      defaultTodoEstimatedMinutes: defaultTodoEstimatedMinutes,
       defaultCalendarDurationMinutes: defaultCalendarDurationMinutes,
     );
     if (!ok && mounted) {
@@ -54,11 +54,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     await _persist(weekStartDay: weekStartDay);
   }
 
-  Future<void> _onTodoMinutesChanged(UserSettings current, int minutes) async {
-    ref.read(userSettingsProvider.notifier).update(
-          current.copyWith(defaultTodoEstimatedMinutes: minutes),
-        );
-    await _persist(defaultTodoEstimatedMinutes: minutes);
+  /// 予測チップの時間プリセット編集ダイアログを開く（保存はダイアログ側で行う）。
+  Future<void> _openPredictionChipSettings() async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => const PredictionChipSettingsDialog(),
+    );
   }
 
   Future<void> _onCalendarMinutesChanged(
@@ -147,18 +148,54 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                   ),
                   const SizedBox(height: 24),
-                  _SectionHeader('ToDo'),
+                  _SectionHeader('時間予測'),
                   const SizedBox(height: 12),
-                  _MinutesStepperTile(
-                    label: '見込時間のデフォルト',
-                    minutes: settings.defaultTodoEstimatedMinutes,
-                    onChanged: (m) => _onTodoMinutesChanged(settings, m),
+                  InputDecorator(
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    child: InkWell(
+                      onTap: _openPredictionChipSettings,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '予測チップの時間',
+                                  style:
+                                      Theme.of(context).textTheme.bodyMedium,
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  settings.predictionChipMinutes
+                                      .map(formatPredictionMinutes)
+                                      .join(' / '),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant,
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Icon(Icons.chevron_right),
+                        ],
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 24),
                   _SectionHeader('カレンダー'),
                   const SizedBox(height: 12),
                   _MinutesStepperTile(
-                    label: '新規予定の所要時間デフォルト',
+                    label: '予定の時刻補完に使うデフォルト（予測には使われません）',
                     minutes: settings.defaultCalendarDurationMinutes,
                     onChanged: (m) => _onCalendarMinutesChanged(settings, m),
                   ),

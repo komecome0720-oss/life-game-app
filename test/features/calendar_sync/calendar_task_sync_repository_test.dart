@@ -187,6 +187,92 @@ void main() {
     });
   });
 
+  test(
+    '既存の宣言済みフラグ・estimatedMinutesは、再同期（toMap null-skip）で巻き戻らない',
+    () async {
+      await firestore.collection('users').doc(uid).collection('tasks').add({
+        'title': '旧タイトル',
+        'externalCalendarId': 'cal1:evt1',
+        'isTodo': false,
+        'predictionDeclared': true,
+        'estimatedMinutes': 45,
+      });
+
+      // Google側の再取得は常に predictionDeclared: false（未宣言）・estimatedMinutes: null。
+      final resynced = CalendarTask(
+        id: 'ignored',
+        title: '新タイトル',
+        start: DateTime(2026, 7, 6, 10),
+        end: DateTime(2026, 7, 6, 11),
+        rewardYen: 0,
+        externalCalendarId: 'cal1:evt1',
+      );
+      await repo.upsert([resynced]);
+
+      final data = await taskDataByExternalId('cal1:evt1');
+      expect(data['title'], '新タイトル');
+      expect(data['predictionDeclared'], isTrue,
+          reason: '宣言済みフラグはGoogle側の再取得で巻き戻してはいけない');
+      expect(data['estimatedMinutes'], 45,
+          reason: '宣言済みestimatedMinutesはGoogle側の再取得で巻き戻してはいけない');
+    },
+  );
+
+  group('createTask', () {
+    test('estimatedMinutes省略時は書き込まれず、predictionDeclaredも書かれない', () async {
+      await repo.createTask(
+        title: '新規予定',
+        start: DateTime(2026, 7, 6, 10),
+        end: DateTime(2026, 7, 6, 11),
+      );
+
+      final snap = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('tasks')
+          .get();
+      expect(snap.docs.length, 1);
+      final data = snap.docs.first.data();
+      expect(data.containsKey('estimatedMinutes'), isFalse);
+      expect(data.containsKey('predictionDeclared'), isFalse);
+    });
+
+    test('estimatedMinutesとpredictionDeclared:trueを渡すと両方書き込まれる（空きスロット枠＝宣言）', () async {
+      await repo.createTask(
+        title: '宣言済み予定',
+        start: DateTime(2026, 7, 6, 10),
+        end: DateTime(2026, 7, 6, 11),
+        estimatedMinutes: 60,
+        predictionDeclared: true,
+      );
+
+      final snap = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('tasks')
+          .get();
+      final data = snap.docs.first.data();
+      expect(data['estimatedMinutes'], 60);
+      expect(data['predictionDeclared'], true);
+    });
+  });
+
+  group('saveDeclaredPrediction', () {
+    test('estimatedMinutesを更新しpredictionDeclaredをtrueにする', () async {
+      final doc = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('tasks')
+          .add({'title': 'タスク', 'estimatedMinutes': 30});
+
+      await repo.saveDeclaredPrediction(taskId: doc.id, minutes: 90);
+
+      final data = (await doc.get()).data()!;
+      expect(data['estimatedMinutes'], 90);
+      expect(data['predictionDeclared'], true);
+    });
+  });
+
   group('moveTaskById', () {
     test('start/end を更新し repositioned:true を同一書き込みで立てる', () async {
       final tasksCol =

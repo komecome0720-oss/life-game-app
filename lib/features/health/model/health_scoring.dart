@@ -1,4 +1,5 @@
 import 'package:task_manager/features/economy/model/budget_split.dart';
+import 'package:task_manager/features/health/model/health_log.dart';
 
 /// 健康ログの採点・報酬計算ユーティリティ
 class HealthScoring {
@@ -38,6 +39,14 @@ class HealthScoring {
     if (maxActiveScore <= 0) return 0;
     return (totalScore / maxActiveScore).clamp(0.0, 1.0);
   }
+
+  /// ログの実効達成率。保存済み achievedPercent には依存せず、
+  /// totalScore と瞑想ON/OFFスナップショットから常に再計算する
+  /// （旧ログで achievedPercent が未保存の場合があるため）。
+  static double ratioOf(HealthLog log) => achievementRatio(
+        log.totalScore,
+        maxActiveScore(meditationEnabled: log.meditationEnabledSnapshot),
+      );
 
   /// 線形・40%ゲート。p<0.40 は 0（没収）。p>=0.40 は round(cap × p)。
   static int earningsForRatio({

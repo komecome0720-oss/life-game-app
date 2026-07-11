@@ -9,6 +9,17 @@ class UserSettings {
   /// カレンダー新規タスク作成時の所要時間デフォルト（分）。
   static const int defaultCalendarDurationMinutesFallback = 60;
 
+  /// 予測宣言チップのデフォルトプリセット（分）。
+  static const List<int> defaultPredictionChipMinutes = [
+    15,
+    30,
+    45,
+    60,
+    90,
+    120,
+    180,
+  ];
+
   const UserSettings({
     this.displayName = '',
     this.avatarUrl = '',
@@ -35,6 +46,7 @@ class UserSettings {
     this.defaultCalendarDurationMinutes = defaultCalendarDurationMinutesFallback,
     this.onboardingCompleted = false,
     this.meditationEnabled = true,
+    this.predictionChipMinutes = defaultPredictionChipMinutes,
   });
 
   final String displayName;
@@ -95,6 +107,9 @@ class UserSettings {
   /// OFF時は満点が80になり、瞑想は合計・達成率・満点から除外される。
   final bool meditationEnabled;
 
+  /// 予測宣言チップシートに表示するプリセット時間（分）のリスト。ユーザーが調整可能。
+  final List<int> predictionChipMinutes;
+
   double get hourlyRate {
     final totalMinutes = monthlyQuestDays * dailyQuestMinutes;
     if (totalMinutes <= 0) return 0;
@@ -152,6 +167,7 @@ class UserSettings {
     int? defaultCalendarDurationMinutes,
     bool? onboardingCompleted,
     bool? meditationEnabled,
+    List<int>? predictionChipMinutes,
   }) {
     return UserSettings(
       displayName: displayName ?? this.displayName,
@@ -183,6 +199,7 @@ class UserSettings {
           defaultCalendarDurationMinutes ?? this.defaultCalendarDurationMinutes,
       onboardingCompleted: onboardingCompleted ?? this.onboardingCompleted,
       meditationEnabled: meditationEnabled ?? this.meditationEnabled,
+      predictionChipMinutes: predictionChipMinutes ?? this.predictionChipMinutes,
     );
   }
 
@@ -205,6 +222,12 @@ class UserSettings {
           weeklyTaskCount: weeklyTaskCount,
           weeklyJackpotCount: weeklyJackpotCount,
         );
+    // 空リストや全要素が非数値の壊れたデータもデフォルトへフォールバックする
+    // （?? はキー欠如しかカバーしないため、空判定を別途行う）。
+    final chipMinutes = (data['predictionChipMinutes'] as List?)
+        ?.whereType<num>()
+        .map((e) => e.toInt())
+        .toList();
     return UserSettings(
       displayName: data['displayName'] as String? ?? '',
       avatarUrl: data['avatarUrl'] as String? ?? '',
@@ -252,6 +275,9 @@ class UserSettings {
               defaultCalendarDurationMinutesFallback,
       onboardingCompleted: data['onboardingCompleted'] as bool? ?? false,
       meditationEnabled: data['meditationEnabled'] as bool? ?? true,
+      predictionChipMinutes: (chipMinutes == null || chipMinutes.isEmpty)
+          ? defaultPredictionChipMinutes
+          : chipMinutes,
     );
   }
 
@@ -284,6 +310,7 @@ class UserSettings {
       'defaultTodoEstimatedMinutes': defaultTodoEstimatedMinutes,
       'defaultCalendarDurationMinutes': defaultCalendarDurationMinutes,
       'meditationEnabled': meditationEnabled,
+      'predictionChipMinutes': predictionChipMinutes,
       'updatedAt': FieldValue.serverTimestamp(),
     };
   }

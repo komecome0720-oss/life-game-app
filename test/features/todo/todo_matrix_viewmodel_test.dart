@@ -105,47 +105,4 @@ void main() {
     });
   });
 
-  group('estimatedMinutesFromRange', () {
-    CalendarTask calendarTask({
-      DateTime? start,
-      DateTime? end,
-      bool isAllDay = false,
-    }) => CalendarTask(
-      id: 'x',
-      title: 'x',
-      start: start,
-      end: end,
-      rewardYen: 0,
-      isAllDay: isAllDay,
-    );
-
-    test('start/end の分数をそのまま返す', () {
-      final task = calendarTask(
-        start: DateTime(2026, 1, 1, 10),
-        end: DateTime(2026, 1, 1, 11, 30),
-      );
-      expect(estimatedMinutesFromRange(task), 90);
-    });
-
-    test('start/end が欠損していればデフォルト30分', () {
-      expect(estimatedMinutesFromRange(calendarTask()), 30);
-    });
-
-    test('終日イベントはデフォルト30分', () {
-      final task = calendarTask(
-        start: DateTime(2026, 1, 1),
-        end: DateTime(2026, 1, 2),
-        isAllDay: true,
-      );
-      expect(estimatedMinutesFromRange(task), 30);
-    });
-
-    test('end が start 以前（異常値）はデフォルト30分', () {
-      final task = calendarTask(
-        start: DateTime(2026, 1, 1, 12),
-        end: DateTime(2026, 1, 1, 11),
-      );
-      expect(estimatedMinutesFromRange(task), 30);
-    });
-  });
 }

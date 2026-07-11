@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:task_manager/features/adventure_log/model/adventure_log_entry.dart';
 import 'package:task_manager/features/health/model/health_log.dart';
 
@@ -565,21 +568,41 @@ class EconomyRepository {
     final uid = _auth.currentUser?.uid;
     if (uid == null) throw Exception('Not authenticated');
 
+    if (deltaYen == 0) {
+      // 値のみの保存はトランザクション不要。通常の set(merge) にすることで
+      // オフライン永続キューに乗り、ローカルキャッシュにも即反映される
+      // （トランザクションはオフライン不可・キャッシュ未反映のため、再起動直後の
+      //   読込で当日値が消えて見えるバグの根本原因だった）。
+      // 確定系フィールドは finalizeHealthLog だけが書く。ここで書くと、キューに
+      // 残った保存が finalize 後にサーバへ届いた際に確定状態を巻き戻し、
+      // 二重加算（C-1）を引き起こすため必ず除外する。
+      final data = Map<String, dynamic>.from(healthLogData)
+        ..remove('isFinalized')
+        ..remove('finalizedEarnedYen')
+        ..remove('finalizedAt')
+        ..remove('balanceAppliedYen');
+      final logRef = _userRef(uid).collection('healthLogs').doc(dateKey);
+      // サーバ ack を await すると通信断で呼び出し元が固まるため待たない。
+      unawaited(
+        logRef.set(data, SetOptions(merge: true)).catchError((Object e) {
+          debugPrint('healthLog save failed: $e');
+        }),
+      );
+      return const BalanceLedgerResult(
+        applied: false,
+        deltaYen: 0,
+        balanceBeforeYen: 0,
+        balanceAfterYen: 0,
+      );
+    }
+
     return _db.runTransaction((tx) async {
       final userRef = _userRef(uid);
       final logRef = userRef.collection('healthLogs').doc(dateKey);
       final userDoc = await tx.get(userRef);
       final before = _balanceFrom(userDoc);
       tx.set(logRef, healthLogData, SetOptions(merge: true));
-      if (deltaYen == 0) {
-        return BalanceLedgerResult(
-          applied: false,
-          deltaYen: 0,
-          balanceBeforeYen: before,
-          balanceAfterYen: before,
-        );
-      }
-
+      // deltaYen==0 は関数冒頭のfast pathで既に処理済みのため、ここに来るのは常に非0。
       final after = before + deltaYen;
       tx.set(userRef, {
         'totalEarned': after,

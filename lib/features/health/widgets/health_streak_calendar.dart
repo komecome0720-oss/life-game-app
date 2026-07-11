@@ -294,18 +294,15 @@ class _DayCell extends StatelessWidget {
     final brightness = Theme.of(context).brightness;
     final text = Theme.of(context).textTheme;
     final hasLog = log != null;
-    // achievedPercent は旧ログで未保存の場合があるため、totalScore から都度算出する。
-    final ratio = hasLog
-        ? HealthScoring.achievementRatio(
-            log!.totalScore,
-            HealthScoring.maxActiveScore(
-              meditationEnabled: log!.meditationEnabledSnapshot,
-            ),
-          )
-        : 0.0;
+    // achievedPercent は旧ログで未保存の場合があるため、totalScore から都度算出する
+    // （ストリーク前進ロジックと判定ソースを一本化。HealthScoring.ratioOf）。
+    final ratio = hasLog ? HealthScoring.ratioOf(log!) : 0.0;
     final isPerfect = log?.dayOutcome == 'perfect';
     final isFrozen = log?.dayOutcome == 'frozen';
     final isStreakHit = hasLog && ratio >= kHealthStreakRatio;
+    // フリーズ日は達成率が閾値未満でも連続が途切れていないため、
+    // 達成日と同じく◯を付けて連続維持を分かりやすくする（❄️で区別）。
+    final showStreakRing = isStreakHit || isFrozen;
     final color = hasLog
         ? healthTotalColor(ratio, brightness)
         : scheme.outlineVariant;
@@ -338,10 +335,10 @@ class _DayCell extends StatelessWidget {
           if (hasLog)
             Align(
               child: Container(
-                padding: isStreakHit
+                padding: showStreakRing
                     ? const EdgeInsets.symmetric(horizontal: 5, vertical: 1)
                     : EdgeInsets.zero,
-                decoration: isStreakHit
+                decoration: showStreakRing
                     ? BoxDecoration(
                         shape: BoxShape.circle,
                         border: Border.all(color: color, width: 1.5),

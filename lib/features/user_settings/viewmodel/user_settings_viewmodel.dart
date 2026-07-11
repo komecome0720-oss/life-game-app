@@ -166,6 +166,7 @@ class UserSettingsViewModel extends Notifier<UserSettingsState> {
     int? weekStartDay,
     int? defaultTodoEstimatedMinutes,
     int? defaultCalendarDurationMinutes,
+    List<int>? predictionChipMinutes,
   }) async {
     final uid = _uid;
     if (uid == null) return false;
@@ -179,6 +180,9 @@ class UserSettingsViewModel extends Notifier<UserSettingsState> {
       }
       if (defaultCalendarDurationMinutes != null) {
         data['defaultCalendarDurationMinutes'] = defaultCalendarDurationMinutes;
+      }
+      if (predictionChipMinutes != null) {
+        data['predictionChipMinutes'] = predictionChipMinutes;
       }
       await _db
           .collection('users')

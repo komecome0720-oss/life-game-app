@@ -85,7 +85,13 @@ class _HealthDetailScreenState extends ConsumerState<HealthDetailScreen>
                     if (!editable)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),
-                        child: _LockBanner(isFinalized: state.log.isFinalized),
+                        child: _LockBanner(
+                          isFinalized: state.log.isFinalized,
+                          // ロード失敗／未確認による編集ロックを「日付が変わった」と
+                          // 誤解させないよう文言を分岐する。
+                          isLoadFailure: !state.log.isFinalized &&
+                              state.errorMessage != null,
+                        ),
                       ),
                     for (final c in HealthCategory.values)
                       HealthItemRow(
@@ -153,12 +159,24 @@ class _HealthDetailScreenState extends ConsumerState<HealthDetailScreen>
 }
 
 class _LockBanner extends StatelessWidget {
-  const _LockBanner({required this.isFinalized});
+  const _LockBanner({required this.isFinalized, this.isLoadFailure = false});
   final bool isFinalized;
+
+  /// ロード失敗／未確認による編集ロック（日付境界とは無関係）かどうか。
+  /// true の場合、「日付が変わった」ではなく通信状況を促す文言にする。
+  final bool isLoadFailure;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final String message;
+    if (isFinalized) {
+      message = '本日分は確定済みのため編集できません。';
+    } else if (isLoadFailure) {
+      message = '記録を読み込めませんでした。通信状況を確認してください（自動で再試行します）。';
+    } else {
+      message = '日付が変わったため編集できません。';
+    }
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
@@ -171,7 +189,7 @@ class _LockBanner extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              isFinalized ? '本日分は確定済みのため編集できません。' : '日付が変わったため編集できません。',
+              message,
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),

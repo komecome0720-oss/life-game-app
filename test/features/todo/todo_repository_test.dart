@@ -120,6 +120,58 @@ void main() {
     expect(doc.data()?.containsKey('startAtUtc'), isFalse);
   });
 
+  group('createTodo', () {
+    test('estimatedMinutesがnullなら書き込まれず、predictionDeclaredも書かれない', () async {
+      final id = await repo.createTodo(title: '新規ToDo');
+      final doc = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('tasks')
+          .doc(id)
+          .get();
+      final data = doc.data()!;
+      expect(data.containsKey('estimatedMinutes'), isFalse);
+      expect(data.containsKey('predictionDeclared'), isFalse);
+    });
+
+    test('estimatedMinutesとpredictionDeclared:trueを渡すと両方書き込まれる', () async {
+      final id = await repo.createTodo(
+        title: '宣言済みToDo',
+        estimatedMinutes: 45,
+        predictionDeclared: true,
+      );
+      final doc = await firestore
+          .collection('users')
+          .doc(uid)
+          .collection('tasks')
+          .doc(id)
+          .get();
+      final data = doc.data()!;
+      expect(data['estimatedMinutes'], 45);
+      expect(data['predictionDeclared'], true);
+    });
+  });
+
+  test('upsertはtask.predictionDeclaredの値をそのまま書き込む', () async {
+    const task = CalendarTask(
+      id: 'task1',
+      title: '宣言更新',
+      start: null,
+      end: null,
+      rewardYen: 0,
+      estimatedMinutes: 45,
+      predictionDeclared: true,
+    );
+    await repo.upsert(task);
+    final doc = await firestore
+        .collection('users')
+        .doc(uid)
+        .collection('tasks')
+        .doc('task1')
+        .get();
+    expect(doc.data()?['predictionDeclared'], true);
+  });
+
   test('既存のconvertToCalendarEvent単体呼び出しが引き続き動作する（回帰確認）', () async {
     final start = DateTime(2026, 7, 7, 8, 0);
     final end = DateTime(2026, 7, 7, 8, 30);
