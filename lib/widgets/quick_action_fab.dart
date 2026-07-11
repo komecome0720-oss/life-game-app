@@ -127,7 +127,7 @@ class _QuickActionFabState extends State<QuickActionFab> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    final fab = GestureDetector(
       onLongPressStart: _onLongPressStart,
       onLongPressMoveUpdate: _onLongPressMoveUpdate,
       onLongPressEnd: _onLongPressEnd,
@@ -135,10 +135,19 @@ class _QuickActionFabState extends State<QuickActionFab> {
       child: FloatingActionButton(
         key: _fabKey,
         heroTag: widget.heroTag,
-        tooltip: widget.tooltip,
         onPressed: widget.onTap,
         child: Icon(widget.icon),
       ),
+    );
+    final tooltip = widget.tooltip;
+    if (tooltip == null) return fab;
+    // FloatingActionButton に tooltip を直接渡すと、内部の Tooltip が
+    // 長押しジェスチャーを奪ってしまい上の長押しメニューが反応しなくなるため、
+    // タッチ操作ではトリガーしない（デスクトップのホバー表示のみ残す）。
+    return Tooltip(
+      message: tooltip,
+      triggerMode: TooltipTriggerMode.manual,
+      child: fab,
     );
   }
 }
